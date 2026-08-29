@@ -69,7 +69,7 @@ pub fn run() {
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let _ = proxy_menu.send_event(UserEvent::Menu(event.id));
     }));
-    GlobalHotKeyEvent::set_event_handler(Some(move |event| {
+    GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
         if event.state() == HotKeyState::Pressed {
             let _ = proxy_hk.send_event(UserEvent::Hotkey);
         }
