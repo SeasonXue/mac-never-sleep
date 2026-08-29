@@ -1,0 +1,10 @@
+[package]
+name = "never-sleep-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Platform-agnostic session policy for 熄屏待命 (screen-off, stay-awake)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

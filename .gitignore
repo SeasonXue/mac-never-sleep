@@ -1,0 +1,7 @@
+/target
+/dist
+.DS_Store
+*.swp
+*.orig
+.idea
+.vscode
