@@ -1330,6 +1330,7 @@ dependencies = [
 name = "never-sleep-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
 ]

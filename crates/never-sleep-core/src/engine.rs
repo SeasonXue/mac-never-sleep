@@ -63,6 +63,7 @@ pub enum StopReason {
     ThermalEmergency,
     DurationElapsed,
     AppQuit,
+    AssertionFailed,
 }
 
 impl StopReason {
@@ -73,6 +74,7 @@ impl StopReason {
             Self::ThermalEmergency => "系统过热，已结束待命",
             Self::DurationElapsed => "到达设定时长，已结束待命",
             Self::AppQuit => "应用退出，已恢复正常睡眠",
+            Self::AssertionFailed => "无法阻止系统睡眠，已取消待命",
         }
     }
 }

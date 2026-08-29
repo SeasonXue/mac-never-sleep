@@ -16,6 +16,7 @@ use never_sleep_core::{HostSnapshot, PowerPlan, Thermal};
 use crate::clock::{base_snapshot, monotonic_ms};
 use crate::paths::{current_exe, ensure_data_dir, launch_agent_path, session_lock_path};
 use crate::platform::Platform;
+use crate::util::xml_escape;
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 const K_IOPM_ASSERTION_LEVEL_ON: u32 = 255;
@@ -29,6 +30,8 @@ const MSG_SYSTEM_WILL_SLEEP: u32 = 0xE000_0280;
 const MSG_SYSTEM_HAS_POWERED_ON: u32 = 0xE000_0300;
 
 static SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
+static CLAMSHELL_OWNED: AtomicBool = AtomicBool::new(false);
+static OWNS_POWER: AtomicBool = AtomicBool::new(false);
 static ROOT_POWER_PORT: AtomicU32 = AtomicU32::new(0);
 static CLAMSHELL_CONNECT: AtomicU32 = AtomicU32::new(0);
 
@@ -216,7 +219,7 @@ extern "C" fn power_callback(
     }
     match message_type {
         MSG_CAN_SYSTEM_SLEEP => {
-            if SESSION_ACTIVE.load(Ordering::SeqCst) {
+            if CLAMSHELL_OWNED.load(Ordering::SeqCst) {
                 unsafe {
                     let _ = IOCancelPowerChange(port, arg);
                 }
@@ -230,7 +233,7 @@ extern "C" fn power_callback(
             let _ = IOAllowPowerChange(port, arg);
         },
         MSG_SYSTEM_HAS_POWERED_ON => {
-            if SESSION_ACTIVE.load(Ordering::SeqCst) {
+            if CLAMSHELL_OWNED.load(Ordering::SeqCst) {
                 set_clamshell_sleep_disabled(true);
             }
         }
@@ -449,6 +452,7 @@ pub struct MacPlatform {
     disk_id: Option<u32>,
     network_id: Option<u32>,
     clamshell_on: bool,
+    owns_power: bool,
     power_thread_started: bool,
 }
 
@@ -460,6 +464,7 @@ impl MacPlatform {
             disk_id: None,
             network_id: None,
             clamshell_on: false,
+            owns_power: false,
             power_thread_started: false,
         };
         me.ensure_clamshell_conn();
@@ -513,9 +518,13 @@ fn install_panic_cleanup() {
     ONCE.call_once(|| {
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            SESSION_ACTIVE.store(false, Ordering::SeqCst);
-            set_clamshell_sleep_disabled(false);
-            let _ = fs::remove_file(session_lock_path());
+            if OWNS_POWER.load(Ordering::SeqCst) {
+                OWNS_POWER.store(false, Ordering::SeqCst);
+                SESSION_ACTIVE.store(false, Ordering::SeqCst);
+                CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+                set_clamshell_sleep_disabled(false);
+                let _ = fs::remove_file(session_lock_path());
+            }
             prev(info);
         }));
     });
@@ -542,10 +551,6 @@ impl Platform for MacPlatform {
 
     fn apply_power(&mut self, plan: PowerPlan) -> Result<(), String> {
         self.ensure_clamshell_conn();
-        SESSION_ACTIVE.store(
-            plan.prevent_idle_sleep || plan.disable_clamshell_sleep,
-            Ordering::SeqCst,
-        );
         let reason = "熄屏待命：保持系统运行供远程客户端连接";
 
         if plan.prevent_idle_sleep && self.idle_id.is_none() {
@@ -584,29 +589,51 @@ impl Platform for MacPlatform {
             self.clamshell_on = false;
         }
 
-        if plan.prevent_idle_sleep || plan.disable_clamshell_sleep {
+        if plan.prevent_idle_sleep && self.idle_id.is_none() {
+            self.owns_power = true;
+            let _ = self.release_power();
+            return Err("无法创建 PreventUserIdleSystemSleep 断言".into());
+        }
+
+        self.owns_power = plan.prevent_idle_sleep || plan.disable_clamshell_sleep;
+        OWNS_POWER.store(self.owns_power, Ordering::SeqCst);
+        SESSION_ACTIVE.store(self.owns_power, Ordering::SeqCst);
+        CLAMSHELL_OWNED.store(self.clamshell_on, Ordering::SeqCst);
+
+        if self.owns_power {
             write_lock(self.clamshell_on);
         } else {
             let _ = fs::remove_file(session_lock_path());
-        }
-
-        if plan.prevent_idle_sleep && self.idle_id.is_none() {
-            return Err("无法创建 PreventUserIdleSystemSleep 断言".into());
         }
         Ok(())
     }
 
     fn release_power(&mut self) -> Result<(), String> {
-        SESSION_ACTIVE.store(false, Ordering::SeqCst);
+        let had_holds = self.owns_power
+            || self.clamshell_on
+            || self.idle_id.is_some()
+            || self.system_id.is_some()
+            || self.disk_id.is_some()
+            || self.network_id.is_some();
+        if !had_holds {
+            return Ok(());
+        }
+        if self.owns_power {
+            OWNS_POWER.store(false, Ordering::SeqCst);
+            SESSION_ACTIVE.store(false, Ordering::SeqCst);
+            CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+            let _ = fs::remove_file(session_lock_path());
+        }
+        self.owns_power = false;
         release_assertion(&mut self.idle_id);
         release_assertion(&mut self.system_id);
         release_assertion(&mut self.disk_id);
         release_assertion(&mut self.network_id);
-        if self.clamshell_on || CLAMSHELL_CONNECT.load(Ordering::SeqCst) != 0 {
+        if self.clamshell_on {
             set_clamshell_sleep_disabled(false);
             self.clamshell_on = false;
+            CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
         }
-        let _ = fs::remove_file(session_lock_path());
         Ok(())
     }
 
@@ -615,17 +642,23 @@ impl Platform for MacPlatform {
             .arg("displaysleepnow")
             .status()
             .map_err(|e| e.to_string())?;
-        if !status.success() {
-            let service = matching_service("IODisplayWrangler");
-            if service == 0 {
-                return Err("pmset displaysleepnow 失败，且找不到 IODisplayWrangler".into());
-            }
-            let key = cf_string("IORequestIdle");
-            unsafe {
-                let _ = IORegistryEntrySetCFProperty(service, key, kCFBooleanTrue);
-                let _ = IOObjectRelease(service);
-            }
-            cf_release(key);
+        if status.success() {
+            return Ok(());
+        }
+        let service = matching_service("IODisplayWrangler");
+        if service == 0 {
+            return Err("pmset displaysleepnow 失败，且找不到 IODisplayWrangler".into());
+        }
+        let key = cf_string("IORequestIdle");
+        let ret = unsafe { IORegistryEntrySetCFProperty(service, key, kCFBooleanTrue) };
+        unsafe {
+            let _ = IOObjectRelease(service);
+        }
+        cf_release(key);
+        if ret != K_IO_RETURN_SUCCESS {
+            return Err(format!(
+                "关屏失败：pmset 与 IORequestIdle 均未成功 (IOReturn {ret})"
+            ));
         }
         Ok(())
     }
@@ -678,7 +711,7 @@ impl Platform for MacPlatform {
   </array>
 </dict></plist>
 "#,
-                app.display()
+                xml_escape(&app.to_string_lossy())
             )
         } else {
             format!(
@@ -695,7 +728,7 @@ impl Platform for MacPlatform {
   </array>
 </dict></plist>
 "#,
-                exe.display()
+                xml_escape(&exe.to_string_lossy())
             )
         };
         fs::write(&plist_path, plist).map_err(|e| e.to_string())?;

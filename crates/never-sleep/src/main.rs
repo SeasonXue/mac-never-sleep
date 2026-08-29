@@ -8,6 +8,7 @@ mod paths;
 mod persist;
 mod platform;
 mod protocol;
+mod util;
 
 #[cfg(target_os = "macos")]
 mod gui;

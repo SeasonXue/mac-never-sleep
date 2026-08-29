@@ -12,7 +12,9 @@ mod status;
 mod strings;
 
 pub use config::{parse_duration_pref, AppConfig, DurationPref};
-pub use duration::{deadline_unix_secs, format_duration_zh, next_until_unix_secs};
+pub use duration::{
+    deadline_unix_secs, format_duration_zh, next_until_unix_secs, next_until_wallclock,
+};
 pub use engine::{Effect, Engine, Input, PowerPlan, StopReason};
 pub use status::{HostSnapshot, JsonStatus, Thermal, ViewModel};
 pub use strings::{APP_DISPLAY_NAME, APP_NAME, BUNDLE_ID, DEFAULT_HOTKEY_LABEL, ONBOARDING};

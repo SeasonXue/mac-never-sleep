@@ -2,7 +2,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use never_sleep_core::{
     AppConfig, DurationPref, Engine, Input, StopReason, APP_DISPLAY_NAME, DEFAULT_BATTERY_FLOOR,
     DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS, ONBOARDING,
@@ -23,6 +23,7 @@ use crate::protocol::{IpcRequest, IpcResponse};
 enum UserEvent {
     Tick,
     Hotkey,
+    Menu(tray_icon::menu::MenuId),
 }
 
 struct MenuHandles {
@@ -62,14 +63,16 @@ pub fn run() {
 
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
-    let proxy = event_loop.create_proxy();
-    let proxy_hk = proxy.clone();
+    let proxy_menu = event_loop.create_proxy();
+    let proxy_hk = proxy_menu.clone();
 
-    MenuEvent::set_event_handler(Some(move |_| {
-        let _ = proxy.send_event(UserEvent::Tick);
+    MenuEvent::set_event_handler(Some(move |event| {
+        let _ = proxy_menu.send_event(UserEvent::Menu(event.id));
     }));
-    GlobalHotKeyEvent::set_event_handler(Some(move |_| {
-        let _ = proxy_hk.send_event(UserEvent::Hotkey);
+    GlobalHotKeyEvent::set_event_handler(Some(move |event| {
+        if event.state() == HotKeyState::Pressed {
+            let _ = proxy_hk.send_event(UserEvent::Hotkey);
+        }
     }));
 
     let hotkeys = GlobalHotKeyManager::new().ok();
@@ -121,7 +124,10 @@ pub fn run() {
                     dispatch(&mut engine, platform.as_mut(), Input::Tick);
                     refresh_ui(&handles, &mut tray, &engine, platform.as_mut());
                 }
-                drain_menu_events(&mut engine, platform.as_mut(), &handles, control_flow);
+            }
+            Event::UserEvent(UserEvent::Menu(id)) => {
+                handle_menu_event(&mut engine, platform.as_mut(), &handles, control_flow, id);
+                refresh_ui(&handles, &mut tray, &engine, platform.as_mut());
             }
             Event::UserEvent(UserEvent::Hotkey) => {
                 dispatch(&mut engine, platform.as_mut(), Input::Toggle);
@@ -130,9 +136,7 @@ pub fn run() {
             Event::LoopDestroyed => {
                 stop_for_quit(&mut engine, platform.as_mut());
             }
-            _ => {
-                drain_menu_events(&mut engine, platform.as_mut(), &handles, control_flow);
-            }
+            _ => {}
         }
     });
 }
@@ -289,66 +293,63 @@ fn refresh_ui(
     }
 }
 
-fn drain_menu_events(
+fn handle_menu_event(
     engine: &mut Engine,
     platform: &mut dyn Platform,
     handles: &MenuHandles,
     control_flow: &mut ControlFlow,
+    id: tray_icon::menu::MenuId,
 ) {
-    let rx = MenuEvent::receiver();
-    while let Ok(ev) = rx.try_recv() {
-        let id = ev.id;
-        if id == handles.toggle.id() {
-            dispatch(engine, platform, Input::Toggle);
-        } else if id == handles.quit.id() {
-            stop_for_quit(engine, platform);
-            *control_flow = ControlFlow::Exit;
-        } else if id == handles.help.id() {
-            show_dialog("使用说明", ONBOARDING);
-        } else if id == handles.screen_off.id() {
-            engine.config.screen_off = !engine.config.screen_off;
-            save_config(&engine.config);
-        } else if id == handles.lid_awake.id() {
-            engine.config.keep_awake_on_lid_close = !engine.config.keep_awake_on_lid_close;
-            save_config(&engine.config);
-            if engine.is_active() {
-                dispatch(engine, platform, Input::Tick);
-            }
-        } else if id == handles.resleep.id() {
-            engine.config.resleep_display = !engine.config.resleep_display;
-            save_config(&engine.config);
-        } else if id == handles.lock_screen.id() {
-            engine.config.lock_screen = !engine.config.lock_screen;
-            save_config(&engine.config);
-        } else if id == handles.battery_floor.id() {
-            engine.config.battery_floor_percent = if engine.config.battery_floor_percent.is_some() {
-                None
-            } else {
-                Some(DEFAULT_BATTERY_FLOOR)
-            };
-            save_config(&engine.config);
-        } else if id == handles.login.id() {
-            engine.config.launch_at_login = !engine.config.launch_at_login;
-            if let Err(e) = platform.set_launch_at_login(engine.config.launch_at_login) {
-                platform.notify("登录项", &e);
-                engine.config.launch_at_login = !engine.config.launch_at_login;
-            }
-            save_config(&engine.config);
-        } else if id == handles.dur_inf.id() {
-            set_duration(engine, platform, DurationPref::Indefinite);
-        } else if id == handles.dur_1h.id() {
-            set_duration(engine, platform, DurationPref::Hours { hours: 1 });
-        } else if id == handles.dur_3h.id() {
-            set_duration(engine, platform, DurationPref::Hours { hours: 3 });
-        } else if id == handles.dur_8h.id() {
-            set_duration(engine, platform, DurationPref::Hours { hours: 8 });
-        } else if id == handles.dur_until.id() {
-            set_duration(
-                engine,
-                platform,
-                DurationPref::UntilLocal { hour: 8, minute: 0 },
-            );
+    if id == handles.toggle.id() {
+        dispatch(engine, platform, Input::Toggle);
+    } else if id == handles.quit.id() {
+        stop_for_quit(engine, platform);
+        *control_flow = ControlFlow::Exit;
+    } else if id == handles.help.id() {
+        show_dialog("使用说明", ONBOARDING);
+    } else if id == handles.screen_off.id() {
+        engine.config.screen_off = !engine.config.screen_off;
+        save_config(&engine.config);
+    } else if id == handles.lid_awake.id() {
+        engine.config.keep_awake_on_lid_close = !engine.config.keep_awake_on_lid_close;
+        save_config(&engine.config);
+        if engine.is_active() {
+            dispatch(engine, platform, Input::Tick);
         }
+    } else if id == handles.resleep.id() {
+        engine.config.resleep_display = !engine.config.resleep_display;
+        save_config(&engine.config);
+    } else if id == handles.lock_screen.id() {
+        engine.config.lock_screen = !engine.config.lock_screen;
+        save_config(&engine.config);
+    } else if id == handles.battery_floor.id() {
+        engine.config.battery_floor_percent = if engine.config.battery_floor_percent.is_some() {
+            None
+        } else {
+            Some(DEFAULT_BATTERY_FLOOR)
+        };
+        save_config(&engine.config);
+    } else if id == handles.login.id() {
+        engine.config.launch_at_login = !engine.config.launch_at_login;
+        if let Err(e) = platform.set_launch_at_login(engine.config.launch_at_login) {
+            platform.notify("登录项", &e);
+            engine.config.launch_at_login = !engine.config.launch_at_login;
+        }
+        save_config(&engine.config);
+    } else if id == handles.dur_inf.id() {
+        set_duration(engine, platform, DurationPref::Indefinite);
+    } else if id == handles.dur_1h.id() {
+        set_duration(engine, platform, DurationPref::Hours { hours: 1 });
+    } else if id == handles.dur_3h.id() {
+        set_duration(engine, platform, DurationPref::Hours { hours: 3 });
+    } else if id == handles.dur_8h.id() {
+        set_duration(engine, platform, DurationPref::Hours { hours: 8 });
+    } else if id == handles.dur_until.id() {
+        set_duration(
+            engine,
+            platform,
+            DurationPref::UntilLocal { hour: 8, minute: 0 },
+        );
     }
 }
 

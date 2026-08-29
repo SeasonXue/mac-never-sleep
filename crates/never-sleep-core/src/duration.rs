@@ -1,6 +1,31 @@
+use chrono::{Local, NaiveTime};
+
 use crate::DurationPref;
 
-/// 本地墙上时钟的下一个 HH:MM，以 unix 秒返回（UTC 时间戳）。
+/// 按本地日历计算下一个墙上时钟 HH:MM（处理夏令时切日）。
+pub fn next_until_wallclock(hour: u8, minute: u8) -> i64 {
+    let now = Local::now();
+    let time = NaiveTime::from_hms_opt(u32::from(hour), u32::from(minute), 0)
+        .unwrap_or(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let today = now.date_naive();
+    let resolve = |date: chrono::NaiveDate| {
+        date.and_time(time)
+            .and_local_timezone(Local)
+            .earliest()
+            .or_else(|| date.and_time(time).and_local_timezone(Local).latest())
+    };
+    if let Some(dt) = resolve(today) {
+        if dt > now {
+            return dt.timestamp();
+        }
+    }
+    let tomorrow = today.succ_opt().unwrap_or(today);
+    resolve(tomorrow)
+        .map(|d| d.timestamp())
+        .unwrap_or_else(|| now.timestamp() + 24 * 3600)
+}
+
+/// 固定时区偏移下的下一个 HH:MM（单测用，不处理夏令时）。
 /// `offset_secs` 为本地相对 UTC 的偏移（东八区 = 28800）。
 pub fn next_until_unix_secs(now_unix: i64, offset_secs: i32, hour: u8, minute: u8) -> i64 {
     let local = now_unix + i64::from(offset_secs);
@@ -14,17 +39,15 @@ pub fn next_until_unix_secs(now_unix: i64, offset_secs: i32, hour: u8, minute: u
 }
 
 pub fn deadline_unix_secs(
-    now_unix: i64,
-    offset_secs: i32,
+    _now_unix: i64,
+    _offset_secs: i32,
     started_unix: i64,
     pref: DurationPref,
 ) -> Option<i64> {
     match pref {
         DurationPref::Indefinite => None,
         DurationPref::Hours { hours } => Some(started_unix + i64::from(hours) * 3600),
-        DurationPref::UntilLocal { hour, minute } => {
-            Some(next_until_unix_secs(now_unix, offset_secs, hour, minute))
-        }
+        DurationPref::UntilLocal { hour, minute } => Some(next_until_wallclock(hour, minute)),
     }
 }
 
@@ -82,5 +105,13 @@ mod tests {
         assert_eq!(format_duration_zh(90), "1 分 30 秒");
         assert_eq!(format_duration_zh(3600), "1 小时");
         assert_eq!(format_duration_zh(3720), "1 小时 2 分");
+    }
+
+    #[test]
+    fn wallclock_is_in_the_future() {
+        let now = chrono::Local::now().timestamp();
+        let next = next_until_wallclock(8, 0);
+        assert!(next > now);
+        assert!(next - now <= 24 * 3600 + 60);
     }
 }
