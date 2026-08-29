@@ -124,7 +124,7 @@ cargo build -p never-sleep --release   # 请在 Mac 上
 配置文件：`~/Library/Application Support/Never Sleep/config.toml`  
 IPC 套接字：同目录 `ipc.sock`
 
-要求 macOS 12+。菜单栏以 `LSUIElement` 运行，不占 Dock。
+要求 **Rust 1.88+**、macOS 12+。菜单栏以 `LSUIElement` 运行，不占 Dock。
 
 ## 许可
 
