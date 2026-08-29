@@ -258,7 +258,7 @@ fn open_root_domain() -> Option<u32> {
         return None;
     }
     let mut conn = 0u32;
-    let task = unsafe { libc::mach_task_self() };
+    let task = unsafe { libc::mach_task_self_ };
     let ret = unsafe { IOServiceOpen(service, task, 0, &mut conn) };
     unsafe {
         let _ = IOObjectRelease(service);

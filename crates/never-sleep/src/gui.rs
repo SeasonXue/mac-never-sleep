@@ -66,7 +66,7 @@ pub fn run() {
     let proxy_menu = event_loop.create_proxy();
     let proxy_hk = proxy_menu.clone();
 
-    MenuEvent::set_event_handler(Some(move |event| {
+    MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let _ = proxy_menu.send_event(UserEvent::Menu(event.id));
     }));
     GlobalHotKeyEvent::set_event_handler(Some(move |event| {
