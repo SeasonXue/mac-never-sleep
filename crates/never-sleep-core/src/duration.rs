@@ -1,5 +1,6 @@
 use chrono::{Local, NaiveTime};
 
+use crate::i18n::Lang;
 use crate::DurationPref;
 
 /// 按本地日历计算下一个墙上时钟 HH:MM（处理夏令时切日）。
@@ -51,7 +52,37 @@ pub fn deadline_unix_secs(
     }
 }
 
-pub fn format_duration_zh(secs: u64) -> String {
+pub fn format_duration(lang: Lang, secs: u64) -> String {
+    match lang {
+        Lang::En => format_duration_en(secs),
+        Lang::Zh => format_duration_zh(secs),
+    }
+}
+
+fn format_duration_en(secs: u64) -> String {
+    if secs < 60 {
+        return format!("{secs} sec");
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        let rem = secs % 60;
+        if rem == 0 {
+            format!("{mins} min")
+        } else {
+            format!("{mins} min {rem} sec")
+        }
+    } else {
+        let hours = mins / 60;
+        let rem_m = mins % 60;
+        if rem_m == 0 {
+            format!("{hours} hr")
+        } else {
+            format!("{hours} hr {rem_m} min")
+        }
+    }
+}
+
+fn format_duration_zh(secs: u64) -> String {
     if secs < 60 {
         return format!("{secs} 秒");
     }
@@ -100,11 +131,16 @@ mod tests {
 
     #[test]
     fn format_examples() {
-        assert_eq!(format_duration_zh(8), "8 秒");
-        assert_eq!(format_duration_zh(60), "1 分钟");
-        assert_eq!(format_duration_zh(90), "1 分 30 秒");
-        assert_eq!(format_duration_zh(3600), "1 小时");
-        assert_eq!(format_duration_zh(3720), "1 小时 2 分");
+        assert_eq!(format_duration(Lang::Zh, 8), "8 秒");
+        assert_eq!(format_duration(Lang::Zh, 60), "1 分钟");
+        assert_eq!(format_duration(Lang::Zh, 90), "1 分 30 秒");
+        assert_eq!(format_duration(Lang::Zh, 3600), "1 小时");
+        assert_eq!(format_duration(Lang::Zh, 3720), "1 小时 2 分");
+        assert_eq!(format_duration(Lang::En, 8), "8 sec");
+        assert_eq!(format_duration(Lang::En, 60), "1 min");
+        assert_eq!(format_duration(Lang::En, 90), "1 min 30 sec");
+        assert_eq!(format_duration(Lang::En, 3600), "1 hr");
+        assert_eq!(format_duration(Lang::En, 3720), "1 hr 2 min");
     }
 
     #[test]

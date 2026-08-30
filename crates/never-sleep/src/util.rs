@@ -14,6 +14,13 @@ pub fn xml_escape(s: &str) -> String {
     out
 }
 
+/// True when a LaunchAgent still points at the pre-rename Chinese bundle,
+/// or at any path other than the currently running app/binary.
+#[cfg(any(test, target_os = "macos"))]
+pub fn launch_agent_is_stale(plist: &str, current_target: &str) -> bool {
+    plist.contains("熄屏待命.app") || !plist.contains(current_target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -24,5 +31,16 @@ mod tests {
             xml_escape(r#"C:\A & B <app>.app"#),
             r#"C:\A &amp; B &lt;app&gt;.app"#
         );
+    }
+
+    #[test]
+    fn launch_agent_stale_after_bundle_rename() {
+        let old = r#"<string>/Applications/熄屏待命.app</string>"#;
+        assert!(launch_agent_is_stale(old, "/Applications/Never Sleep.app"));
+        let current = r#"<string>/Applications/Never Sleep.app</string>"#;
+        assert!(!launch_agent_is_stale(
+            current,
+            "/Applications/Never Sleep.app"
+        ));
     }
 }

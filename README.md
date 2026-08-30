@@ -1,131 +1,148 @@
-# 熄屏待命（Never Sleep）
+# Never Sleep
 
-让 MacBook **屏幕关掉、电脑不睡**，方便 ChatGPT / Codex 这类客户端随时连上并控制这台机器。菜单栏一点即可，也提供给 Agent 用的命令行。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## 为什么做这个，而不是再用一遍现成工具
+Keep a MacBook **awake with the display off**, so ChatGPT / Codex and similar clients can connect and control the machine at any time. One click from the menu bar, plus an Agent-friendly CLI.
 
-系统自带 `caffeinate`、菜单栏里的 KeepingYouAwake / Amphetamine 都能「别睡」。它们的默认路径几乎都是 **屏幕也别关**，或者把「允许关屏」藏在很深的选项里。合盖保活则往往要装 Enhancer、改 `pmset`，退出后还可能把电源策略留在脏状态。
+The UI is **English by default**, with Simplified Chinese when the system language is Chinese (or when you choose it in the menu).
 
-这个产品把场景收成一件事：
+## Why this, instead of the usual tools
 
-> 人走了，屏幕必须灭（护屏、省电、隐私）；机器必须醒（远程客户端随时能连）。
+Built-in `caffeinate` and menu-bar apps like KeepingYouAwake / Amphetamine all mean “don’t sleep”. Their default path is almost always **keep the display on**, or they bury “allow display sleep” deep in options. Closed-lid stay-awake often needs an Enhancer, or rewriting `pmset`, and can leave power policy dirty after quit.
 
-体验上的硬指标：
+This product collapses the scenario to one job:
 
-1. **一键进入**：菜单第一项就是「开始熄屏待命」，1.5 秒后关屏，系统保持运行。
-2. **不跟人抢屏幕**：你坐在电脑前敲键盘，绝不强制关屏；HID 空闲一段时间或合上盖，再自动关。
-3. **远程操作把屏幕点亮也不怕**：人不在时周期性重申 `displaysleepnow`。Codex 用合成事件点亮屏幕时，几秒内会再灭掉。
-4. **回来的路永远在**：全局快捷键 `⌥⌘P`（屏幕灭了也能按），或再点菜单。
-5. **不改系统节能设置**：只用进程内 IOKit 断言。退出、崩溃、再次启动会还原合盖标志，不会留下 `pmset disablesleep 1` 这种开机还在的坑。
-6. **Agent 友好**：同一套状态可被 `never-sleep status --json` 读取，Codex 可以自己 `never-sleep on --for 8h`。
+> When you leave, the display must go dark (panel, power, privacy). The machine must stay awake (remote clients can connect any time).
 
-## 用法
+Hard requirements:
 
-### 菜单栏（推荐）
+1. **One-click start**: the first menu item is “Start Screen-Off Standby”. The display sleeps after 1.5 seconds; the system keeps running.
+2. **Do not fight the person at the keyboard**: while you type, it never force-sleeps the display; after HID idle or a closed lid, it sleeps the display again.
+3. **Remote input waking the panel is fine**: while you are away it reasserts `displaysleepnow`. If Codex lights the screen with synthetic events, it goes dark again within a few seconds.
+4. **There is always a way back**: global hotkey `⌥⌘P` (works with the display off), or the menu.
+5. **Do not rewrite Energy Saver**: only in-process IOKit assertions. Quit, crash, or relaunch restores the clamshell flag. No leftover `pmset disablesleep 1`.
+6. **Agent-friendly**: the same state is readable via `never-sleep status --json`. Codex can run `never-sleep on --for 8h`.
 
-在 Mac 上：
+## Usage
+
+### Menu bar (recommended)
+
+On a Mac:
 
 ```bash
 cargo build -p never-sleep --release
 ./scripts/package-macos.sh
-open dist/熄屏待命.app
+open "dist/Never Sleep.app"
 ```
 
-菜单栏会出现月亮图标。点「开始熄屏待命」。
+A moon icon appears in the menu bar. Click **Start Screen-Off Standby**.
 
-| 选项 | 默认 | 含义 |
+| Option | Default | Meaning |
 | --- | --- | --- |
-| 立即关闭屏幕 | 开 | 主功能，真·显示器休眠，不是把亮度拉到 0 |
-| 合盖尽量保持运行 | 开 | 尽力而为；**最稳妥仍是开盖熄屏** |
-| 人离开后自动再关屏 | 开 | 远程代理误亮屏幕时盖回去 |
-| 关屏时锁定登录 | 关 | GUI 远程操控需要解锁会话，所以默认关 |
-| 电量低于 20% 时结束 | 开 | 避免在背包里把电池耗干 |
-| 时长 | 无限期 | 也可 1/3/8 小时，或到当天 08:00 |
+| Sleep display immediately | On | The main feature: real display sleep, not brightness 0 |
+| Keep running when the lid is closed | On | Best-effort; **lid open + display asleep is still the reliable path** |
+| Re-sleep the display after you leave | On | Puts the panel back to sleep if a remote agent wakes it |
+| Lock the session when the display sleeps | Off | Remote GUI needs an unlocked session, so this stays off |
+| End when battery is below 20% | On | Avoid draining the pack in a bag |
+| Duration | Indefinite | Also 1 / 3 / 8 hours, or until 08:00 local time |
+| Language | English, or Chinese on a Chinese system | English / 简体中文; `--lang` and `NEVER_SLEEP_LANG` override |
 
-### 命令行
+### Command line
 
-菜单栏运行时，命令会打到同一个进程：
+While the menu bar is running, commands talk to the same process:
 
 ```bash
 never-sleep on --for 8h
 never-sleep status --json
 never-sleep off
-never-sleep doctor      # 看断言、电池、合盖
-never-sleep cleanup     # 进程异常退出后的保险
+never-sleep doctor      # assertions, battery, lid
+never-sleep cleanup     # safety net after an abnormal exit
 never-sleep explain
+never-sleep --lang zh status
 ```
 
-SSH 上没有菜单栏时，`never-sleep on` 会以前台方式占用该进程（类似 `caffeinate`），Ctrl-C 结束。
+Over SSH with no menu bar, `never-sleep on` occupies the process in the foreground (like `caffeinate`). Ctrl-C ends it.
 
-给 Agent 的最小片段：
+Minimal Agent snippet:
 
 ```bash
 never-sleep on --for 8h
-# …长时间任务…
+# …long-running task…
 never-sleep off
 ```
 
-## 技术方案
+### Language
 
-电源语义在 macOS 上是拆开的，这是本应用能「关屏 + 不睡」的前提：
+Priority, English last as the fallback:
 
-| 能力 | 做法 | 作用范围 |
+1. `--lang en|zh` or `NEVER_SLEEP_LANG=en|zh` for this process
+2. The Language menu (saved in `config.toml`)
+3. macOS preferred languages / Unix `LANG`
+4. **English**
+
+JSON output stays English so agents have a stable contract.
+
+## How it works
+
+Power semantics on macOS are split, which is why “display off + stay awake” is possible:
+
+| Capability | Mechanism | Scope |
 | --- | --- | --- |
-| 阻止空闲睡眠 | `PreventUserIdleSystemSleep` | 官方、进程级、关屏仍允许 |
-| 阻止磁盘休眠 | `PreventDiskIdle` | 远程读写更稳 |
-| 保持网络 | `NetworkClientActive` | 降低 Wi-Fi 打盹 |
-| 关屏 | `pmset displaysleepnow`，失败则 `IODisplayWrangler IORequestIdle` | 不阻止系统睡眠 |
-| 合盖尽力 | `PreventSystemSleep`（主要 AC）+ RootDomain 选择器 12 关闭 clamshell sleep + `CanSystemSleep` 时 `IOCancelPowerChange` | **不保证**所有机型/系统版本 |
-| 看门狗 | 人不在则每 3 秒重申关屏 | 对付远程 HID/合成输入 |
-| 「人在不在」 | `IOHIDSystem HIDIdleTime` + 合盖状态 | 合成事件通常不重置 HID 空闲，正好 |
+| Block idle sleep | `PreventUserIdleSystemSleep` | Official, process-level, display sleep still allowed |
+| Block disk idle | `PreventDiskIdle` | More reliable remote I/O |
+| Keep the network up | `NetworkClientActive` | Less Wi-Fi dozing |
+| Sleep the display | `pmset displaysleepnow`, else `IODisplayWrangler IORequestIdle` | Does not block system sleep |
+| Closed lid, best effort | `PreventSystemSleep` (mainly AC) + RootDomain selector 12 to disable clamshell sleep + `IOCancelPowerChange` on `CanSystemSleep` | **Not guaranteed** on every model / OS |
+| Watchdog | Reassert display sleep every 3s while you are away | Synthetic / remote HID |
+| “Is a person here?” | `IOHIDSystem HIDIdleTime` + lid state | Synthetic events usually do not reset HID idle — that is what we want |
 
-刻意不做的事：
+Deliberately not done:
 
-- **不**默认执行 `sudo pmset -a disablesleep 1`。它会写进系统偏好，重启后还在，App 崩了电脑就再也不睡。
-- **不**使用 `PreventUserIdleDisplaySleep` / `caffeinate -d`，那会让屏幕一直亮着，和护屏目标相反。
+- **No** default `sudo pmset -a disablesleep 1`. It writes system preferences, survives reboot, and a crashed app would leave the Mac unable to sleep.
+- **No** `PreventUserIdleDisplaySleep` / `caffeinate -d`. Those keep the panel lit, which is the opposite of protecting it.
 
-合盖说明（请务必读）：Apple 在无外接屏时合盖倾向于整机睡眠，这是散热设计。选择器 12 在部分 Apple Silicon + 较新系统上有效，在更新的系统上可能被无视。UI 里写的是「尽量」，诊断命令 `never-sleep doctor` 可核对 `pmset -g assertions`。护屏主路径是 **开盖 + 显示器休眠**，这是 IOKit 官方支持、也最护屏的组合。
+Closed-lid note (please read): with no external display, Apple prefers full-machine sleep on lid close; that is a thermal design. Selector 12 works on some Apple Silicon + newer OS versions and may be ignored on others. The UI says “best effort”. `never-sleep doctor` can check `pmset -g assertions`. The display-protection path is **lid open + display sleep**, which IOKit supports and which is easiest on the panel.
 
-安全网：
+Safety nets:
 
-- 电池低于阈值（未插电）自动结束待命
-- 过热 `Critical` 时结束待命
-- `~/Library/Application Support/Never Sleep/session.lock` 记录 pid；下次启动发现进程已死会还原合盖标志
-- panic hook 同样还原
+- Standby ends on battery below the threshold (off AC)
+- Standby ends on thermal `Critical`
+- `~/Library/Application Support/Never Sleep/session.lock` records the pid; the next launch restores the clamshell flag if that process is dead
+- The panic hook restores it as well
 
-架构：
+Architecture:
 
 ```
-never-sleep-core   纯策略（可在 Linux 单测）
-never-sleep        CLI + macOS 菜单栏
+never-sleep-core   policy only (unit-tested on Linux)
+never-sleep        CLI + macOS menu bar
 ```
 
-引擎只输出 `ApplyPower` / `SleepDisplay` / `LockSession` / `Notify`，平台层负责 IOKit。这样关屏策略不依赖本机能不能编译 AppKit。
+The engine only emits `ApplyPower` / `SleepDisplay` / `LockSession` / `Notify`. The platform layer owns IOKit, so display-sleep policy does not depend on whether this machine can compile AppKit.
 
-## 与常见工具对比
+## Compared with common tools
 
-| | 熄屏待命 | caffeinate | KeepingYouAwake | Amphetamine |
+| | Never Sleep | caffeinate | KeepingYouAwake | Amphetamine |
 | --- | --- | --- | --- | --- |
-| 默认关屏 | 是，还强制关 | `-i` 才允许关屏 | 否 | 需改会话选项 |
-| 远程点亮后再关 | 是 | 否 | 否 | 否 |
-| 人在电脑前不抢屏 | 是 | 否 | 否 | 否 |
-| 合盖 | 尽力而为 | `-s` 仅 AC | 明确不支持 | 较强，常要 Enhancer |
-| 改系统 pmset | 否 | 否 | 否 | 部分模式会 |
-| JSON / Agent CLI | 是 | 否 | 否 | 否 |
+| Display off by default | Yes, and it reasserts | only with `-i` | No | Session option |
+| Re-sleep after a remote wake | Yes | No | No | No |
+| Does not steal the screen while you are there | Yes | No | No | No |
+| Closed lid | Best effort | `-s` on AC only | Explicitly unsupported | Stronger, often needs Enhancer |
+| Rewrites system pmset | No | No | No | Some modes |
+| JSON / Agent CLI | Yes | No | No | No |
 
-## 开发
+## Development
 
 ```bash
-cargo test --workspace          # Linux / Mac 都可跑核心测试
-# 菜单栏与 IOKit 只在 macOS 链接
-cargo build -p never-sleep --release   # 请在 Mac 上
+cargo test --workspace          # core tests on Linux or Mac
+# Menu bar and IOKit link only on macOS
+cargo build -p never-sleep --release   # on a Mac
 ```
 
-配置文件：`~/Library/Application Support/Never Sleep/config.toml`  
-IPC 套接字：同目录 `ipc.sock`
+Config: `~/Library/Application Support/Never Sleep/config.toml`  
+IPC socket: `ipc.sock` in the same directory
 
-要求 **Rust 1.88+**、macOS 12+。菜单栏以 `LSUIElement` 运行，不占 Dock。
+Requires **Rust 1.88+** and macOS 12+. The menu bar runs as `LSUIElement` and does not take a Dock slot.
 
-## 许可
+## License
 
 MIT

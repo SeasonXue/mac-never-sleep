@@ -1,0 +1,4 @@
+/* Simplified Chinese */
+CFBundleDisplayName = "熄屏待命";
+CFBundleName = "熄屏待命";
+NSAppleEventsUsageDescription = "熄屏待命用通知和可选锁屏与系统对话。";

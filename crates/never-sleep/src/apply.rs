@@ -4,12 +4,13 @@ use crate::persist::save_config;
 use crate::platform::Platform;
 
 pub fn apply_effects(engine: &Engine, platform: &mut dyn Platform, effects: &[Effect]) -> bool {
+    let t = engine.config.tr();
     let mut power_ok = true;
     for effect in effects {
         match effect {
             Effect::ApplyPower(plan) => {
                 if let Err(e) = platform.apply_power(*plan) {
-                    platform.notify("熄屏待命", &format!("电源断言失败：{e}"));
+                    platform.notify(t.app_display_name(), &t.power_assertion_failed(&e));
                     power_ok = false;
                     break;
                 }
@@ -19,7 +20,7 @@ pub fn apply_effects(engine: &Engine, platform: &mut dyn Platform, effects: &[Ef
             }
             Effect::SleepDisplay => {
                 if let Err(e) = platform.sleep_display() {
-                    eprintln!("关屏失败：{e}");
+                    eprintln!("{}", t.sleep_display_failed(&e));
                 }
             }
             Effect::LockSession => platform.lock_session(),

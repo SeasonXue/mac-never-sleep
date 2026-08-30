@@ -4,6 +4,7 @@ mod clock;
 mod foreground;
 mod icon;
 mod ipc;
+mod locale;
 mod paths;
 mod persist;
 mod platform;
@@ -14,15 +15,18 @@ mod util;
 mod gui;
 
 use clap::Parser;
-use never_sleep_core::ONBOARDING;
+use never_sleep_core::{Lang, StopReason, Tr, LANG_ENV};
 
 use crate::cli::{Cli, Command};
 use crate::ipc::try_send;
+use crate::persist::load_config;
 use crate::platform::default_platform;
 use crate::protocol::{IpcRequest, IpcResponse};
 
 fn main() {
     let cli = Cli::parse();
+    apply_lang_override(cli.lang.as_deref());
+    let t = ui_tr();
 
     if cli.menubar || cli.command.is_none() {
         #[cfg(target_os = "macos")]
@@ -39,7 +43,7 @@ fn main() {
                 println!();
                 return;
             }
-            eprintln!("菜单栏仅支持 macOS。");
+            eprintln!("{}", t.menubar_macos_only());
             std::process::exit(1);
         }
     }
@@ -56,45 +60,64 @@ fn main() {
         Command::Cleanup => {
             let p = default_platform();
             p.cleanup_orphans();
-            println!("已尝试还原合盖睡眠标志并清除残留锁。");
+            println!("{}", t.cleanup_done());
         }
         Command::Explain => {
-            println!("{ONBOARDING}");
+            println!("{}", t.onboarding());
         }
     }
 }
 
+fn apply_lang_override(raw: Option<&str>) {
+    if let Some(raw) = raw {
+        if Lang::parse_opt(raw).is_some() {
+            std::env::set_var(LANG_ENV, raw);
+        }
+    }
+}
+
+fn ui_tr() -> Tr {
+    Tr::new(load_config().lang())
+}
+
 fn print_resp(resp: &IpcResponse, json: bool) {
+    let t = ui_tr();
     if json {
         println!("{}", serde_json::to_string_pretty(resp).unwrap());
         return;
     }
     if !resp.ok {
-        eprintln!("{}", resp.error.as_deref().unwrap_or("失败"));
+        eprintln!("{}", resp.error.as_deref().unwrap_or(t.failed()));
         std::process::exit(1);
     }
     if let Some(st) = &resp.status {
         if st.active {
             println!(
-                "待命中 · 屏幕 {} · {} · {}{}",
-                st.display,
-                if st.lid == "closed" {
-                    "合盖"
-                } else {
-                    "开盖"
-                },
-                if st.on_ac {
-                    "电源适配器"
-                } else {
-                    "电池"
-                },
-                st.battery
-                    .map(|b| format!(" · 电量 {b}%"))
-                    .unwrap_or_default()
+                "{}",
+                t.cli_status_line(
+                    &st.display,
+                    if st.lid == "closed" {
+                        t.lid_closed()
+                    } else {
+                        t.lid_open()
+                    },
+                    if st.on_ac {
+                        t.power_ac()
+                    } else {
+                        t.power_battery()
+                    },
+                    st.battery
+                )
             );
         } else {
-            println!("未待命。");
-            if let Some(r) = &st.stop_reason {
+            println!("{}", t.not_in_standby());
+            if let Some(code) = &st.stop_reason_code {
+                if let Some(reason) = StopReason::from_code(code) {
+                    println!("{}", reason.label(load_config().lang()));
+                } else if let Some(r) = &st.stop_reason {
+                    println!("{r}");
+                }
+            } else if let Some(r) = &st.stop_reason {
                 println!("{r}");
             }
         }
@@ -102,6 +125,16 @@ fn print_resp(resp: &IpcResponse, json: bool) {
 }
 
 fn cmd_on(for_raw: Option<String>, json: bool) {
+    let t = ui_tr();
+    let parse_lang = if json { Lang::En } else { load_config().lang() };
+    let duration = match crate::foreground::parse_optional_duration(for_raw.as_deref(), parse_lang)
+    {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
     let req = IpcRequest::On {
         duration: for_raw.clone(),
     };
@@ -110,16 +143,9 @@ fn cmd_on(for_raw: Option<String>, json: bool) {
         return;
     }
     if json {
-        eprintln!("菜单栏未运行，以前台模式启动（JSON 状态请另开终端查询）。");
+        eprintln!("{}", t.menubar_missing_foreground_json());
     }
     let mut platform = default_platform();
-    let duration = match crate::foreground::parse_optional_duration(for_raw.as_deref()) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(2);
-        }
-    };
     if let Err(e) = crate::foreground::run_foreground(platform.as_mut(), duration) {
         eprintln!("{e}");
         std::process::exit(1);
@@ -132,7 +158,7 @@ fn cmd_simple(req: IpcRequest, json: bool, _allow_local: bool) {
         return;
     }
     if !_allow_local {
-        eprintln!("菜单栏未运行。请先打开「熄屏待命」，或使用 never-sleep on 以前台方式启动。");
+        eprintln!("{}", ui_tr().menubar_not_running());
         std::process::exit(1);
     }
 }
@@ -172,5 +198,12 @@ mod tests {
             protocol::parse_on_duration(Some("3h")).unwrap(),
             Some(DurationPref::Hours { hours: 3 })
         ));
+        let err =
+            protocol::parse_on_duration_in(Some("nope"), never_sleep_core::Lang::Zh).unwrap_err();
+        assert!(err.contains("HH:MM"), "{err}");
+        assert_ne!(
+            err,
+            protocol::parse_on_duration_in(Some("nope"), never_sleep_core::Lang::En).unwrap_err()
+        );
     }
 }

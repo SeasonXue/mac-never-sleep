@@ -1,5 +1,6 @@
 use crate::config::AppConfig;
-use crate::duration::{deadline_unix_secs, format_duration_zh};
+use crate::duration::{deadline_unix_secs, format_duration};
+use crate::i18n::{Lang, Tr};
 use crate::status::{build_view_model, HostSnapshot, JsonStatus, Thermal, ViewModel};
 use crate::DurationPref;
 use crate::SLEEP_DISPLAY_DEBOUNCE_MS;
@@ -67,14 +68,43 @@ pub enum StopReason {
 }
 
 impl StopReason {
-    pub fn label_zh(self) -> &'static str {
+    pub fn label(self, lang: Lang) -> &'static str {
+        let t = Tr::new(lang);
         match self {
-            Self::User => "已由你结束",
-            Self::BatteryFloor => "电量过低，已结束待命以免耗干电池",
-            Self::ThermalEmergency => "系统过热，已结束待命",
-            Self::DurationElapsed => "到达设定时长，已结束待命",
-            Self::AppQuit => "应用退出，已恢复正常睡眠",
-            Self::AssertionFailed => "无法阻止系统睡眠，已取消待命",
+            Self::User => t.stop_user(),
+            Self::BatteryFloor => t.stop_battery(),
+            Self::ThermalEmergency => t.stop_thermal(),
+            Self::DurationElapsed => t.stop_duration(),
+            Self::AppQuit => t.stop_quit(),
+            Self::AssertionFailed => t.stop_assertion(),
+        }
+    }
+
+    /// Stable English text for JSON / agents.
+    pub fn label_en(self) -> &'static str {
+        self.label(Lang::En)
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::BatteryFloor => "battery_floor",
+            Self::ThermalEmergency => "thermal_emergency",
+            Self::DurationElapsed => "duration_elapsed",
+            Self::AppQuit => "app_quit",
+            Self::AssertionFailed => "assertion_failed",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "user" => Some(Self::User),
+            "battery_floor" => Some(Self::BatteryFloor),
+            "thermal_emergency" => Some(Self::ThermalEmergency),
+            "duration_elapsed" => Some(Self::DurationElapsed),
+            "app_quit" => Some(Self::AppQuit),
+            "assertion_failed" => Some(Self::AssertionFailed),
+            _ => None,
         }
     }
 }
@@ -94,7 +124,7 @@ pub struct Engine {
     pub config: AppConfig,
     session: Option<Session>,
     optimistic_display_asleep: bool,
-    last_stop_reason: Option<String>,
+    last_stop_reason: Option<StopReason>,
     last_plan: PowerPlan,
 }
 
@@ -159,24 +189,21 @@ impl Engine {
         self.last_plan = plan;
         effects.push(Effect::ApplyPower(plan));
 
+        let t = self.config.tr();
         let mut body = if self.config.screen_off {
-            format!(
-                "约 {} 秒后关闭屏幕，电脑保持运行。按 {} 结束。",
+            t.notify_started_body_screen_off(
                 (self.config.display_off_delay_ms.max(1) + 999) / 1000,
-                crate::DEFAULT_HOTKEY_LABEL
+                crate::DEFAULT_HOTKEY_LABEL,
             )
         } else {
-            format!(
-                "电脑将保持运行（不强制关屏）。按 {} 结束。",
-                crate::DEFAULT_HOTKEY_LABEL
-            )
+            t.notify_started_body_keep_awake(crate::DEFAULT_HOTKEY_LABEL)
         };
         if let Some(d) = deadline {
             let rem = d.saturating_sub(host.unix_secs).max(0) as u64;
-            body.push_str(&format!(" 剩余 {}。", format_duration_zh(rem)));
+            body.push_str(&t.remaining_clause(&format_duration(self.config.lang(), rem)));
         }
         effects.push(Effect::Notify {
-            title: "已进入熄屏待命".into(),
+            title: t.notify_started_title().into(),
             body,
         });
         self.tick(host, effects);
@@ -188,17 +215,18 @@ impl Engine {
         }
         self.last_plan = PowerPlan::off();
         self.optimistic_display_asleep = host.display_asleep.unwrap_or(false);
-        self.last_stop_reason = Some(reason.label_zh().into());
+        self.last_stop_reason = Some(reason);
         effects.push(Effect::ReleasePower);
+        let t = self.config.tr();
         if !matches!(reason, StopReason::AppQuit | StopReason::User) {
             effects.push(Effect::Notify {
-                title: "熄屏待命已结束".into(),
-                body: reason.label_zh().into(),
+                title: t.notify_ended_title().into(),
+                body: reason.label(self.config.lang()).into(),
             });
         } else if matches!(reason, StopReason::User) {
             effects.push(Effect::Notify {
-                title: "熄屏待命已结束".into(),
-                body: "系统恢复正常睡眠策略。".into(),
+                title: t.notify_ended_title().into(),
+                body: t.notify_ended_user_body().into(),
             });
         }
     }
@@ -297,13 +325,16 @@ impl Engine {
             Some(s) => (Some(s.started_ms), s.deadline_unix),
             None => (None, None),
         };
+        let last_stop = self
+            .last_stop_reason
+            .map(|r| r.label(self.config.lang()).to_string());
         build_view_model(
             &self.config,
             self.is_active(),
             started,
             deadline,
             host,
-            self.last_stop_reason.as_deref(),
+            last_stop.as_deref(),
             self.display_asleep(host),
         )
     }
@@ -334,7 +365,8 @@ impl Engine {
             remaining_secs: remaining,
             user_present: host.user_present(self.config.user_idle_resleep_ms),
             elapsed_secs: elapsed,
-            stop_reason: self.last_stop_reason.clone(),
+            stop_reason: self.last_stop_reason.map(|r| r.label_en().to_string()),
+            stop_reason_code: self.last_stop_reason.map(|r| r.code().to_string()),
             screen_off_enabled: self.config.screen_off,
             lid_awake_enabled: self.config.keep_awake_on_lid_close,
         }
@@ -465,6 +497,12 @@ mod tests {
         let e = eng.handle(Input::Tick, &h);
         assert!(has_release(&e));
         assert!(!eng.is_active());
+        let st = eng.json_status(&h);
+        assert_eq!(st.stop_reason_code.as_deref(), Some("battery_floor"));
+        assert_eq!(
+            st.stop_reason.as_deref(),
+            Some(StopReason::BatteryFloor.label_en())
+        );
     }
 
     #[test]
@@ -559,6 +597,17 @@ mod tests {
     #[test]
     fn view_model_primary_action() {
         let mut eng = Engine::new(cfg());
+        let h = host(0);
+        assert_eq!(eng.view(&h).primary_action, "Start Screen-Off Standby");
+        eng.handle(Input::Start, &h);
+        assert_eq!(eng.view(&h).primary_action, "End Standby");
+    }
+
+    #[test]
+    fn view_model_chinese() {
+        let mut cfg = cfg();
+        cfg.language = Some(Lang::Zh);
+        let mut eng = Engine::new(cfg);
         let h = host(0);
         assert_eq!(eng.view(&h).primary_action, "开始熄屏待命");
         eng.handle(Input::Start, &h);

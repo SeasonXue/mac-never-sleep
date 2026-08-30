@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{format_duration_zh, AppConfig, DurationPref};
+use crate::duration::format_duration;
+use crate::{AppConfig, DurationPref};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,17 +18,17 @@ impl Thermal {
     }
 }
 
-/// 从系统采样的瞬时状态。GUI 与 CLI 共用。
+/// Instantaneous host sample. Shared by GUI and CLI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostSnapshot {
     pub monotonic_ms: u64,
     pub unix_secs: i64,
-    /// 本地相对 UTC 的秒偏移
+    /// Seconds east of UTC.
     pub utc_offset_secs: i32,
     pub on_ac: bool,
     pub battery_percent: Option<u8>,
     pub lid_closed: bool,
-    /// `None` 表示探测不到，由引擎自己的乐观状态兜底
+    /// `None` if we cannot tell; the engine falls back to its optimistic flag.
     pub display_asleep: Option<bool>,
     pub hid_idle_ms: u64,
     pub thermal: Thermal,
@@ -50,6 +51,8 @@ pub struct JsonStatus {
     pub user_present: bool,
     pub elapsed_secs: Option<u64>,
     pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason_code: Option<String>,
     pub screen_off_enabled: bool,
     pub lid_awake_enabled: bool,
 }
@@ -81,12 +84,14 @@ pub fn build_view_model(
     last_stop: Option<&str>,
     display_asleep: bool,
 ) -> ViewModel {
+    let t = cfg.tr();
+    let lang = cfg.lang();
     let mut warnings = Vec::new();
     if active && cfg.keep_awake_on_lid_close && !host.on_ac {
-        warnings.push("合盖保活在电池供电下不太可靠，建议插电".into());
+        warnings.push(t.warn_lid_on_battery().into());
     }
     if active && host.lid_closed && cfg.keep_awake_on_lid_close {
-        warnings.push("合盖待命是尽力而为；最稳妥是开盖熄屏".into());
+        warnings.push(t.warn_lid_best_effort().into());
     }
     if !active {
         if let Some(reason) = last_stop {
@@ -99,46 +104,53 @@ pub fn build_view_model(
 
     let status_line = if active {
         match elapsed {
-            Some(s) => format!("待命中 · 已 {}", format_duration_zh(s)),
-            None => "待命中".into(),
+            Some(s) => t.standby_elapsed(&format_duration(lang, s)),
+            None => t.standby_status().into(),
         }
     } else {
-        "未待命 · 点击开始".into()
+        t.idle_status().into()
     };
 
     let mut details: Vec<String> = Vec::new();
     if active {
         details.push(
             if display_asleep {
-                "屏幕已关"
+                t.display_asleep()
             } else if host.user_present(cfg.user_idle_resleep_ms) {
-                "你正在用，屏幕由你控制"
+                t.user_controls_display()
             } else {
-                "屏幕待关"
+                t.display_pending()
             }
             .into(),
         );
-        details.push(if host.lid_closed { "合盖" } else { "开盖" }.into());
+        details.push(
+            if host.lid_closed {
+                t.lid_closed()
+            } else {
+                t.lid_open()
+            }
+            .into(),
+        );
         details.push(
             if host.on_ac {
-                "电源适配器"
+                t.power_ac()
             } else {
-                "电池"
+                t.power_battery()
             }
             .into(),
         );
         if let Some(b) = host.battery_percent {
-            details.push(format!("电量 {b}%"));
+            details.push(t.battery_percent(b));
         }
         if let Some(r) = remaining {
-            details.push(format!("剩余 {}", format_duration_zh(r)));
+            details.push(t.remaining(&format_duration(lang, r)));
         }
     } else {
         details.push(
             if cfg.screen_off {
-                "将关闭屏幕、保持系统运行"
+                t.will_sleep_display()
             } else {
-                "将保持系统运行（不强制关屏）"
+                t.will_keep_awake_only()
             }
             .into(),
         );
@@ -147,15 +159,15 @@ pub fn build_view_model(
     let detail_line = details.join(" · ");
 
     let primary_action = if active {
-        "结束待命".into()
+        t.end_standby().into()
     } else {
-        "开始熄屏待命".into()
+        t.start_standby().into()
     };
 
     let tooltip = if active {
-        format!("{} · 运行中", crate::APP_DISPLAY_NAME)
+        t.tooltip_active()
     } else {
-        format!("{} · 已关闭", crate::APP_DISPLAY_NAME)
+        t.tooltip_idle()
     };
 
     ViewModel {
@@ -164,7 +176,7 @@ pub fn build_view_model(
         detail_line,
         primary_action,
         tooltip,
-        remaining_label: remaining.map(format_duration_zh),
+        remaining_label: remaining.map(|r| format_duration(lang, r)),
         warnings,
         duration: cfg.duration,
         screen_off: cfg.screen_off,

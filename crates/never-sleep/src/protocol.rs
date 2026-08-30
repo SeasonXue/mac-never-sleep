@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use never_sleep_core::{parse_duration_pref, DurationPref, JsonStatus};
+use never_sleep_core::{parse_duration_pref_in, DurationPref, JsonStatus, Lang};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,8 +61,13 @@ impl IpcResponse {
 
 #[allow(dead_code)]
 pub fn parse_on_duration(raw: Option<&str>) -> Result<Option<DurationPref>, String> {
+    parse_on_duration_in(raw, Lang::En)
+}
+
+#[allow(dead_code)]
+pub fn parse_on_duration_in(raw: Option<&str>, lang: Lang) -> Result<Option<DurationPref>, String> {
     match raw {
         None => Ok(None),
-        Some(s) => parse_duration_pref(s).map(Some),
+        Some(s) => parse_duration_pref_in(s, lang).map(Some),
     }
 }

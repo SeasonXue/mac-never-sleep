@@ -1,0 +1,148 @@
+# 熄屏待命（Never Sleep）
+
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+让 MacBook **屏幕关掉、电脑不睡**，方便 ChatGPT / Codex 这类客户端随时连上并控制这台机器。菜单栏一点即可，也提供给 Agent 用的命令行。
+
+界面 **默认英语**；系统语言为中文时（或在菜单里选择「简体中文」）使用中文。
+
+## 为什么做这个，而不是再用一遍现成工具
+
+系统自带 `caffeinate`、菜单栏里的 KeepingYouAwake / Amphetamine 都能「别睡」。它们的默认路径几乎都是 **屏幕也别关**，或者把「允许关屏」藏在很深的选项里。合盖保活则往往要装 Enhancer、改 `pmset`，退出后还可能把电源策略留在脏状态。
+
+这个产品把场景收成一件事：
+
+> 人走了，屏幕必须灭（护屏、省电、隐私）；机器必须醒（远程客户端随时能连）。
+
+体验上的硬指标：
+
+1. **一键进入**：菜单第一项就是「开始熄屏待命」，1.5 秒后关屏，系统保持运行。
+2. **不跟人抢屏幕**：你坐在电脑前敲键盘，绝不强制关屏；HID 空闲一段时间或合上盖，再自动关。
+3. **远程操作把屏幕点亮也不怕**：人不在时周期性重申 `displaysleepnow`。Codex 用合成事件点亮屏幕时，几秒内会再灭掉。
+4. **回来的路永远在**：全局快捷键 `⌥⌘P`（屏幕灭了也能按），或再点菜单。
+5. **不改系统节能设置**：只用进程内 IOKit 断言。退出、崩溃、再次启动会还原合盖标志，不会留下 `pmset disablesleep 1` 这种开机还在的坑。
+6. **Agent 友好**：同一套状态可被 `never-sleep status --json` 读取，Codex 可以自己 `never-sleep on --for 8h`。
+
+## 用法
+
+### 菜单栏（推荐）
+
+在 Mac 上：
+
+```bash
+cargo build -p never-sleep --release
+./scripts/package-macos.sh
+open "dist/Never Sleep.app"
+```
+
+菜单栏会出现月亮图标。点「开始熄屏待命」。Finder 在中文系统上会显示「熄屏待命」。
+
+| 选项 | 默认 | 含义 |
+| --- | --- | --- |
+| 立即关闭屏幕 | 开 | 主功能，真·显示器休眠，不是把亮度拉到 0 |
+| 合盖尽量保持运行 | 开 | 尽力而为；**最稳妥仍是开盖熄屏** |
+| 人离开后自动再关屏 | 开 | 远程代理误亮屏幕时盖回去 |
+| 关屏时锁定登录 | 关 | GUI 远程操控需要解锁会话，所以默认关 |
+| 电量低于 20% 时结束 | 开 | 避免在背包里把电池耗干 |
+| 时长 | 无限期 | 也可 1/3/8 小时，或到当天 08:00 |
+| 语言 | 中文系统为中文，否则英语 | English / 简体中文；`--lang` 与 `NEVER_SLEEP_LANG` 可覆盖 |
+
+### 命令行
+
+菜单栏运行时，命令会打到同一个进程：
+
+```bash
+never-sleep on --for 8h
+never-sleep status --json
+never-sleep off
+never-sleep doctor      # 看断言、电池、合盖
+never-sleep cleanup     # 进程异常退出后的保险
+never-sleep explain
+never-sleep --lang zh status
+```
+
+SSH 上没有菜单栏时，`never-sleep on` 会以前台方式占用该进程（类似 `caffeinate`），Ctrl-C 结束。
+
+给 Agent 的最小片段：
+
+```bash
+never-sleep on --for 8h
+# …长时间任务…
+never-sleep off
+```
+
+### 语言
+
+优先级（最后才落到英语）：
+
+1. 本进程 `--lang en|zh` 或 `NEVER_SLEEP_LANG=en|zh`
+2. 菜单「语言」里的选择（写入 `config.toml`）
+3. macOS 首选语言 / Unix `LANG`
+4. **英语**
+
+JSON 输出始终为英语，方便 Agent 使用稳定字段。
+
+## 技术方案
+
+电源语义在 macOS 上是拆开的，这是本应用能「关屏 + 不睡」的前提：
+
+| 能力 | 做法 | 作用范围 |
+| --- | --- | --- |
+| 阻止空闲睡眠 | `PreventUserIdleSystemSleep` | 官方、进程级、关屏仍允许 |
+| 阻止磁盘休眠 | `PreventDiskIdle` | 远程读写更稳 |
+| 保持网络 | `NetworkClientActive` | 降低 Wi-Fi 打盹 |
+| 关屏 | `pmset displaysleepnow`，失败则 `IODisplayWrangler IORequestIdle` | 不阻止系统睡眠 |
+| 合盖尽力 | `PreventSystemSleep`（主要 AC）+ RootDomain 选择器 12 关闭 clamshell sleep + `CanSystemSleep` 时 `IOCancelPowerChange` | **不保证**所有机型/系统版本 |
+| 看门狗 | 人不在则每 3 秒重申关屏 | 对付远程 HID/合成输入 |
+| 「人在不在」 | `IOHIDSystem HIDIdleTime` + 合盖状态 | 合成事件通常不重置 HID 空闲，正好 |
+
+刻意不做的事：
+
+- **不**默认执行 `sudo pmset -a disablesleep 1`。它会写进系统偏好，重启后还在，App 崩了电脑就再也不睡。
+- **不**使用 `PreventUserIdleDisplaySleep` / `caffeinate -d`，那会让屏幕一直亮着，和护屏目标相反。
+
+合盖说明（请务必读）：Apple 在无外接屏时合盖倾向于整机睡眠，这是散热设计。选择器 12 在部分 Apple Silicon + 较新系统上有效，在更新的系统上可能被无视。UI 里写的是「尽量」，诊断命令 `never-sleep doctor` 可核对 `pmset -g assertions`。护屏主路径是 **开盖 + 显示器休眠**，这是 IOKit 官方支持、也最护屏的组合。
+
+安全网：
+
+- 电池低于阈值（未插电）自动结束待命
+- 过热 `Critical` 时结束待命
+- `~/Library/Application Support/Never Sleep/session.lock` 记录 pid；下次启动发现进程已死会还原合盖标志
+- panic hook 同样还原
+
+架构：
+
+```
+never-sleep-core   纯策略（可在 Linux 单测）
+never-sleep        CLI + macOS 菜单栏
+```
+
+引擎只输出 `ApplyPower` / `SleepDisplay` / `LockSession` / `Notify`，平台层负责 IOKit。这样关屏策略不依赖本机能不能编译 AppKit。
+
+## 与常见工具对比
+
+| | 熄屏待命 | caffeinate | KeepingYouAwake | Amphetamine |
+| --- | --- | --- | --- | --- |
+| 默认关屏 | 是，还强制关 | `-i` 才允许关屏 | 否 | 需改会话选项 |
+| 远程点亮后再关 | 是 | 否 | 否 | 否 |
+| 人在电脑前不抢屏 | 是 | 否 | 否 | 否 |
+| 合盖 | 尽力而为 | `-s` 仅 AC | 明确不支持 | 较强，常要 Enhancer |
+| 改系统 pmset | 否 | 否 | 否 | 部分模式会 |
+| JSON / Agent CLI | 是 | 否 | 否 | 否 |
+
+## 开发
+
+```bash
+cargo test --workspace          # Linux / Mac 都可跑核心测试
+# 菜单栏与 IOKit 只在 macOS 链接
+cargo build -p never-sleep --release   # 请在 Mac 上
+```
+
+配置文件：`~/Library/Application Support/Never Sleep/config.toml`  
+IPC 套接字：同目录 `ipc.sock`
+
+要求 **Rust 1.88+**、macOS 12+。菜单栏以 `LSUIElement` 运行，不占 Dock。
+
+## 许可
+
+MIT

@@ -3,7 +3,7 @@ use std::thread;
 use std::time::Duration;
 
 use never_sleep_core::{
-    parse_duration_pref, DurationPref, Engine, Input, StopReason, HEARTBEAT_MS,
+    parse_duration_pref_in, DurationPref, Engine, Input, Lang, StopReason, HEARTBEAT_MS,
 };
 
 use crate::apply::{dispatch, stop_for_quit};
@@ -22,7 +22,7 @@ pub fn run_foreground(
     };
     dispatch(&mut engine, platform, input);
     if !engine.is_active() {
-        return Err("未能进入待命".into());
+        return Err(engine.config.tr().foreground_failed().into());
     }
 
     let running = std::sync::Arc::new(AtomicBool::new(true));
@@ -31,8 +31,9 @@ pub fn run_foreground(
         r.store(false, Ordering::SeqCst);
     });
 
-    println!("熄屏待命已开启。屏幕将关闭，电脑保持运行。按 Ctrl-C 结束。");
-    println!("状态可用 `never-sleep status --json` 查询（若菜单栏正在运行）。");
+    let t = engine.config.tr();
+    println!("{}", t.foreground_started());
+    println!("{}", t.foreground_status_hint());
 
     while running.load(Ordering::SeqCst) && engine.is_active() {
         dispatch(&mut engine, platform, Input::Tick);
@@ -49,13 +50,16 @@ pub fn run_foreground(
         );
     }
     stop_for_quit(&mut engine, platform);
-    println!("已结束待命。");
+    println!("{}", engine.config.tr().foreground_ended());
     Ok(())
 }
 
-pub fn parse_optional_duration(raw: Option<&str>) -> Result<Option<DurationPref>, String> {
+pub fn parse_optional_duration(
+    raw: Option<&str>,
+    lang: Lang,
+) -> Result<Option<DurationPref>, String> {
     match raw {
         None => Ok(None),
-        Some(s) => parse_duration_pref(s).map(Some),
+        Some(s) => parse_duration_pref_in(s, lang).map(Some),
     }
 }
