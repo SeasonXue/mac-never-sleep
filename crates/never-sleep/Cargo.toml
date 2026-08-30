@@ -3,7 +3,7 @@ name = "never-sleep"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "熄屏待命：关掉屏幕，不让 Mac 睡眠，方便远程客户端随时接管"
+description = "Never Sleep: turn the display off and keep the Mac awake for remote clients"
 
 [[bin]]
 name = "never-sleep"

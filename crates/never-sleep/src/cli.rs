@@ -4,12 +4,16 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "never-sleep",
     version,
-    about = "熄屏待命：关掉 Mac 屏幕、不让电脑睡眠，方便 ChatGPT / Codex 远程连接"
+    about = "Never Sleep: turn the Mac display off and keep the machine awake for ChatGPT / Codex remote sessions"
 )]
 pub struct Cli {
-    /// 启动菜单栏（默认：无子命令且在 macOS 图形会话时）
+    /// Start the menu bar (default: no subcommand in a macOS GUI session)
     #[arg(long)]
     pub menubar: bool,
+
+    /// UI language: en (default) or zh. Overrides the saved preference for this process.
+    #[arg(long, global = true, value_name = "LANG")]
+    pub lang: Option<String>,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -17,33 +21,33 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// 开始待命（若菜单栏已运行则发指令，否则前台占用本进程）
+    /// Start standby (talk to the menu bar if it is running, otherwise occupy this process)
     On {
-        /// 时长：indefinite、3h、until=08:00
+        /// Duration: indefinite, 3h, until=08:00
         #[arg(long)]
         r#for: Option<String>,
         #[arg(long)]
         json: bool,
     },
-    /// 结束待命
+    /// End standby
     Off {
         #[arg(long)]
         json: bool,
     },
-    /// 切换待命
+    /// Toggle standby
     Toggle {
         #[arg(long)]
         json: bool,
     },
-    /// 查看状态
+    /// Show status
     Status {
         #[arg(long)]
         json: bool,
     },
-    /// 诊断电源 / 合盖 / 断言
+    /// Diagnose power / lid / assertions
     Doctor,
-    /// 还原合盖睡眠标志（进程崩溃后的保险）
+    /// Restore clamshell-sleep flags (safety net after a crash)
     Cleanup,
-    /// 打印使用说明
+    /// Print usage notes
     Explain,
 }

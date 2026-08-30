@@ -62,7 +62,7 @@ impl Platform for StubPlatform {
     fn cleanup_orphans(&self) {}
 
     fn doctor(&self) -> String {
-        "当前平台不是 macOS。请在 Mac 上运行 `never-sleep doctor`。".into()
+        crate::persist::load_config().tr().stub_not_macos().into()
     }
 }
 

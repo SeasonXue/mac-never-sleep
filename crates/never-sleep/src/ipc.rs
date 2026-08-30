@@ -117,7 +117,7 @@ fn handle_conn(stream: UnixStream, tx: &Sender<IpcIncoming>) {
     }
     let resp = rrx
         .recv_timeout(Duration::from_secs(5))
-        .unwrap_or_else(|_| IpcResponse::err("超时"));
+        .unwrap_or_else(|_| IpcResponse::err(crate::persist::load_config().tr().ipc_timeout()));
     let _ = write_resp(stream, &resp);
 }
 

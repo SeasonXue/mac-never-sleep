@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use never_sleep_core::{
-    AppConfig, DurationPref, Engine, Input, StopReason, APP_DISPLAY_NAME, DEFAULT_BATTERY_FLOOR,
-    DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS, ONBOARDING,
+    AppConfig, DurationPref, Engine, Input, Lang, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
+    DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
 };
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
@@ -42,8 +42,12 @@ struct MenuHandles {
     lock_screen: CheckMenuItem,
     battery_floor: CheckMenuItem,
     login: CheckMenuItem,
+    lang_en: CheckMenuItem,
+    lang_zh: CheckMenuItem,
     help: MenuItem,
     quit: MenuItem,
+    dur_root: Submenu,
+    lang_root: Submenu,
 }
 
 pub fn run() {
@@ -54,10 +58,10 @@ pub fn run() {
     let (ipc_tx, ipc_rx) = mpsc::channel::<IpcIncoming>();
     match ipc::spawn_server(ipc_tx) {
         Err(e) if e == "already_running" => {
-            eprintln!("熄屏待命已在菜单栏运行。");
+            eprintln!("{}", load_config().tr().already_running());
             return;
         }
-        Err(e) => eprintln!("IPC 未启动：{e}（命令行将以前台模式工作）"),
+        Err(e) => eprintln!("{}", load_config().tr().ipc_not_started(e)),
         Ok(()) => {}
     }
 
@@ -79,7 +83,7 @@ pub fn run() {
     if let Some(ref mgr) = hotkeys {
         let hk = HotKey::new(Some(Modifiers::ALT | Modifiers::SUPER), Code::KeyP);
         if mgr.register(hk).is_err() {
-            eprintln!("快捷键 {DEFAULT_HOTKEY_LABEL} 注册失败，仍可通过菜单操作。");
+            eprintln!("{}", load_config().tr().hotkey_failed(DEFAULT_HOTKEY_LABEL));
         }
     }
     let _hotkeys = hotkeys;
@@ -104,7 +108,7 @@ pub fn run() {
                 let icon = tray_icon(false);
                 tray = TrayIconBuilder::new()
                     .with_menu(Box::new(menu.clone()))
-                    .with_tooltip(APP_DISPLAY_NAME)
+                    .with_tooltip(engine.config.tr().app_display_name())
                     .with_icon(icon)
                     .with_icon_as_template(true)
                     .build()
@@ -113,7 +117,8 @@ pub fn run() {
                     shown_onboarding = true;
                     engine.config.onboarding_done = true;
                     save_config(&engine.config);
-                    show_dialog("欢迎使用熄屏待命", ONBOARDING);
+                    let t = engine.config.tr();
+                    show_dialog(&t, t.welcome_title(), t.onboarding());
                 }
                 refresh_ui(&handles, &mut tray, &engine, platform.as_mut());
             }
@@ -142,37 +147,38 @@ pub fn run() {
 }
 
 fn build_menu(menu: &Menu, cfg: &AppConfig) -> MenuHandles {
-    let status = MenuItem::new("未待命 · 点击开始", false, None);
-    let detail = MenuItem::new("将关闭屏幕、保持系统运行", false, None);
+    let t = cfg.tr();
+    let status = MenuItem::new(t.idle_status(), false, None);
+    let detail = MenuItem::new(t.will_sleep_display(), false, None);
     let warn = MenuItem::new(" ", false, None);
-    let toggle = MenuItem::new("开始熄屏待命", true, None);
+    let toggle = MenuItem::new(t.start_standby(), true, None);
 
     let dur_inf = CheckMenuItem::new(
-        "无限期",
+        t.indefinite(),
         true,
         matches!(cfg.duration, DurationPref::Indefinite),
         None,
     );
     let dur_1h = CheckMenuItem::new(
-        "1 小时",
+        t.hours(1),
         true,
         matches!(cfg.duration, DurationPref::Hours { hours: 1 }),
         None,
     );
     let dur_3h = CheckMenuItem::new(
-        "3 小时",
+        t.hours(3),
         true,
         matches!(cfg.duration, DurationPref::Hours { hours: 3 }),
         None,
     );
     let dur_8h = CheckMenuItem::new(
-        "8 小时",
+        t.hours(8),
         true,
         matches!(cfg.duration, DurationPref::Hours { hours: 8 }),
         None,
     );
     let dur_until = CheckMenuItem::new(
-        "到 08:00",
+        t.until_clock(8, 0),
         true,
         matches!(
             cfg.duration,
@@ -181,30 +187,29 @@ fn build_menu(menu: &Menu, cfg: &AppConfig) -> MenuHandles {
         None,
     );
     let dur_root = Submenu::with_items(
-        "时长",
+        t.duration_menu(),
         true,
         &[&dur_inf, &dur_1h, &dur_3h, &dur_8h, &dur_until],
     )
     .expect("duration submenu");
 
-    let screen_off = CheckMenuItem::new("立即关闭屏幕", true, cfg.screen_off, None);
-    let lid_awake = CheckMenuItem::new("合盖尽量保持运行", true, cfg.keep_awake_on_lid_close, None);
-    let resleep = CheckMenuItem::new("人离开后自动再关屏", true, cfg.resleep_display, None);
-    let lock_screen = CheckMenuItem::new(
-        "关屏时锁定登录（远程 GUI 会受影响）",
-        true,
-        cfg.lock_screen,
-        None,
-    );
+    let screen_off = CheckMenuItem::new(t.screen_off_now(), true, cfg.screen_off, None);
+    let lid_awake = CheckMenuItem::new(t.lid_awake(), true, cfg.keep_awake_on_lid_close, None);
+    let resleep = CheckMenuItem::new(t.resleep_display(), true, cfg.resleep_display, None);
+    let lock_screen = CheckMenuItem::new(t.lock_screen(), true, cfg.lock_screen, None);
     let battery_floor = CheckMenuItem::new(
-        &format!("电量低于 {DEFAULT_BATTERY_FLOOR}% 时结束"),
+        t.battery_floor_on(DEFAULT_BATTERY_FLOOR),
         true,
         cfg.battery_floor_percent.is_some(),
         None,
     );
-    let login = CheckMenuItem::new("登录时启动", true, cfg.launch_at_login, None);
-    let help = MenuItem::new("使用说明", true, None);
-    let quit = MenuItem::new("退出", true, None);
+    let login = CheckMenuItem::new(t.launch_at_login(), true, cfg.launch_at_login, None);
+    let lang_en = CheckMenuItem::new(t.language_english(), true, cfg.lang() == Lang::En, None);
+    let lang_zh = CheckMenuItem::new(t.language_chinese(), true, cfg.lang() == Lang::Zh, None);
+    let lang_root = Submenu::with_items(t.language_menu(), true, &[&lang_en, &lang_zh])
+        .expect("language submenu");
+    let help = MenuItem::new(t.help_title(), true, None);
+    let quit = MenuItem::new(t.quit(), true, None);
 
     let _ = menu.append_items(&[
         &status,
@@ -222,6 +227,7 @@ fn build_menu(menu: &Menu, cfg: &AppConfig) -> MenuHandles {
         &battery_floor,
         &PredefinedMenuItem::separator(),
         &login,
+        &lang_root,
         &help,
         &PredefinedMenuItem::separator(),
         &quit,
@@ -243,9 +249,34 @@ fn build_menu(menu: &Menu, cfg: &AppConfig) -> MenuHandles {
         lock_screen,
         battery_floor,
         login,
+        lang_en,
+        lang_zh,
         help,
         quit,
+        dur_root,
+        lang_root,
     }
+}
+
+fn apply_static_labels(handles: &MenuHandles, lang: Lang) {
+    let t = Tr::new(lang);
+    handles.dur_inf.set_text(t.indefinite());
+    handles.dur_1h.set_text(t.hours(1));
+    handles.dur_3h.set_text(t.hours(3));
+    handles.dur_8h.set_text(t.hours(8));
+    handles.dur_until.set_text(t.until_clock(8, 0));
+    handles.dur_root.set_text(t.duration_menu());
+    handles.screen_off.set_text(t.screen_off_now());
+    handles.lid_awake.set_text(t.lid_awake());
+    handles.resleep.set_text(t.resleep_display());
+    handles.lock_screen.set_text(t.lock_screen());
+    handles
+        .battery_floor
+        .set_text(t.battery_floor_on(DEFAULT_BATTERY_FLOOR));
+    handles.login.set_text(t.launch_at_login());
+    handles.lang_root.set_text(t.language_menu());
+    handles.help.set_text(t.help_title());
+    handles.quit.set_text(t.quit());
 }
 
 fn refresh_ui(
@@ -271,6 +302,12 @@ fn refresh_ui(
     handles
         .battery_floor
         .set_checked(engine.config.battery_floor_percent.is_some());
+    handles
+        .lang_en
+        .set_checked(engine.config.lang() == Lang::En);
+    handles
+        .lang_zh
+        .set_checked(engine.config.lang() == Lang::Zh);
     handles
         .dur_inf
         .set_checked(matches!(vm.duration, DurationPref::Indefinite));
@@ -306,7 +343,16 @@ fn handle_menu_event(
         stop_for_quit(engine, platform);
         *control_flow = ControlFlow::Exit;
     } else if id == handles.help.id() {
-        show_dialog("使用说明", ONBOARDING);
+        let t = engine.config.tr();
+        show_dialog(&t, t.help_title(), t.onboarding());
+    } else if id == handles.lang_en.id() {
+        engine.config.language = Lang::En;
+        save_config(&engine.config);
+        apply_static_labels(handles, Lang::En);
+    } else if id == handles.lang_zh.id() {
+        engine.config.language = Lang::Zh;
+        save_config(&engine.config);
+        apply_static_labels(handles, Lang::Zh);
     } else if id == handles.screen_off.id() {
         engine.config.screen_off = !engine.config.screen_off;
         save_config(&engine.config);
@@ -332,7 +378,7 @@ fn handle_menu_event(
     } else if id == handles.login.id() {
         engine.config.launch_at_login = !engine.config.launch_at_login;
         if let Err(e) = platform.set_launch_at_login(engine.config.launch_at_login) {
-            platform.notify("登录项", &e);
+            platform.notify(engine.config.tr().login_item_title(), &e);
             engine.config.launch_at_login = !engine.config.launch_at_login;
         }
         save_config(&engine.config);
@@ -426,9 +472,10 @@ fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcInc
     let _ = reply.send(resp);
 }
 
-fn show_dialog(title: &str, body: &str) {
+fn show_dialog(t: &Tr, title: &str, body: &str) {
+    let ok = t.dialog_ok().replace('"', "\\\"");
     let script = format!(
-        "display dialog \"{}\" with title \"{}\" buttons {{\"好\"}} default button 1",
+        "display dialog \"{}\" with title \"{}\" buttons {{\"{ok}\"}} default button 1",
         body.replace('\\', "\\\\")
             .replace('"', "\\\"")
             .replace('\n', "\\n"),

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::{Lang, Tr};
 use crate::{DEFAULT_BATTERY_FLOOR, DEFAULT_DISPLAY_OFF_DELAY_MS, DEFAULT_USER_IDLE_RESLEEP_MS};
 
 /// 用户偏好。全部有安全默认值，首次启动即可「一键熄屏待命」。
@@ -25,6 +26,9 @@ pub struct AppConfig {
     pub user_idle_resleep_ms: u64,
     /// 已看过使用说明
     pub onboarding_done: bool,
+    /// UI language. English is the default; Chinese is opt-in via detection or the menu.
+    #[serde(default)]
+    pub language: Lang,
 }
 
 impl Default for AppConfig {
@@ -40,15 +44,25 @@ impl Default for AppConfig {
             display_off_delay_ms: DEFAULT_DISPLAY_OFF_DELAY_MS,
             user_idle_resleep_ms: DEFAULT_USER_IDLE_RESLEEP_MS,
             onboarding_done: false,
+            language: Lang::En,
         }
     }
 }
 
 impl AppConfig {
+    pub fn lang(&self) -> Lang {
+        self.language.override_or()
+    }
+
+    pub fn tr(&self) -> Tr {
+        Tr::new(self.lang())
+    }
+
     pub fn battery_floor_label(&self) -> String {
+        let t = self.tr();
         match self.battery_floor_percent {
-            Some(n) => format!("电量低于 {n}% 时结束"),
-            None => "电量过低时不自动结束".into(),
+            Some(n) => t.battery_floor_on(n),
+            None => t.battery_floor_off().into(),
         }
     }
 }
@@ -70,12 +84,8 @@ pub enum DurationPref {
 }
 
 impl DurationPref {
-    pub fn label_zh(self) -> String {
-        match self {
-            Self::Indefinite => "无限期".into(),
-            Self::Hours { hours } => format!("{hours} 小时"),
-            Self::UntilLocal { hour, minute } => format!("到 {hour:02}:{minute:02}"),
-        }
+    pub fn label(self, lang: Lang) -> String {
+        Tr::new(lang).duration_pref(self)
     }
 }
 
@@ -85,22 +95,27 @@ impl Default for DurationPref {
     }
 }
 
-/// 解析 CLI 时长：`indefinite` / `3h` / `until=08:00`
+/// Parse a CLI duration: `indefinite` / `3h` / `until=08:00`. Errors are English.
 pub fn parse_duration_pref(raw: &str) -> Result<DurationPref, String> {
+    parse_duration_pref_in(raw, Lang::En)
+}
+
+pub fn parse_duration_pref_in(raw: &str, lang: Lang) -> Result<DurationPref, String> {
+    let t = Tr::new(lang);
     let s = raw.trim().to_ascii_lowercase();
     if s.is_empty() || s == "indefinite" || s == "inf" || s == "forever" || s == "无限" {
         return Ok(DurationPref::Indefinite);
     }
     if let Some(rest) = s.strip_prefix("until=") {
-        return parse_until(rest);
+        return parse_until(rest, t);
     }
     if let Some(rest) = s.strip_prefix("until:") {
-        return parse_until(rest);
+        return parse_until(rest, t);
     }
     if let Some(num) = s.strip_suffix('h') {
-        let hours: u32 = num.parse().map_err(|_| format!("无法解析时长: {raw}"))?;
+        let hours: u32 = num.parse().map_err(|_| t.parse_duration_error(raw))?;
         if hours == 0 {
-            return Err("时长至少 1 小时，或使用 indefinite".into());
+            return Err(t.parse_duration_min_hour().into());
         }
         return Ok(DurationPref::Hours { hours });
     }
@@ -108,21 +123,21 @@ pub fn parse_duration_pref(raw: &str) -> Result<DurationPref, String> {
         let hours: u32 = num
             .trim()
             .parse()
-            .map_err(|_| format!("无法解析时长: {raw}"))?;
+            .map_err(|_| t.parse_duration_error(raw))?;
         return Ok(DurationPref::Hours { hours });
     }
-    parse_until(&s)
+    parse_until(&s, t)
 }
 
-fn parse_until(raw: &str) -> Result<DurationPref, String> {
+fn parse_until(raw: &str, t: Tr) -> Result<DurationPref, String> {
     let parts: Vec<&str> = raw.split(':').collect();
     if parts.len() != 2 {
-        return Err(format!("时间格式应为 HH:MM，收到 {raw}"));
+        return Err(t.parse_time_format(raw));
     }
-    let hour: u8 = parts[0].parse().map_err(|_| format!("无效小时: {raw}"))?;
-    let minute: u8 = parts[1].parse().map_err(|_| format!("无效分钟: {raw}"))?;
+    let hour: u8 = parts[0].parse().map_err(|_| t.parse_invalid_hour(raw))?;
+    let minute: u8 = parts[1].parse().map_err(|_| t.parse_invalid_minute(raw))?;
     if hour > 23 || minute > 59 {
-        return Err(format!("无效时间: {raw}"));
+        return Err(t.parse_invalid_time(raw));
     }
     Ok(DurationPref::UntilLocal { hour, minute })
 }

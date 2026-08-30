@@ -1,0 +1,4 @@
+/* English (default) */
+CFBundleDisplayName = "Never Sleep";
+CFBundleName = "Never Sleep";
+NSAppleEventsUsageDescription = "Never Sleep uses notifications and optional screen lock to talk to the system.";

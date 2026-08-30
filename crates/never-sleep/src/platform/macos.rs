@@ -11,12 +11,17 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
 
-use never_sleep_core::{HostSnapshot, PowerPlan, Thermal};
+use never_sleep_core::{HostSnapshot, PowerPlan, Thermal, Tr};
 
 use crate::clock::{base_snapshot, monotonic_ms};
 use crate::paths::{current_exe, ensure_data_dir, launch_agent_path, session_lock_path};
+use crate::persist::load_config;
 use crate::platform::Platform;
 use crate::util::xml_escape;
+
+fn tr() -> Tr {
+    load_config().tr()
+}
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 const K_IOPM_ASSERTION_LEVEL_ON: u32 = 255;
@@ -551,7 +556,8 @@ impl Platform for MacPlatform {
 
     fn apply_power(&mut self, plan: PowerPlan) -> Result<(), String> {
         self.ensure_clamshell_conn();
-        let reason = "熄屏待命：保持系统运行供远程客户端连接";
+        let t = tr();
+        let reason = t.assertion_reason();
 
         if plan.prevent_idle_sleep && self.idle_id.is_none() {
             self.idle_id = create_assertion("PreventUserIdleSystemSleep", reason);
@@ -592,7 +598,7 @@ impl Platform for MacPlatform {
         if plan.prevent_idle_sleep && self.idle_id.is_none() {
             self.owns_power = true;
             let _ = self.release_power();
-            return Err("无法创建 PreventUserIdleSystemSleep 断言".into());
+            return Err(t.idle_assertion_failed().into());
         }
 
         self.owns_power = plan.prevent_idle_sleep || plan.disable_clamshell_sleep;
@@ -647,7 +653,7 @@ impl Platform for MacPlatform {
         }
         let service = matching_service("IODisplayWrangler");
         if service == 0 {
-            return Err("pmset displaysleepnow 失败，且找不到 IODisplayWrangler".into());
+            return Err(tr().displaysleep_and_wrangler_failed().into());
         }
         let key = cf_string("IORequestIdle");
         let ret = unsafe { IORegistryEntrySetCFProperty(service, key, kCFBooleanTrue) };
@@ -656,9 +662,7 @@ impl Platform for MacPlatform {
         }
         cf_release(key);
         if ret != K_IO_RETURN_SUCCESS {
-            return Err(format!(
-                "关屏失败：pmset 与 IORequestIdle 均未成功 (IOReturn {ret})"
-            ));
+            return Err(tr().displaysleep_both_failed(ret));
         }
         Ok(())
     }
@@ -740,7 +744,7 @@ impl Platform for MacPlatform {
             .status()
             .map_err(|e| e.to_string())?;
         if !st.success() {
-            return Err("launchctl load 失败".into());
+            return Err(tr().launchctl_load_failed().into());
         }
         Ok(())
     }
@@ -759,16 +763,17 @@ impl Platform for MacPlatform {
 
     fn doctor(&self) -> String {
         let snap = self.snapshot();
+        let t = tr();
         let mut out = String::new();
-        out.push_str("熄屏待命诊断\n");
-        out.push_str(&format!(
-            "电源: {}\n电量: {:?}\n合盖: {}\n屏幕休眠: {:?}\nHID空闲: {} ms\n过热: {:?}\n",
-            if snap.on_ac { "AC" } else { "电池" },
+        out.push_str(t.doctor_title());
+        out.push('\n');
+        out.push_str(&t.doctor_snapshot(
+            snap.on_ac,
             snap.battery_percent,
             snap.lid_closed,
             snap.display_asleep,
             snap.hid_idle_ms,
-            snap.thermal
+            &format!("{:?}", snap.thermal),
         ));
         if let Ok(o) = Command::new("pmset").args(["-g", "assertions"]).output() {
             out.push_str("\n--- pmset -g assertions ---\n");

@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key>
-  <string>zh_CN</string>
+  <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>熄屏待命</string>
+  <string>Never Sleep</string>
   <key>CFBundleExecutable</key>
   <string>never-sleep</string>
   <key>CFBundleIconFile</key>
@@ -14,6 +14,11 @@
   <string>com.seasonxue.never-sleep</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+  </array>
   <key>CFBundleName</key>
   <string>Never Sleep</string>
   <key>CFBundlePackageType</key>
@@ -31,6 +36,6 @@
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>熄屏待命用通知和可选锁屏与系统对话。</string>
+  <string>Never Sleep uses notifications and optional screen lock to talk to the system.</string>
 </dict>
 </plist>
