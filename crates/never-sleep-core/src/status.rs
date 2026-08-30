@@ -51,6 +51,8 @@ pub struct JsonStatus {
     pub user_present: bool,
     pub elapsed_secs: Option<u64>,
     pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason_code: Option<String>,
     pub screen_off_enabled: bool,
     pub lid_awake_enabled: bool,
 }

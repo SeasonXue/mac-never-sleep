@@ -17,7 +17,7 @@ use crate::clock::{base_snapshot, monotonic_ms};
 use crate::paths::{current_exe, ensure_data_dir, launch_agent_path, session_lock_path};
 use crate::persist::load_config;
 use crate::platform::Platform;
-use crate::util::xml_escape;
+use crate::util::{launch_agent_is_stale, xml_escape};
 
 fn tr() -> Tr {
     load_config().tr()
@@ -474,9 +474,28 @@ impl MacPlatform {
         };
         me.ensure_clamshell_conn();
         me.cleanup_orphans();
+        me.migrate_login_item();
         me.start_power_thread();
         install_panic_cleanup();
         me
+    }
+
+    fn migrate_login_item(&mut self) {
+        let cfg = load_config();
+        if !cfg.launch_at_login {
+            return;
+        }
+        let exe = current_exe();
+        let target = app_bundle_from_exe(&exe)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| exe.to_string_lossy().into_owned());
+        let stale = match fs::read_to_string(launch_agent_path()) {
+            Ok(text) => launch_agent_is_stale(&text, &target),
+            Err(_) => true,
+        };
+        if stale {
+            let _ = self.set_launch_at_login(true);
+        }
     }
 
     fn ensure_clamshell_conn(&self) {

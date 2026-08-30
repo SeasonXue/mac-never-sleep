@@ -61,7 +61,7 @@ pub fn run() {
             eprintln!("{}", load_config().tr().already_running());
             return;
         }
-        Err(e) => eprintln!("{}", load_config().tr().ipc_not_started(e)),
+        Err(e) => eprintln!("{}", load_config().tr().ipc_not_started(&e)),
         Ok(()) => {}
     }
 
@@ -346,11 +346,11 @@ fn handle_menu_event(
         let t = engine.config.tr();
         show_dialog(&t, t.help_title(), t.onboarding());
     } else if id == handles.lang_en.id() {
-        engine.config.language = Lang::En;
+        engine.config.language = Some(Lang::En);
         save_config(&engine.config);
         apply_static_labels(handles, Lang::En);
     } else if id == handles.lang_zh.id() {
-        engine.config.language = Lang::Zh;
+        engine.config.language = Some(Lang::Zh);
         save_config(&engine.config);
         apply_static_labels(handles, Lang::Zh);
     } else if id == handles.screen_off.id() {
@@ -424,7 +424,10 @@ fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcInc
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
         IpcRequest::On { duration } => {
-            let input = match crate::protocol::parse_on_duration(duration.as_deref()) {
+            let input = match crate::protocol::parse_on_duration_in(
+                duration.as_deref(),
+                engine.config.lang(),
+            ) {
                 Ok(None) => Input::Start,
                 Ok(Some(d)) => Input::StartWith(d),
                 Err(e) => {

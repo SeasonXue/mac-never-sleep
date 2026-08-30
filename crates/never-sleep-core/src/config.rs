@@ -26,9 +26,10 @@ pub struct AppConfig {
     pub user_idle_resleep_ms: u64,
     /// 已看过使用说明
     pub onboarding_done: bool,
-    /// UI language. English is the default; Chinese is opt-in via detection or the menu.
+    /// Saved UI language. `None` means “not chosen yet” (legacy configs, first run).
+    /// Process overrides (`--lang` / `NEVER_SLEEP_LANG`) are applied in `lang()` and are not stored here.
     #[serde(default)]
-    pub language: Lang,
+    pub language: Option<Lang>,
 }
 
 impl Default for AppConfig {
@@ -44,14 +45,16 @@ impl Default for AppConfig {
             display_off_delay_ms: DEFAULT_DISPLAY_OFF_DELAY_MS,
             user_idle_resleep_ms: DEFAULT_USER_IDLE_RESLEEP_MS,
             onboarding_done: false,
-            language: Lang::En,
+            language: Some(Lang::En),
         }
     }
 }
 
 impl AppConfig {
     pub fn lang(&self) -> Lang {
-        self.language.override_or()
+        Lang::from_override_env()
+            .or(self.language)
+            .unwrap_or(Lang::En)
     }
 
     pub fn tr(&self) -> Tr {
@@ -167,5 +170,33 @@ mod tests {
                 minute: 30
             }
         );
+    }
+
+    #[test]
+    fn parse_duration_errors_follow_language() {
+        let en = parse_duration_pref_in("nope", Lang::En).unwrap_err();
+        assert!(en.contains("HH:MM"), "{en}");
+        let zh = parse_duration_pref_in("nope", Lang::Zh).unwrap_err();
+        assert!(zh.contains("HH:MM"), "{zh}");
+        assert_ne!(en, zh);
+    }
+
+    #[test]
+    fn missing_language_field_deserializes_as_none() {
+        let value = serde_json::json!({
+            "duration": { "kind": "indefinite" },
+            "screen_off": true,
+            "keep_awake_on_lid_close": true,
+            "resleep_display": true,
+            "battery_floor_percent": 20,
+            "launch_at_login": false,
+            "lock_screen": false,
+            "display_off_delay_ms": 1500,
+            "user_idle_resleep_ms": 45000,
+            "onboarding_done": true
+        });
+        let cfg: AppConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(cfg.language, None);
+        assert_eq!(cfg.lang(), Lang::from_override_env().unwrap_or(Lang::En));
     }
 }

@@ -84,6 +84,29 @@ impl StopReason {
     pub fn label_en(self) -> &'static str {
         self.label(Lang::En)
     }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::BatteryFloor => "battery_floor",
+            Self::ThermalEmergency => "thermal_emergency",
+            Self::DurationElapsed => "duration_elapsed",
+            Self::AppQuit => "app_quit",
+            Self::AssertionFailed => "assertion_failed",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "user" => Some(Self::User),
+            "battery_floor" => Some(Self::BatteryFloor),
+            "thermal_emergency" => Some(Self::ThermalEmergency),
+            "duration_elapsed" => Some(Self::DurationElapsed),
+            "app_quit" => Some(Self::AppQuit),
+            "assertion_failed" => Some(Self::AssertionFailed),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -343,6 +366,7 @@ impl Engine {
             user_present: host.user_present(self.config.user_idle_resleep_ms),
             elapsed_secs: elapsed,
             stop_reason: self.last_stop_reason.map(|r| r.label_en().to_string()),
+            stop_reason_code: self.last_stop_reason.map(|r| r.code().to_string()),
             screen_off_enabled: self.config.screen_off,
             lid_awake_enabled: self.config.keep_awake_on_lid_close,
         }
@@ -473,6 +497,12 @@ mod tests {
         let e = eng.handle(Input::Tick, &h);
         assert!(has_release(&e));
         assert!(!eng.is_active());
+        let st = eng.json_status(&h);
+        assert_eq!(st.stop_reason_code.as_deref(), Some("battery_floor"));
+        assert_eq!(
+            st.stop_reason.as_deref(),
+            Some(StopReason::BatteryFloor.label_en())
+        );
     }
 
     #[test]
@@ -576,7 +606,7 @@ mod tests {
     #[test]
     fn view_model_chinese() {
         let mut cfg = cfg();
-        cfg.language = Lang::Zh;
+        cfg.language = Some(Lang::Zh);
         let mut eng = Engine::new(cfg);
         let h = host(0);
         assert_eq!(eng.view(&h).primary_action, "开始熄屏待命");

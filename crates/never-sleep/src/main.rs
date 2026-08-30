@@ -15,7 +15,7 @@ mod util;
 mod gui;
 
 use clap::Parser;
-use never_sleep_core::{Lang, Tr, LANG_ENV};
+use never_sleep_core::{Lang, StopReason, Tr, LANG_ENV};
 
 use crate::cli::{Cli, Command};
 use crate::ipc::try_send;
@@ -111,7 +111,13 @@ fn print_resp(resp: &IpcResponse, json: bool) {
             );
         } else {
             println!("{}", t.not_in_standby());
-            if let Some(r) = &st.stop_reason {
+            if let Some(code) = &st.stop_reason_code {
+                if let Some(reason) = StopReason::from_code(code) {
+                    println!("{}", reason.label(load_config().lang()));
+                } else if let Some(r) = &st.stop_reason {
+                    println!("{r}");
+                }
+            } else if let Some(r) = &st.stop_reason {
                 println!("{r}");
             }
         }
@@ -120,6 +126,15 @@ fn print_resp(resp: &IpcResponse, json: bool) {
 
 fn cmd_on(for_raw: Option<String>, json: bool) {
     let t = ui_tr();
+    let parse_lang = if json { Lang::En } else { load_config().lang() };
+    let duration = match crate::foreground::parse_optional_duration(for_raw.as_deref(), parse_lang)
+    {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
     let req = IpcRequest::On {
         duration: for_raw.clone(),
     };
@@ -131,13 +146,6 @@ fn cmd_on(for_raw: Option<String>, json: bool) {
         eprintln!("{}", t.menubar_missing_foreground_json());
     }
     let mut platform = default_platform();
-    let duration = match crate::foreground::parse_optional_duration(for_raw.as_deref()) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(2);
-        }
-    };
     if let Err(e) = crate::foreground::run_foreground(platform.as_mut(), duration) {
         eprintln!("{e}");
         std::process::exit(1);
@@ -190,5 +198,12 @@ mod tests {
             protocol::parse_on_duration(Some("3h")).unwrap(),
             Some(DurationPref::Hours { hours: 3 })
         ));
+        let err =
+            protocol::parse_on_duration_in(Some("nope"), never_sleep_core::Lang::Zh).unwrap_err();
+        assert!(err.contains("HH:MM"), "{err}");
+        assert_ne!(
+            err,
+            protocol::parse_on_duration_in(Some("nope"), never_sleep_core::Lang::En).unwrap_err()
+        );
     }
 }

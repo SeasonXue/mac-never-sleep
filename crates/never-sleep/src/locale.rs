@@ -1,11 +1,13 @@
 use never_sleep_core::Lang;
 
-/// Resolve UI language: env override, then macOS preferred languages, then Unix locale.
-/// Falls back to English.
+/// Process override, then OS locale. Used for the effective UI language.
 pub fn detect() -> Lang {
-    if let Some(lang) = Lang::from_override_env() {
-        return lang;
-    }
+    Lang::from_override_env().unwrap_or_else(detect_system)
+}
+
+/// macOS preferred languages / Unix locale only. Ignores `--lang` and
+/// `NEVER_SLEEP_LANG` so those stay process-scoped.
+pub fn detect_system() -> Lang {
     #[cfg(target_os = "macos")]
     if let Some(lang) = from_apple_languages() {
         return lang;
@@ -61,5 +63,11 @@ mod tests {
         let tags = parse_quoted_tokens(raw);
         assert_eq!(tags, vec!["zh-Hans-CN", "en-US"]);
         assert_eq!(Lang::from_preferred_tags(&tags), Some(Lang::Zh));
+    }
+
+    #[test]
+    fn detect_returns_supported_lang() {
+        assert!(matches!(detect(), Lang::En | Lang::Zh));
+        assert!(matches!(detect_system(), Lang::En | Lang::Zh));
     }
 }
