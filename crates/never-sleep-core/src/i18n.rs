@@ -105,6 +105,83 @@ impl Tr {
         self.pick("How to use", "使用说明")
     }
 
+    pub fn help_kicker(self) -> &'static str {
+        self.pick("Display off · Mac online", "关屏护屏 · 电脑在线")
+    }
+
+    pub fn help_lead(self) -> &'static str {
+        self.pick(
+            "Remote clients such as ChatGPT and Codex can keep connecting.",
+            "ChatGPT / Codex 等远程客户端仍可连上这台电脑。",
+        )
+    }
+
+    pub fn help_how(self) -> &'static str {
+        self.pick("Get started", "怎么用")
+    }
+
+    pub fn help_step1_title(self) -> &'static str {
+        self.pick("Start standby", "开始待命")
+    }
+
+    pub fn help_step1_detail(self) -> &'static str {
+        self.pick(
+            "Click “Start Screen-Off Standby”. The display sleeps after about 1.5 seconds.",
+            "点「开始熄屏待命」，约 1.5 秒后屏幕关闭。",
+        )
+    }
+
+    pub fn help_step2_title(self) -> &'static str {
+        self.pick("Stays out of your way", "不抢屏幕")
+    }
+
+    pub fn help_step2_detail(self) -> &'static str {
+        self.pick(
+            "It will not fight you for the screen while you type; it sleeps again after you leave.",
+            "人在电脑前绝不强制关屏；走开后再自动关闭。",
+        )
+    }
+
+    pub fn help_step3_title(self) -> &'static str {
+        self.pick("Come back any time", "随时回来")
+    }
+
+    pub fn help_step3_before(self) -> &'static str {
+        self.pick("Press", "按")
+    }
+
+    pub fn help_step3_after(self) -> &'static str {
+        self.pick(
+            "or choose “End Standby” in the menu.",
+            "，或点菜单「结束待命」。",
+        )
+    }
+
+    pub fn help_notes(self) -> &'static str {
+        self.pick("Keep in mind", "请留意")
+    }
+
+    pub fn help_note_lid(self) -> &'static str {
+        self.pick(
+            "Closed-lid stay-awake is best-effort, and more reliable on power. Lid open + display asleep is the reliable path.",
+            "合盖保活是尽力而为，插电更稳；最可靠仍是开盖熄屏。",
+        )
+    }
+
+    pub fn help_note_battery(self) -> &'static str {
+        self.pick(
+            "Standby ends automatically on low battery so the pack is not drained.",
+            "电量过低会自动结束，避免把电池耗干。",
+        )
+    }
+
+    pub fn help_note_quit(self) -> &'static str {
+        self.pick(
+            "Quitting restores normal sleep. Energy Saver settings are never rewritten.",
+            "退出后立即恢复系统睡眠，不会改写节能设置。",
+        )
+    }
+
     pub fn dialog_ok(self) -> &'static str {
         self.pick("OK", "好")
     }
@@ -630,25 +707,29 @@ pub fn onboarding(lang: Lang) -> &'static str {
 }
 
 const ONBOARDING_EN: &str = "\
-Never Sleep turns the display off while keeping the Mac awake, so ChatGPT / Codex and other remote clients can still connect.
+Never Sleep turns the display off while the Mac stays awake, so ChatGPT / Codex can keep connecting.
 
-• Choose “Start Screen-Off Standby”. The display turns off after about 1.5 seconds.
-• While you are at the keyboard, it will not fight you for the screen; it turns off again after you leave.
-• Press ⌥⌘P to come back, or choose “End Standby” in the menu.
-• Closed-lid operation is best-effort (more reliable on power). The reliable path is lid open + display asleep.
+Get started
+1. Start standby — click “Start Screen-Off Standby”. The display sleeps after about 1.5 seconds.
+2. Stays out of your way — it will not fight you for the screen while you type; it sleeps again after you leave.
+3. Come back — press ⌥⌘P, or choose “End Standby” in the menu.
+
+Keep in mind
+• Closed-lid stay-awake is best-effort (more reliable on power). Lid open + display asleep is the reliable path.
 • Standby ends automatically on low battery so the pack is not drained.
-• Quitting restores normal power behavior. System Energy Saver settings are never rewritten.\
+• Quitting restores normal sleep. Energy Saver settings are never rewritten.\
 ";
 
 const ONBOARDING_ZH: &str = "\
-熄屏待命会关掉屏幕保护面板，同时不让 Mac 进入睡眠。\n\
-ChatGPT / Codex 这类远程客户端就能继续连上这台电脑。\n\n\
-• 点菜单「开始熄屏待命」，约 1.5 秒后屏幕关闭。\n\
-• 你人在电脑前时，不会跟你抢屏幕；走开后会再关。\n\
-• 回来请按 ⌥⌘P，或点菜单「结束待命」。\n\
-• 合盖运行是尽力而为（插电更稳）；最稳妥是开盖熄屏。\n\
+熄屏待命会关掉屏幕，同时不让 Mac 进入睡眠。ChatGPT / Codex 等远程客户端仍可连上这台电脑。\n\n\
+怎么用\n\
+1. 开始待命 — 点「开始熄屏待命」，约 1.5 秒后屏幕关闭。\n\
+2. 不抢屏幕 — 人在电脑前绝不强制关屏；走开后再自动关闭。\n\
+3. 随时回来 — 按 ⌥⌘P，或点菜单「结束待命」。\n\n\
+请留意\n\
+• 合盖保活是尽力而为，插电更稳；最可靠仍是开盖熄屏。\n\
 • 电量过低会自动结束，避免把电池耗干。\n\
-• 退出应用后电源行为立即恢复，不会改写系统节能设置。\
+• 退出后立即恢复系统睡眠，不会改写节能设置。\
 ";
 
 #[cfg(test)]
@@ -688,5 +769,19 @@ mod tests {
         assert_eq!(Tr::new(Lang::Zh).start_standby(), "开始熄屏待命");
         assert_eq!(Tr::new(Lang::En).app_display_name(), "Never Sleep");
         assert_eq!(Tr::new(Lang::Zh).app_display_name(), "熄屏待命");
+    }
+
+    #[test]
+    fn help_copy_is_sectioned() {
+        let en = Tr::new(Lang::En);
+        let zh = Tr::new(Lang::Zh);
+        assert_eq!(en.help_how(), "Get started");
+        assert_eq!(zh.help_how(), "怎么用");
+        assert!(en.onboarding().contains("Get started"));
+        assert!(en.onboarding().contains("Keep in mind"));
+        assert!(en.onboarding().contains(DEFAULT_HOTKEY_LABEL));
+        assert!(zh.onboarding().contains("怎么用"));
+        assert!(zh.onboarding().contains("请留意"));
+        assert!(zh.onboarding().contains(DEFAULT_HOTKEY_LABEL));
     }
 }
