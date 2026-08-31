@@ -4,12 +4,19 @@
 //! (or `NSGlassEffectView` on macOS 26+) *behind* it, matching the CSS `.shell`
 //! inset, so the desktop shows through as frosted glass instead of a flat wash.
 
+#![allow(deprecated)]
+
 use std::ffi::c_char;
 
-use cocoa::base::{id, nil};
+use cocoa::appkit::{
+    NSColor, NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSWindowOrderingMode,
+};
+use cocoa::base::{id, nil, YES};
 use cocoa::foundation::{NSPoint, NSRect, NSSize};
-use objc::runtime::{Class, BOOL, NO, YES};
-use objc::{class, msg_send, sel, sel_impl};
+use objc::runtime::{Class, BOOL};
+use objc::{msg_send, sel, sel_impl};
 use tao::platform::macos::WindowExtMacOS;
 use tao::window::Window;
 
@@ -18,13 +25,7 @@ const INSET_TOP: f64 = 10.0;
 const INSET_X: f64 = 8.0;
 const INSET_BOTTOM: f64 = 8.0;
 const CORNER_RADIUS: f64 = 19.0;
-
-const MATERIAL_POPOVER: i64 = 6;
-const BLENDING_BEHIND_WINDOW: i64 = 0;
-const STATE_FOLLOWS_WINDOW: i64 = 1;
 const GLASS_STYLE_CLEAR: i64 = 1;
-const VIEW_WIDTH_SIZABLE: u64 = 2;
-const VIEW_HEIGHT_SIZABLE: u64 = 16;
 
 extern "C" {
     fn objc_getClass(name: *const c_char) -> *const Class;
@@ -41,12 +42,11 @@ unsafe fn apply_popover_glass_inner(window: &Window) -> bool {
         return false;
     }
 
-    let clear: id = msg_send![class!(NSColor), clearColor];
-    let _: () = msg_send![ns_window, setOpaque: NO];
-    let _: () = msg_send![ns_window, setBackgroundColor: clear];
-    let _: () = msg_send![content, setWantsLayer: YES];
+    ns_window.setOpaque_(cocoa::base::NO);
+    ns_window.setBackgroundColor_(NSColor::clearColor(nil));
+    NSView::setWantsLayer(content, YES);
 
-    let bounds: NSRect = msg_send![content, bounds];
+    let bounds = NSView::bounds(content);
     let width = (bounds.size.width - INSET_X * 2.0).max(1.0);
     let height = (bounds.size.height - INSET_TOP - INSET_BOTTOM).max(1.0);
     let frame = NSRect::new(
@@ -54,35 +54,35 @@ unsafe fn apply_popover_glass_inner(window: &Window) -> bool {
         NSSize::new(width, height),
     );
 
-    let clip_alloc: id = msg_send![class!(NSView), alloc];
-    let clip: id = msg_send![clip_alloc, initWithFrame: frame];
+    let clip = NSView::initWithFrame_(NSView::alloc(nil), frame);
     if clip == nil {
         return false;
     }
-    let _: () = msg_send![clip, setWantsLayer: YES];
-    let clip_layer: id = msg_send![clip, layer];
-    if clip_layer != nil {
-        let _: () = msg_send![clip_layer, setCornerRadius: CORNER_RADIUS];
-        let _: () = msg_send![clip_layer, setMasksToBounds: YES];
-    }
+    NSView::setWantsLayer(clip, YES);
+    round_layer(NSView::layer(clip), CORNER_RADIUS);
 
     let inner = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height));
     let glass = create_glass_view(inner);
     if glass == nil {
         return false;
     }
-    let _: () = msg_send![glass, setAutoresizingMask: VIEW_WIDTH_SIZABLE | VIEW_HEIGHT_SIZABLE];
-    let _: () = msg_send![clip, addSubview: glass];
-    let _: () = msg_send![content, addSubview: clip];
-    let _: () = msg_send![content, sendSubviewToBack: clip];
+    NSView::setAutoresizingMask_(glass, NSViewWidthSizable | NSViewHeightSizable);
+    NSView::addSubview_(clip, glass);
+
+    let _: () = msg_send![
+        content,
+        addSubview: clip
+        positioned: NSWindowOrderingMode::NSWindowBelow
+        relativeTo: 0
+    ];
     true
 }
 
 unsafe fn create_glass_view(frame: NSRect) -> id {
     let liquid = objc_getClass(c"NSGlassEffectView".as_ptr()) as id;
     if liquid != nil {
-        let alloc: id = msg_send![liquid, alloc];
-        let view: id = msg_send![alloc, initWithFrame: frame];
+        let view: id = msg_send![liquid, alloc];
+        let view: id = msg_send![view, initWithFrame: frame];
         if view != nil {
             if responds(view, sel!(setStyle:)) {
                 let _: () = msg_send![view, setStyle: GLASS_STYLE_CLEAR];
@@ -94,15 +94,23 @@ unsafe fn create_glass_view(frame: NSRect) -> id {
         }
     }
 
-    let alloc: id = msg_send![class!(NSVisualEffectView), alloc];
-    let view: id = msg_send![alloc, initWithFrame: frame];
+    let view = NSVisualEffectView::initWithFrame_(NSVisualEffectView::alloc(nil), frame);
     if view == nil {
         return nil;
     }
-    let _: () = msg_send![view, setMaterial: MATERIAL_POPOVER];
-    let _: () = msg_send![view, setBlendingMode: BLENDING_BEHIND_WINDOW];
-    let _: () = msg_send![view, setState: STATE_FOLLOWS_WINDOW];
+    view.setMaterial_(NSVisualEffectMaterial::Popover);
+    view.setBlendingMode_(NSVisualEffectBlendingMode::BehindWindow);
+    view.setState_(NSVisualEffectState::Active);
+    view.setEmphasized_(YES);
     view
+}
+
+unsafe fn round_layer(layer: id, radius: f64) {
+    if layer == nil {
+        return;
+    }
+    let _: () = msg_send![layer, setCornerRadius: radius];
+    let _: () = msg_send![layer, setMasksToBounds: YES];
 }
 
 unsafe fn responds(object: id, selector: objc::runtime::Sel) -> bool {
