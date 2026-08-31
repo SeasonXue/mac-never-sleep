@@ -204,6 +204,59 @@ fn retiring_legacy_cli_propagates_delete_failures() {
     );
 }
 
+#[test]
+fn release_tag_path_encodes_reserved_characters() {
+    let body = function_body(RELEASE, "asset_id");
+    assert!(
+        body.contains("urllib.parse.quote"),
+        "releases/tags/{{tag}} must percent-encode the tag so / and # stay one path segment: {body}"
+    );
+    for (tag, encoded) in [
+        ("v0.1.0", "v0.1.0"),
+        ("release/v1", "release%2Fv1"),
+        ("release#1", "release%231"),
+    ] {
+        let got = percent_encode_tag(tag);
+        assert_eq!(
+            got, encoded,
+            "tag {tag:?} must encode as {encoded:?}, got {got:?}"
+        );
+    }
+}
+
+#[test]
+fn asset_lookup_failure_is_not_treated_as_absence() {
+    let body = function_body(RELEASE, "retire_asset");
+    assert!(
+        !body.contains("if [ -z \"$(asset_id"),
+        "command substitution of a failed gh api call looks empty; capture the lookup status separately: {body}"
+    );
+    assert!(
+        body.contains("status") && (body.contains("-ne 0") || body.contains("-eq 0")),
+        "retire_asset must distinguish a failed lookup from a successful empty result: {body}"
+    );
+}
+
+fn percent_encode_tag(tag: &str) -> String {
+    let output = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))",
+            tag,
+        ])
+        .output()
+        .expect("python3 must be available to pin release tag encoding");
+    assert!(
+        output.status.success(),
+        "python3 quote failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("quote output is utf-8")
+        .trim()
+        .to_string()
+}
+
 fn function_body<'a>(src: &'a str, name: &str) -> &'a str {
     let start = src
         .find(&format!("{name}()"))

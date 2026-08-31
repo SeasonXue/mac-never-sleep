@@ -129,7 +129,9 @@ jobs:
           asset_id() {
             local tag="$1"
             local name="$2"
-            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq \
+            local encoded
+            encoded="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "${tag}")" || return $?
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${encoded}" --jq \
               ".assets[] | select(.name==\"${name}\") | .id"
           }
 
@@ -142,7 +144,13 @@ jobs:
           retire_asset() {
             local tag="$1"
             local name="$2"
-            if [ -z "$(asset_id "${tag}" "${name}")" ]; then
+            local id status=0
+            id="$(asset_id "${tag}" "${name}")" || status=$?
+            if [ "${status}" -ne 0 ]; then
+              echo "Failed to look up release asset ${name} (status ${status})." >&2
+              return "${status}"
+            fi
+            if [ -z "${id}" ]; then
               return 0
             fi
             gh release delete-asset "${tag}" "${name}" --yes
@@ -165,8 +173,8 @@ jobs:
             for f in "$@"; do
               base="$(basename "${f}")"
               previous="${base}.previous"
-              old_id="$(asset_id "${tag}" "${base}")"
-              prev_id="$(asset_id "${tag}" "${previous}")"
+              old_id="$(asset_id "${tag}" "${base}")" || exit $?
+              prev_id="$(asset_id "${tag}" "${previous}")" || exit $?
               if [ -n "${prev_id}" ] && [ -z "${old_id}" ]; then
                 rename_asset "${prev_id}" "${base}"
               fi
@@ -186,8 +194,8 @@ jobs:
               base="$(basename "${f}")"
               staged="${base}.staging"
               previous="${base}.previous"
-              old_id="$(asset_id "${tag}" "${base}")"
-              staging_id="$(asset_id "${tag}" "${staged}")"
+              old_id="$(asset_id "${tag}" "${base}")" || exit $?
+              staging_id="$(asset_id "${tag}" "${staged}")" || exit $?
               if [ -z "${staging_id}" ]; then
                 echo "Missing staging asset ${staged}." >&2
                 exit 1
