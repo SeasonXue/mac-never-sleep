@@ -369,10 +369,14 @@
       overflow-x: hidden;
       overflow-y: auto;
       padding-bottom: 8px;
-      scrollbar-width: none;
-      -ms-overflow-style: none;
+      scrollbar-width: thin;
+      scrollbar-color: var(--hairline) transparent;
     }
-    .help-body::-webkit-scrollbar { width: 0; height: 0; }
+    .help-body::-webkit-scrollbar { width: 7px; }
+    .help-body::-webkit-scrollbar-thumb {
+      background: var(--hairline);
+      border-radius: 99px;
+    }
 
     .help-lead {
       margin: 0 0 12px;
@@ -849,7 +853,7 @@
           settings: zh ? '设置' : 'Settings',
           back: zh ? '返回' : 'Back',
           screen_off: zh ? '立即关闭屏幕' : 'Sleep display immediately',
-          lid_awake: zh ? '合盖尽量保持运行' : 'Keep running when the lid is closed',
+          lid_awake: zh ? '合盖尽量保持运行' : 'Keep running when the lid is closed (best effort)',
           lock_screen: zh ? '关屏时锁定登录' : 'Lock the session when the display sleeps',
           launch_at_login: zh ? '登录时启动' : 'Launch at login',
           help: zh ? '使用说明' : 'How to use',

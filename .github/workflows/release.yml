@@ -21,6 +21,9 @@ permissions:
 jobs:
   release-macos:
     runs-on: macos-latest
+    concurrency:
+      group: never-sleep-macos-release
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -43,12 +46,14 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "Publishing version ${version} as tag ${tag}"
 
-      - name: Zip the .app bundle
+      - name: Zip the .app bundle and CLI
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             "dist/Never Sleep.app" "Never-Sleep-macos.zip"
-          cp target/release/never-sleep never-sleep-cli-macos
-          ls -lh Never-Sleep-macos.zip never-sleep-cli-macos
+          cp target/release/never-sleep never-sleep
+          chmod +x never-sleep
+          ditto -c -k never-sleep never-sleep-cli-macos.zip
+          ls -lh Never-Sleep-macos.zip never-sleep-cli-macos.zip
 
       - name: Publish GitHub Release
         env:
@@ -71,8 +76,12 @@ jobs:
              open "Never Sleep.app"
              \`\`\`
              (Or right-click the app and choose **Open**, then confirm.)
-          3. \`never-sleep-cli-macos\` is the standalone CLI for SSH / Agent use; rename it to
-             \`never-sleep\` and put it on your \`PATH\`.
+          3. \`never-sleep-cli-macos.zip\` is the standalone CLI for SSH / Agent use.
+             Unzip it, then make it executable and put it on your \`PATH\`:
+             \`\`\`bash
+             unzip never-sleep-cli-macos.zip
+             chmod +x never-sleep
+             \`\`\`
 
           Requires macOS 12+.
 
@@ -88,25 +97,145 @@ jobs:
              open "Never Sleep.app"
              \`\`\`
              （或右键点击 App 选择「打开」并确认。）
-          3. \`never-sleep-cli-macos\` 是用于 SSH / Agent 场景的命令行版本，可重命名为
-             \`never-sleep\` 并放入 \`PATH\`。
+          3. \`never-sleep-cli-macos.zip\` 是用于 SSH / Agent 场景的命令行版本。解压后执行
+             \`chmod +x never-sleep\`，再将 \`never-sleep\` 放入 \`PATH\`。
 
           需要 macOS 12 及以上。
           EOF
           )
 
-          prerelease_flag=""
+          # Bind a newly created tag to this checkout. If the tag already exists,
+          # refuse to publish when it names a different commit.
+          # git ls-remote --exit-code: 0 = found, 2 = no matching refs, other = error.
+          ls_remote_status=0
+          git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1 || ls_remote_status=$?
+          if [ "${ls_remote_status}" -eq 0 ]; then
+            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            existing_sha="$(git rev-list -n 1 "refs/tags/${TAG}")"
+            if [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
+              echo "Tag ${TAG} already points at ${existing_sha}, not this checkout ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+          elif [ "${ls_remote_status}" -ne 2 ]; then
+            echo "git ls-remote failed with status ${ls_remote_status} looking up tag ${TAG}." >&2
+            exit 1
+          fi
+
+          prerelease_flag="--prerelease=false"
           if [ "${PRERELEASE}" = "true" ]; then
             prerelease_flag="--prerelease"
           fi
 
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release upload "${TAG}" \
-              "Never-Sleep-macos.zip" "never-sleep-cli-macos" --clobber
-          else
-            gh release create "${TAG}" \
-              "Never-Sleep-macos.zip" "never-sleep-cli-macos" \
+          asset_id() {
+            local tag="$1"
+            local name="$2"
+            local encoded
+            encoded="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "${tag}")" || return $?
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${encoded}" --jq \
+              ".assets[] | select(.name==\"${name}\") | .id"
+          }
+
+          delete_asset_if_present() {
+            local tag="$1"
+            local name="$2"
+            gh release delete-asset --yes -- "${tag}" "${name}" 2>/dev/null || true
+          }
+
+          retire_asset() {
+            local tag="$1"
+            local name="$2"
+            local id status=0
+            id="$(asset_id "${tag}" "${name}")" || status=$?
+            if [ "${status}" -ne 0 ]; then
+              echo "Failed to look up release asset ${name} (status ${status})." >&2
+              return "${status}"
+            fi
+            if [ -z "${id}" ]; then
+              return 0
+            fi
+            gh release delete-asset --yes -- "${tag}" "${name}"
+          }
+
+          rename_asset() {
+            local id="$1"
+            local new_name="$2"
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${id}" \
+              -f "name=${new_name}"
+          }
+
+          upload_without_clobber() {
+            local tag="$1"
+            shift
+            local f base staged previous old_id staging_id prev_id
+
+            # Drop leftover names from a failed prior run so a retry can upload.
+            for f in "$@"; do
+              base="$(basename "${f}")"
+              previous="${base}.previous"
+              old_id="$(asset_id "${tag}" "${base}")" || exit $?
+              prev_id="$(asset_id "${tag}" "${previous}")" || exit $?
+              if [ -n "${prev_id}" ] && [ -z "${old_id}" ]; then
+                rename_asset "${prev_id}" "${base}"
+              fi
+              delete_asset_if_present "${tag}" "${base}.staging"
+              delete_asset_if_present "${tag}" "${previous}"
+            done
+
+            # Upload replacements under .staging while canonical URLs stay live.
+            for f in "$@"; do
+              staged="$(basename "${f}").staging"
+              cp "${f}" "${staged}"
+              gh release upload -- "${tag}" "${staged}"
+            done
+
+            # Park each live canonical, then rename staging onto that name.
+            for f in "$@"; do
+              base="$(basename "${f}")"
+              staged="${base}.staging"
+              previous="${base}.previous"
+              old_id="$(asset_id "${tag}" "${base}")" || exit $?
+              staging_id="$(asset_id "${tag}" "${staged}")" || exit $?
+              if [ -z "${staging_id}" ]; then
+                echo "Missing staging asset ${staged}." >&2
+                exit 1
+              fi
+              if [ -n "${old_id}" ]; then
+                rename_asset "${old_id}" "${previous}"
+              fi
+              if ! rename_asset "${staging_id}" "${base}"; then
+                echo "Failed to promote ${staged} to ${base}; restoring previous." >&2
+                if [ -n "${old_id}" ]; then
+                  rename_asset "${old_id}" "${base}" || true
+                fi
+                exit 1
+              fi
+              delete_asset_if_present "${tag}" "${previous}"
+              rm -f "${staged}"
+            done
+          }
+
+          if gh release view -- "${TAG}" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            existing_sha="$(git rev-list -n 1 "refs/tags/${TAG}")"
+            if [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
+              echo "Tag ${TAG} already points at ${existing_sha}, not this checkout ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+            upload_without_clobber "${TAG}" \
+              "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip"
+            gh release edit \
               --title "Never Sleep ${TAG}" \
               --notes "${notes}" \
-              ${prerelease_flag}
+              "${prerelease_flag}" \
+              -- "${TAG}"
+            retire_asset "${TAG}" "never-sleep-cli-macos"
+          else
+            gh release create \
+              --title "Never Sleep ${TAG}" \
+              --notes "${notes}" \
+              --target "${GITHUB_SHA}" \
+              "${prerelease_flag}" \
+              -- "${TAG}" \
+              "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip"
           fi
