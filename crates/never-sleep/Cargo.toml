@@ -26,6 +26,8 @@ wry = { version = "0.56.1", default-features = false }
 global-hotkey = "0.6"
 libc = "0.2"
 core-foundation = "0.10"
+objc = "0.2"
+cocoa = "0.26"
 
 [dev-dependencies]
 never-sleep-core = { workspace = true }

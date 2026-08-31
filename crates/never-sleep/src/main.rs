@@ -13,6 +13,8 @@ mod protocol;
 mod util;
 
 #[cfg(target_os = "macos")]
+mod glass;
+#[cfg(target_os = "macos")]
 mod gui;
 
 use clap::Parser;
