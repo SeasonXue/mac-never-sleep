@@ -1,7 +1,7 @@
 //! Native macOS glass behind the HTML popover.
 //!
 //! The WKWebView is transparent. This inserts a rounded `NSVisualEffectView`
-//! (or `NSGlassEffectView` on macOS 26+) *behind* it, matching the CSS `.shell`
+//! (or `NSGlassEffectView` on macOS 26+) *behind* it, matching the CSS `.panel`
 //! inset, so the desktop shows through as frosted glass instead of a flat wash.
 
 #![allow(deprecated)]
@@ -20,11 +20,11 @@ use objc::{msg_send, sel, sel_impl};
 use tao::platform::macos::WindowExtMacOS;
 use tao::window::Window;
 
-/// Must stay in sync with `.shell { inset: 10px 8px 8px; border-radius: 19px }`.
-const INSET_TOP: f64 = 10.0;
-const INSET_X: f64 = 8.0;
-const INSET_BOTTOM: f64 = 8.0;
-const CORNER_RADIUS: f64 = 19.0;
+/// Must stay in sync with `.float { inset: 12px 16px 24px }` plus `.panel { inset: 8px 0 0; border-radius: 12px }`.
+const INSET_TOP: f64 = 20.0;
+const INSET_X: f64 = 16.0;
+const INSET_BOTTOM: f64 = 24.0;
+const CORNER_RADIUS: f64 = 12.0;
 const GLASS_STYLE_CLEAR: i64 = 1;
 
 extern "C" {
