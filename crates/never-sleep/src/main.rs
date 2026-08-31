@@ -219,6 +219,10 @@ mod tests {
             "More Settings stays in the footer"
         );
         assert!(
+            html.contains("id=\"helpView\""),
+            "in-popover How to use view must survive style-only edits"
+        );
+        assert!(
             html.contains("--bg: #f5f5f7"),
             "idle popover uses an opaque light fill"
         );
