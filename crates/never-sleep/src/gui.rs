@@ -49,8 +49,8 @@ enum UiCommand {
     Hide,
 }
 
-const POPOVER_WIDTH: f64 = 360.0;
-const POPOVER_HEIGHT: f64 = 510.0;
+const POPOVER_WIDTH: f64 = 380.0;
+const POPOVER_HEIGHT: f64 = 536.0;
 
 struct Popover {
     window: Window,
@@ -132,7 +132,7 @@ impl Popover {
             })
             .unwrap_or(desired_x);
         let y = rect.position.y + f64::from(rect.size.height) + 3.0 * scale;
-        let arrow_x = ((anchor_x - x) / scale).clamp(22.0, POPOVER_WIDTH - 22.0);
+        let arrow_x = ((anchor_x - x) / scale).clamp(38.0, POPOVER_WIDTH - 38.0);
         let _ = self.webview.evaluate_script(&format!(
             "document.documentElement.style.setProperty('--arrow-x', '{arrow_x:.1}px');"
         ));
@@ -271,6 +271,7 @@ pub fn run() {
         }
     };
     let mut tray: Option<TrayIcon> = None;
+    let mut tray_active: Option<bool> = None;
     let mut last_tick = Instant::now();
     let mut shown_onboarding = engine.config.onboarding_done;
 
@@ -283,6 +284,7 @@ pub fn run() {
             refresh_ui(
                 &handles,
                 &mut tray,
+                &mut tray_active,
                 &mut popover,
                 &engine,
                 platform.as_mut(),
@@ -310,6 +312,7 @@ pub fn run() {
                 refresh_ui(
                     &handles,
                     &mut tray,
+                    &mut tray_active,
                     &mut popover,
                     &engine,
                     platform.as_mut(),
@@ -322,6 +325,7 @@ pub fn run() {
                     refresh_ui(
                         &handles,
                         &mut tray,
+                        &mut tray_active,
                         &mut popover,
                         &engine,
                         platform.as_mut(),
@@ -333,6 +337,7 @@ pub fn run() {
                 refresh_ui(
                     &handles,
                     &mut tray,
+                    &mut tray_active,
                     &mut popover,
                     &engine,
                     platform.as_mut(),
@@ -343,6 +348,7 @@ pub fn run() {
                 refresh_ui(
                     &handles,
                     &mut tray,
+                    &mut tray_active,
                     &mut popover,
                     &engine,
                     platform.as_mut(),
@@ -352,6 +358,7 @@ pub fn run() {
                 refresh_ui(
                     &handles,
                     &mut tray,
+                    &mut tray_active,
                     &mut popover,
                     &engine,
                     platform.as_mut(),
@@ -372,6 +379,7 @@ pub fn run() {
                 refresh_ui(
                     &handles,
                     &mut tray,
+                    &mut tray_active,
                     &mut popover,
                     &engine,
                     platform.as_mut(),
@@ -532,6 +540,7 @@ fn apply_static_labels(handles: &MenuHandles, lang: Lang) {
 fn refresh_ui(
     handles: &MenuHandles,
     tray: &mut Option<TrayIcon>,
+    tray_active: &mut Option<bool>,
     popover: &mut Option<Popover>,
     engine: &Engine,
     platform: &mut dyn Platform,
@@ -578,7 +587,13 @@ fn refresh_ui(
     ));
     if let Some(t) = tray.as_mut() {
         t.set_tooltip(Some(vm.tooltip)).ok();
-        t.set_icon(Some(tray_icon(vm.active))).ok();
+        // set_icon() creates a fresh NSImage without isTemplate. Re-apply the
+        // template flag so macOS can tint the glyph white on a dark menu bar.
+        if *tray_active != Some(vm.active) {
+            t.set_icon(Some(tray_icon(vm.active))).ok();
+            t.set_icon_as_template(true);
+            *tray_active = Some(vm.active);
+        }
     }
     if let (Some(panel), Some(payload)) = (popover.as_mut(), popover_state) {
         panel.update(payload);

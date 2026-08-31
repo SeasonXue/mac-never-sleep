@@ -23,6 +23,10 @@ pub fn celestial_icon(active: bool) -> (Vec<u8>, u32, u32) {
             }
             if covered > 0 {
                 let i = ((y * SIZE + x) * 4) as usize;
+                // Template images must be black + alpha; macOS supplies the menu-bar tint.
+                rgba[i] = 0;
+                rgba[i + 1] = 0;
+                rgba[i + 2] = 0;
                 rgba[i + 3] = ((covered * 255) / (SAMPLES * SAMPLES)) as u8;
             }
         }

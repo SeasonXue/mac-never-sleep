@@ -5,105 +5,140 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <style>
     :root {
-      color-scheme: light dark;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif;
       font-size: 13px;
-      --bg: rgba(247, 241, 229, .985);
-      --bg-deep: #f0e6d4;
-      --ink: #302b25;
-      --muted: #7b7164;
-      --hairline: rgba(64, 52, 38, .13);
-      --surface: rgba(255, 255, 255, .48);
-      --surface-hover: rgba(255, 255, 255, .75);
-      --accent: #9b6828;
-      --accent-top: #b47e3d;
-      --accent-ink: #fffaf1;
-      --shadow: rgba(39, 29, 18, .24);
+      --popover-inset-x: 16px;
+      --arrow-x: 190px;
+      --bg: rgba(246, 246, 247, .72);
+      --ink: rgba(0, 0, 0, .85);
+      --muted: rgba(60, 60, 67, .64);
+      --hairline: rgba(60, 60, 67, .16);
+      --stroke: rgba(0, 0, 0, .10);
+      --surface: rgba(255, 255, 255, .72);
+      --surface-solid: #fff;
+      --surface-hover: rgba(0, 0, 0, .05);
+      --fill: rgba(118, 118, 128, .12);
+      --accent: #007aff;
+      --accent-ink: #fff;
+      --switch-on: #34c759;
+      --switch-off: #e5e5ea;
+      --warning: #c93400;
     }
 
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
     body {
+      color: var(--ink);
       -webkit-font-smoothing: antialiased;
       -webkit-user-select: none;
       user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      cursor: default;
       opacity: 0;
       transition: opacity 120ms ease;
     }
     body.ready { opacity: 1; }
+    html.preview, html.preview body {
+      background:
+        radial-gradient(ellipse at 28% 0%, #4f8b96 0%, transparent 42%),
+        linear-gradient(165deg, #16343c, #0b1f28 58%, #142c38);
+    }
 
     button, select, input { font: inherit; }
     button { color: inherit; }
 
-    .shell {
+    .float {
       position: absolute;
-      inset: 10px 8px 8px;
+      inset: 12px var(--popover-inset-x) 24px;
+      filter:
+        drop-shadow(0 10px 20px rgba(0, 0, 0, .18))
+        drop-shadow(0 2px 4px rgba(0, 0, 0, .06));
+      transition: filter 420ms ease;
+    }
+    .float::before {
+      content: "";
+      position: absolute;
+      z-index: 4;
+      top: 1.5px;
+      left: calc(var(--arrow-x, 50%) - var(--popover-inset-x) - 7px);
+      width: 14px;
+      height: 14px;
+      background: var(--bg);
+      border-left: 0.5px solid var(--stroke);
+      border-top: 0.5px solid var(--stroke);
+      border-top-left-radius: 3px;
+      transform: rotate(45deg);
+      transition: background 420ms ease, border-color 420ms ease;
+    }
+
+    .panel {
+      position: absolute;
+      inset: 8px 0 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
       color: var(--ink);
-      background:
-        radial-gradient(circle at 50% 13%, rgba(255,255,255,.72), transparent 36%),
-        linear-gradient(155deg, var(--bg), var(--bg-deep));
-      border: 1px solid rgba(72, 57, 38, .16);
-      border-radius: 19px;
-      box-shadow: 0 15px 42px var(--shadow), 0 3px 9px rgba(0,0,0,.11);
-      transition: color 480ms ease, background 480ms ease, border-color 480ms ease;
-    }
-    .shell::before {
-      content: "";
-      position: absolute;
-      z-index: 2;
-      top: -6px;
-      left: calc(var(--arrow-x, 50%) - 7px);
-      width: 14px;
-      height: 14px;
       background: var(--bg);
-      border-left: 1px solid rgba(72, 57, 38, .16);
-      border-top: 1px solid rgba(72, 57, 38, .16);
-      transform: rotate(45deg);
-      transition: background 480ms ease, border-color 480ms ease;
+      -webkit-backdrop-filter: saturate(180%) blur(40px);
+      backdrop-filter: saturate(180%) blur(40px);
+      border: 0.5px solid var(--stroke);
+      border-radius: 12px;
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, .55);
+      transition: color 420ms ease, background 420ms ease, border-color 420ms ease, box-shadow 420ms ease;
     }
-    .shell.active {
-      --bg: rgba(35, 45, 59, .99);
-      --bg-deep: #182431;
-      --ink: #edf2f4;
-      --muted: #aeb8c2;
-      --hairline: rgba(224, 235, 242, .13);
-      --surface: rgba(255, 255, 255, .065);
-      --surface-hover: rgba(255, 255, 255, .11);
-      --accent: #8199b2;
-      --accent-top: #9cacc0;
-      --accent-ink: #101a24;
-      --shadow: rgba(4, 11, 18, .42);
-      border-color: rgba(210, 224, 236, .19);
+
+    .float.active {
+      color-scheme: dark;
+      --bg: rgba(30, 30, 32, .78);
+      --ink: rgba(255, 255, 255, .92);
+      --muted: rgba(235, 235, 245, .62);
+      --hairline: rgba(84, 84, 88, .55);
+      --stroke: rgba(255, 255, 255, .14);
+      --surface: rgba(44, 44, 46, .72);
+      --surface-solid: #2c2c2e;
+      --surface-hover: rgba(255, 255, 255, .08);
+      --fill: rgba(120, 120, 128, .32);
+      --accent: #0a84ff;
+      --accent-ink: #fff;
+      --switch-on: #30d158;
+      --switch-off: rgba(120, 120, 128, .36);
+      --warning: #ff9f0a;
+    }
+    .float.active .panel {
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, .10);
     }
 
     .header {
       position: relative;
       z-index: 3;
       display: grid;
-      grid-template-columns: 34px 1fr 34px;
+      grid-template-columns: 36px 1fr 36px;
       align-items: center;
-      flex: 0 0 50px;
-      padding: 5px 14px 0;
+      flex: 0 0 44px;
+      padding: 4px 10px 0;
     }
-    .app-title { text-align: center; font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+    .app-title {
+      text-align: center;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+    }
     .icon-button {
       display: grid;
       place-items: center;
-      width: 32px;
-      height: 32px;
+      width: 28px;
+      height: 28px;
       padding: 0;
       border: 0;
-      border-radius: 9px;
+      border-radius: 8px;
       color: var(--muted);
       background: transparent;
       cursor: pointer;
-      transition: background 130ms ease, color 130ms ease;
+      transition: background 120ms ease, color 120ms ease;
     }
     .icon-button:hover { color: var(--ink); background: var(--surface-hover); }
-    .icon-button svg { width: 18px; height: 18px; }
+    .icon-button svg { width: 17px; height: 17px; }
 
     .view-stack { position: relative; flex: 1; min-height: 0; }
     .view {
@@ -111,207 +146,351 @@
       inset: 0;
       display: flex;
       flex-direction: column;
-      padding: 0 18px 14px;
+      padding: 0 16px 12px;
       opacity: 0;
       pointer-events: none;
-      transform: translateX(18px);
-      transition: opacity 180ms ease, transform 220ms cubic-bezier(.2,.8,.2,1);
+      transform: translateX(16px);
+      transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
     }
     .view.visible { opacity: 1; pointer-events: auto; transform: translateX(0); }
-    .main-view:not(.visible) { transform: translateX(-18px); }
+    .main-view:not(.visible) { transform: translateX(-16px); }
 
     .hero {
       position: relative;
-      width: 158px;
-      height: 158px;
-      margin: 0 auto;
+      width: 144px;
+      height: 144px;
+      margin: 2px auto 0;
       padding: 0;
       border: 0;
       border-radius: 50%;
       background:
-        radial-gradient(circle, rgba(255,255,255,.56), rgba(255,255,255,.08) 58%, transparent 59%),
-        radial-gradient(circle, rgba(139, 91, 34, .12), transparent 69%);
-      box-shadow: inset 0 0 0 1px var(--hairline), 0 9px 30px rgba(83, 57, 24, .08);
+        radial-gradient(circle at 50% 42%, rgba(255, 255, 255, .92), rgba(255, 255, 255, .55) 58%, rgba(255, 255, 255, .0) 59%),
+        var(--surface);
+      box-shadow:
+        inset 0 0 0 0.5px var(--hairline),
+        0 10px 24px rgba(0, 0, 0, .06);
       cursor: pointer;
       perspective: 760px;
-      transition: transform 130ms ease, box-shadow 480ms ease, background 480ms ease;
+      transition: transform 130ms ease, box-shadow 420ms ease, background 420ms ease;
     }
-    .active .hero {
+    .float.active .hero {
       background:
-        radial-gradient(circle, rgba(183,207,225,.15), rgba(255,255,255,.025) 58%, transparent 59%),
-        radial-gradient(circle, rgba(108, 144, 173, .15), transparent 69%);
-      box-shadow: inset 0 0 0 1px var(--hairline), 0 12px 34px rgba(0, 8, 18, .18);
+        radial-gradient(circle at 50% 42%, rgba(255, 255, 255, .10), rgba(255, 255, 255, .03) 58%, transparent 59%),
+        rgba(255, 255, 255, .06);
+      box-shadow:
+        inset 0 0 0 0.5px var(--hairline),
+        0 12px 28px rgba(0, 0, 0, .28);
     }
-    .hero:hover { transform: scale(1.018); }
+    .hero:hover { transform: scale(1.016); }
     .hero:active { transform: scale(.985); }
-    .hero:focus-visible, .primary:focus-visible, .icon-button:focus-visible, select:focus-visible, .switch input:focus-visible + span {
-      outline: 3px solid rgba(63, 140, 214, .52);
+    .hero:focus-visible,
+    .primary:focus-visible,
+    .icon-button:focus-visible,
+    select:focus-visible,
+    .switch input:focus-visible + span {
+      outline: 3px solid rgba(0, 122, 255, .48);
       outline-offset: 2px;
     }
+    .float.active .hero:focus-visible,
+    .float.active .primary:focus-visible,
+    .float.active .icon-button:focus-visible,
+    .float.active select:focus-visible,
+    .float.active .switch input:focus-visible + span {
+      outline-color: rgba(10, 132, 255, .55);
+    }
 
-    .coin { position: absolute; inset: 9px; transform-style: preserve-3d; transition: transform 520ms cubic-bezier(.22,.78,.18,1.12); }
-    .active .coin { transform: rotateY(180deg); }
+    .coin { position: absolute; inset: 10px; transform-style: preserve-3d; transition: transform 520ms cubic-bezier(.22, .78, .18, 1.12); }
+    .float.active .coin { transform: rotateY(180deg); }
     .face { position: absolute; inset: 0; display: grid; place-items: center; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
     .face.back { transform: rotateY(180deg); }
-    .face img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; filter: drop-shadow(0 6px 7px rgba(46,28,8,.18)); }
-    .face.back img { width: 94%; height: 94%; filter: drop-shadow(0 7px 8px rgba(0,10,20,.28)); }
+    .face img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; filter: drop-shadow(0 6px 8px rgba(0, 0, 0, .16)); }
+    .face.back img { width: 94%; height: 94%; }
 
-    .status { margin: 9px 0 0; text-align: center; }
-    .status h1 { margin: 0; font-size: 22px; line-height: 1.18; font-weight: 680; letter-spacing: -.025em; }
-    .summary { min-height: 18px; margin: 5px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
-    .warning { display: none; margin: 5px auto 0; max-width: 290px; color: #bb5b34; font-size: 11.5px; line-height: 1.3; }
+    .status { margin: 10px 0 0; text-align: center; }
+    .status h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.15;
+      font-weight: 650;
+      letter-spacing: -.028em;
+    }
+    .summary { min-height: 18px; margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.35; letter-spacing: -.01em; }
+    .warning { display: none; margin: 6px auto 0; max-width: 290px; color: var(--warning); font-size: 12px; line-height: 1.3; }
     .warning.show { display: block; }
 
     .primary {
       width: 100%;
-      height: 38px;
-      margin: 11px 0 10px;
-      border: 1px solid rgba(77, 52, 22, .18);
-      border-radius: 10px;
-      color: var(--accent-ink);
-      background: linear-gradient(180deg, var(--accent-top), var(--accent));
-      box-shadow: inset 0 1px rgba(255,255,255,.2), 0 2px 5px rgba(45,31,17,.12);
-      font-weight: 620;
-      cursor: pointer;
-      transition: filter 120ms ease, transform 120ms ease, background 480ms ease;
-    }
-    .primary:hover { filter: brightness(1.07); }
-    .primary:active { transform: translateY(1px); filter: brightness(.98); }
-    .primary[disabled] { cursor: default; opacity: .72; }
-
-    .card { overflow: hidden; border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); }
-    .row { display: flex; align-items: center; min-height: 42px; padding: 0 12px; gap: 10px; border-bottom: 1px solid var(--hairline); }
-    .row:last-child { border-bottom: 0; }
-    .row label, .row .row-label { flex: 1; min-width: 0; line-height: 1.25; }
-    select {
-      max-width: 145px;
-      padding: 4px 22px 4px 7px;
+      height: 32px;
+      margin: 14px 0 12px;
       border: 0;
-      border-radius: 7px;
+      border-radius: 8px;
+      color: var(--accent-ink);
+      background: var(--accent);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -.02em;
+      cursor: pointer;
+      transition: filter 120ms ease, transform 120ms ease, background 420ms ease;
+    }
+    .primary:hover { filter: brightness(1.06); }
+    .primary:active { transform: translateY(0.5px); filter: brightness(.96); }
+    .primary[disabled] { cursor: default; opacity: .72; }
+    .float.active .primary {
+      background: rgba(255, 255, 255, .14);
+      color: #f5f5f7;
+    }
+    .float.active .primary:hover { filter: brightness(1.12); }
+
+    .card {
+      overflow: hidden;
+      border: 0.5px solid var(--hairline);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+    .row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 7px 12px;
+      gap: 10px;
+    }
+    .row:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      right: 0;
+      bottom: 0;
+      height: 0.5px;
+      background: var(--hairline);
+    }
+    .row label:not(.switch), .row .row-label { flex: 1; min-width: 0; line-height: 1.25; letter-spacing: -.01em; }
+    select {
+      max-width: 148px;
+      margin: 0;
+      padding: 2px 16px 2px 6px;
+      border: 0;
+      border-radius: 6px;
       color: var(--muted);
-      background: transparent;
+      background-color: transparent;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='14' viewBox='0 0 9 14'><path fill='%238e8e93' d='M4.5 1.4 1.35 4.7a.65.65 0 1 1-.9-.94L4.05.1a.65.65 0 0 1 .9 0l3.6 3.66a.65.65 0 1 1-.9.94L4.5 1.4Zm0 11.2 3.15-3.3a.65.65 0 1 1 .9.94l-3.6 3.66a.65.65 0 0 1-.9 0L.45 10.24a.65.65 0 1 1 .9-.94L4.5 12.6Z'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 1px center;
+      background-size: 9px 12px;
       text-align: right;
       cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
     }
-    select:hover { color: var(--ink); background: var(--surface-hover); }
+    select:hover { color: var(--ink); background-color: var(--surface-hover); }
+    .float.active select {
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='14' viewBox='0 0 9 14'><path fill='%23ebebf5' fill-opacity='.62' d='M4.5 1.4 1.35 4.7a.65.65 0 1 1-.9-.94L4.05.1a.65.65 0 0 1 .9 0l3.6 3.66a.65.65 0 1 1-.9.94L4.5 1.4Zm0 11.2 3.15-3.3a.65.65 0 1 1 .9.94l-3.6 3.66a.65.65 0 0 1-.9 0L.45 10.24a.65.65 0 1 1 .9-.94L4.5 12.6Z'/></svg>");
+    }
 
-    .switch { position: relative; flex: 0 0 auto; width: 34px; height: 20px; }
-    .switch input { position: absolute; opacity: 0; }
-    .switch span { position: absolute; inset: 0; border-radius: 12px; background: rgba(102,98,91,.26); box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); transition: background 180ms ease; cursor: pointer; }
-    .switch span::after { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.26); transition: transform 180ms cubic-bezier(.2,.8,.2,1); }
-    .switch input:checked + span { background: var(--accent); }
-    .switch input:checked + span::after { transform: translateX(14px); }
+    .switch {
+      position: relative;
+      flex: 0 0 40px;
+      width: 40px;
+      min-width: 40px;
+      max-width: 40px;
+      height: 24px;
+      align-self: center;
+    }
+    .switch input {
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      margin: 0;
+      opacity: 0;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    .switch span {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background: var(--switch-off);
+      transition: background 180ms ease;
+      pointer-events: none;
+    }
+    .switch span::after {
+      content: "";
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      left: 1px;
+      top: 1px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow:
+        0 3px 8px rgba(0, 0, 0, .12),
+        0 1px 1px rgba(0, 0, 0, .06),
+        0 0 0 0.5px rgba(0, 0, 0, .04);
+      transition: transform 200ms cubic-bezier(.22, 1, .36, 1);
+    }
+    .switch input:checked + span { background: var(--switch-on); }
+    .switch input:checked + span::after { transform: translateX(16px); }
 
-    .footer { display: flex; align-items: center; justify-content: center; height: 38px; margin-top: auto; padding-top: 8px; }
-    .text-button { border: 0; color: var(--muted); background: transparent; cursor: pointer; padding: 6px 11px; border-radius: 7px; }
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 36px;
+      margin-top: auto;
+      padding-top: 8px;
+    }
+    .text-button {
+      border: 0;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
     .text-button:hover { color: var(--ink); background: var(--surface-hover); }
-    .divider { width: 1px; height: 17px; margin: 0 3px; background: var(--hairline); }
+    .divider { width: 0.5px; height: 12px; margin: 0 2px; background: var(--hairline); }
 
     .settings-view { padding-top: 0; }
-    .settings-head { display: grid; grid-template-columns: 32px 1fr 32px; align-items: center; height: 39px; margin: -2px 0 7px; }
-    .settings-head h2 { margin: 0; text-align: center; font-size: 16px; font-weight: 660; }
+    .settings-head {
+      display: grid;
+      grid-template-columns: 32px 1fr 32px;
+      align-items: center;
+      height: 36px;
+      margin: 0 0 8px;
+    }
+    .settings-head h2 { margin: 0; text-align: center; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
     .settings-view .card { flex: 0 0 auto; }
-    .settings-view .row { min-height: 39px; }
-    .language-row { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 10px; padding: 4px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); }
-    .language-row button { height: 30px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
-    .language-row button.selected { color: var(--ink); background: var(--surface-hover); box-shadow: 0 1px 3px rgba(0,0,0,.1); font-weight: 610; }
-    .settings-actions { display: flex; justify-content: center; gap: 4px; margin-top: auto; padding-top: 10px; }
+    .settings-view .row { min-height: 36px; padding: 6px 12px; }
+    .language-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      margin-top: 12px;
+      padding: 2px;
+      border: 0;
+      border-radius: 9px;
+      background: var(--fill);
+    }
+    .language-row button {
+      height: 28px;
+      border: 0;
+      border-radius: 7px;
+      color: var(--ink);
+      background: transparent;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .language-row button.selected {
+      background: var(--surface-solid);
+      box-shadow: 0 0.5px 1px rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .04);
+      font-weight: 600;
+    }
+    .float.active .language-row button.selected {
+      background: rgba(255, 255, 255, .18);
+      box-shadow: 0 0.5px 1px rgba(0, 0, 0, .28);
+    }
+    .settings-actions { display: flex; justify-content: center; gap: 2px; margin-top: auto; padding-top: 10px; }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 150ms !important; animation-duration: 150ms !important; }
-      .coin, .active .coin { transform: none; }
+      .coin, .float.active .coin { transform: none; }
       .face { transition: opacity 150ms ease !important; }
       .face.front { opacity: 1; }
       .face.back { opacity: 0; transform: none; }
-      .active .face.front { opacity: 0; }
-      .active .face.back { opacity: 1; }
+      .float.active .face.front { opacity: 0; }
+      .float.active .face.back { opacity: 1; }
     }
   </style>
 </head>
 <body>
-  <div class="shell" id="shell">
-    <header class="header">
-      <span></span>
-      <div class="app-title" id="appTitle">Never Sleep</div>
-      <button class="icon-button" id="gearButton" aria-label="Settings" title="Settings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.86 2.86-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.55v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.86-2.86.06-.06A1.7 1.7 0 0 0 4.1 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H2.3V9.55h.1A1.7 1.7 0 0 0 4.1 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06L6.56 3.7l.06.06A1.7 1.7 0 0 0 8.5 4.1a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1v-.1h4.05v.1A1.7 1.7 0 0 0 15 4.1a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.86 2.86-.06.06A1.7 1.7 0 0 0 19.4 8.5a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1v4.05h-.1A1.7 1.7 0 0 0 19.4 15Z"/></svg>
-      </button>
-    </header>
-
-    <div class="view-stack">
-      <section class="view main-view visible" id="mainView">
-        <button class="hero" id="heroButton" aria-label="Toggle screen-off standby">
-          <div class="coin">
-            <div class="face front"><img src="assets/sun.png" alt=""></div>
-            <div class="face back"><img src="assets/moon.png" alt=""></div>
-          </div>
+  <div class="float" id="shell">
+    <div class="panel">
+      <header class="header">
+        <span></span>
+        <div class="app-title" id="appTitle">Never Sleep</div>
+        <button class="icon-button" id="gearButton" aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z"/></svg>
         </button>
+      </header>
 
-        <div class="status">
-          <h1 id="statusTitle">Not active</h1>
-          <p class="summary" id="summary"></p>
-          <p class="warning" id="warning"></p>
-        </div>
-
-        <button class="primary" id="primaryButton">Start Screen-Off Standby</button>
-
-        <div class="card">
-          <div class="row">
-            <label for="durationMain" id="durationLabelMain">Duration</label>
-            <select id="durationMain" data-duration>
-              <option value="indefinite">Indefinite</option>
-              <option value="1h">1 hour</option>
-              <option value="3h">3 hours</option>
-              <option value="8h">8 hours</option>
-              <option value="until_0800">Until 08:00</option>
-            </select>
-          </div>
-          <div class="row">
-            <span class="row-label" id="resleepLabelMain">Re-sleep after you leave</span>
-            <label class="switch"><input type="checkbox" data-option="resleep_display"><span></span></label>
-          </div>
-          <div class="row">
-            <span class="row-label" id="batteryLabelMain">End at low battery</span>
-            <label class="switch"><input type="checkbox" data-option="battery_floor"><span></span></label>
-          </div>
-        </div>
-
-        <footer class="footer">
-          <button class="text-button" id="moreButton">More Settings</button>
-          <span class="divider"></span>
-          <button class="text-button" data-command="quit" id="quitButtonMain">Quit</button>
-        </footer>
-      </section>
-
-      <section class="view settings-view" id="settingsView">
-        <div class="settings-head">
-          <button class="icon-button" id="backButton" aria-label="Back" title="Back">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+      <div class="view-stack">
+        <section class="view main-view visible" id="mainView">
+          <button class="hero" id="heroButton" aria-label="Toggle screen-off standby">
+            <div class="coin">
+              <div class="face front"><img src="assets/sun.png" alt=""></div>
+              <div class="face back"><img src="assets/moon.png" alt=""></div>
+            </div>
           </button>
-          <h2 id="settingsTitle">Settings</h2>
-          <span></span>
-        </div>
 
-        <div class="card">
-          <div class="row"><span class="row-label" id="screenOffLabel">Sleep display immediately</span><label class="switch"><input type="checkbox" data-option="screen_off"><span></span></label></div>
-          <div class="row"><span class="row-label" id="lidAwakeLabel">Keep running with lid closed</span><label class="switch"><input type="checkbox" data-option="lid_awake"><span></span></label></div>
-          <div class="row"><span class="row-label" id="resleepLabelSettings">Re-sleep after you leave</span><label class="switch"><input type="checkbox" data-option="resleep_display"><span></span></label></div>
-          <div class="row"><span class="row-label" id="lockLabel">Lock when display sleeps</span><label class="switch"><input type="checkbox" data-option="lock_screen"><span></span></label></div>
-          <div class="row"><span class="row-label" id="batteryLabelSettings">End at low battery</span><label class="switch"><input type="checkbox" data-option="battery_floor"><span></span></label></div>
-          <div class="row"><span class="row-label" id="loginLabel">Launch at login</span><label class="switch"><input type="checkbox" data-option="launch_at_login"><span></span></label></div>
-        </div>
+          <div class="status">
+            <h1 id="statusTitle">Not active</h1>
+            <p class="summary" id="summary"></p>
+            <p class="warning" id="warning"></p>
+          </div>
 
-        <div class="language-row" role="group" aria-label="Language">
-          <button data-language="en">English</button>
-          <button data-language="zh">简体中文</button>
-        </div>
+          <button class="primary" id="primaryButton">Start Screen-Off Standby</button>
 
-        <div class="settings-actions">
-          <button class="text-button" data-command="help" id="helpButton">Help</button>
-          <span class="divider"></span>
-          <button class="text-button" data-command="quit" id="quitButtonSettings">Quit</button>
-        </div>
-      </section>
+          <div class="card">
+            <div class="row">
+              <label for="durationMain" id="durationLabelMain">Duration</label>
+              <select id="durationMain" data-duration>
+                <option value="indefinite">Indefinite</option>
+                <option value="1h">1 hour</option>
+                <option value="3h">3 hours</option>
+                <option value="8h">8 hours</option>
+                <option value="until_0800">Until 08:00</option>
+              </select>
+            </div>
+            <div class="row">
+              <span class="row-label" id="resleepLabelMain">Re-sleep after you leave</span>
+              <label class="switch"><input type="checkbox" data-option="resleep_display"><span></span></label>
+            </div>
+            <div class="row">
+              <span class="row-label" id="batteryLabelMain">End at low battery</span>
+              <label class="switch"><input type="checkbox" data-option="battery_floor"><span></span></label>
+            </div>
+          </div>
+
+          <footer class="footer">
+            <button class="text-button" id="moreButton">More Settings</button>
+            <span class="divider"></span>
+            <button class="text-button" data-command="quit" id="quitButtonMain">Quit</button>
+          </footer>
+        </section>
+
+        <section class="view settings-view" id="settingsView">
+          <div class="settings-head">
+            <button class="icon-button" id="backButton" aria-label="Back" title="Back">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <h2 id="settingsTitle">Settings</h2>
+            <span></span>
+          </div>
+
+          <div class="card">
+            <div class="row"><span class="row-label" id="screenOffLabel">Sleep display immediately</span><label class="switch"><input type="checkbox" data-option="screen_off"><span></span></label></div>
+            <div class="row"><span class="row-label" id="lidAwakeLabel">Keep running with lid closed</span><label class="switch"><input type="checkbox" data-option="lid_awake"><span></span></label></div>
+            <div class="row"><span class="row-label" id="resleepLabelSettings">Re-sleep after you leave</span><label class="switch"><input type="checkbox" data-option="resleep_display"><span></span></label></div>
+            <div class="row"><span class="row-label" id="lockLabel">Lock when display sleeps</span><label class="switch"><input type="checkbox" data-option="lock_screen"><span></span></label></div>
+            <div class="row"><span class="row-label" id="batteryLabelSettings">End at low battery</span><label class="switch"><input type="checkbox" data-option="battery_floor"><span></span></label></div>
+            <div class="row"><span class="row-label" id="loginLabel">Launch at login</span><label class="switch"><input type="checkbox" data-option="launch_at_login"><span></span></label></div>
+          </div>
+
+          <div class="language-row" role="group" aria-label="Language">
+            <button type="button" data-language="en">English</button>
+            <button type="button" data-language="zh">简体中文</button>
+          </div>
+
+          <div class="settings-actions">
+            <button class="text-button" data-command="help" id="helpButton">Help</button>
+            <span class="divider"></span>
+            <button class="text-button" data-command="quit" id="quitButtonSettings">Quit</button>
+          </div>
+        </section>
+      </div>
     </div>
   </div>
 
@@ -433,7 +612,7 @@
           lid_awake: zh ? '合盖尽量保持运行' : 'Keep running when the lid is closed',
           lock_screen: zh ? '关屏时锁定登录' : 'Lock the session when the display sleeps',
           launch_at_login: zh ? '登录时启动' : 'Launch at login',
-          help: zh ? '使用说明' : 'Help',
+          help: zh ? '使用说明' : 'How to use',
           quit: zh ? '退出' : 'Quit'
         }
       };
@@ -447,13 +626,21 @@
     $('#backButton').addEventListener('click', () => setView(false));
     $$('[data-duration]').forEach((select) => select.addEventListener('change', () => post({ type: 'set_duration', value: select.value })));
     $$('[data-option]').forEach((input) => input.addEventListener('change', () => post({ type: 'set_option', key: input.dataset.option, enabled: input.checked })));
-    $$('[data-language]').forEach((button) => button.addEventListener('click', () => post({ type: 'set_language', language: button.dataset.language })));
+    $$('[data-language]').forEach((button) => button.addEventListener('click', () => {
+      if (previewMode) {
+        render(previewState(!!(state && state.active), button.dataset.language));
+        return;
+      }
+      post({ type: 'set_language', language: button.dataset.language });
+    }));
     $$('[data-command]').forEach((button) => button.addEventListener('click', () => post({ type: button.dataset.command })));
     window.addEventListener('keydown', (event) => { if (event.key === 'Escape') post({ type: 'hide' }); });
     window.addEventListener('DOMContentLoaded', () => {
       if (previewMode) {
+        document.documentElement.classList.add('preview');
         const params = new URLSearchParams(location.search);
         render(previewState(params.get('state') === 'active', params.get('lang') === 'zh' ? 'zh' : 'en'));
+        if (params.get('view') === 'settings') setView(true);
       } else {
         post({ type: 'ready' });
       }

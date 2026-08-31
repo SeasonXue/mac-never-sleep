@@ -190,6 +190,17 @@ mod tests {
         let (sun, _, _) = icon::celestial_icon(false);
         assert_eq!(sun.len(), moon.len());
         assert_ne!(sun, moon);
+        for px in [sun.as_slice(), moon.as_slice()] {
+            for pixel in px.chunks_exact(4) {
+                assert_eq!(
+                    &pixel[..3],
+                    &[0, 0, 0],
+                    "menu-bar template pixels must be black"
+                );
+            }
+        }
+        assert!(sun.chunks_exact(4).any(|p| p[3] > 0));
+        assert!(moon.chunks_exact(4).any(|p| p[3] > 0));
     }
 
     #[test]
