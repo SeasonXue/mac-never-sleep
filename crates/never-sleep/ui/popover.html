@@ -704,20 +704,49 @@
       }
     }
 
+    const FOCUSABLE = 'a[href], button, input, select, textarea, [tabindex]';
+
+    function setSubtreeTabStops(root, enabled) {
+      if (!root) return;
+      const nodes = [];
+      if (root.matches && root.matches(FOCUSABLE)) nodes.push(root);
+      nodes.push(...root.querySelectorAll(FOCUSABLE));
+      nodes.forEach((el) => {
+        if (enabled) {
+          if (!el.hasAttribute('data-tab-was')) return;
+          const previous = el.getAttribute('data-tab-was');
+          el.removeAttribute('data-tab-was');
+          if (previous === '') el.removeAttribute('tabindex');
+          else el.setAttribute('tabindex', previous);
+        } else if (!el.hasAttribute('data-tab-was')) {
+          el.setAttribute('data-tab-was', el.hasAttribute('tabindex') ? el.getAttribute('tabindex') : '');
+          el.setAttribute('tabindex', '-1');
+        } else {
+          el.setAttribute('tabindex', '-1');
+        }
+      });
+    }
+
+    function setLayerActive(node, active) {
+      if (!node) return;
+      node.classList.toggle('visible', active);
+      node.toggleAttribute('inert', !active);
+      node.setAttribute('aria-hidden', active ? 'false' : 'true');
+      setSubtreeTabStops(node, active);
+    }
+
     function setView(name) {
       const previous = currentView;
       currentView = name;
-      const views = { main: $('#mainView'), settings: $('#settingsView'), help: $('#helpView') };
-      Object.entries(views).forEach(([id, node]) => {
-        const visible = id === name;
-        node.classList.toggle('visible', visible);
-        node.toggleAttribute('inert', !visible);
-        node.setAttribute('aria-hidden', visible ? 'false' : 'true');
-      });
+      setLayerActive($('#mainView'), name === 'main');
+      setLayerActive($('#settingsView'), name === 'settings');
+      setLayerActive($('#helpView'), name === 'help');
       document.querySelector('.panel').classList.toggle('on-help', name === 'help');
       const gear = $('#gearButton');
-      gear.style.visibility = name === 'main' ? 'visible' : 'hidden';
-      gear.toggleAttribute('inert', name !== 'main');
+      const gearOn = name === 'main';
+      gear.style.visibility = gearOn ? 'visible' : 'hidden';
+      gear.toggleAttribute('inert', !gearOn);
+      setSubtreeTabStops(gear, gearOn);
       if (name === 'help') {
         const body = $('#helpBody');
         if (body) body.scrollTop = 0;
@@ -731,6 +760,10 @@
       helpReturnView = from || (currentView === 'help' ? 'settings' : currentView);
       setView('help');
     }
+
+    // macOS 12.0–12.3 WKWebView ignores `inert`; keep hidden views out of tab order anyway.
+    setSubtreeTabStops($('#settingsView'), false);
+    setSubtreeTabStops($('#helpView'), false);
 
     function setText(id, value) {
       const node = document.getElementById(id);
