@@ -50,7 +50,7 @@ enum UiCommand {
 }
 
 const POPOVER_WIDTH: f64 = 380.0;
-const POPOVER_HEIGHT: f64 = 536.0;
+const POPOVER_HEIGHT: f64 = 480.0;
 
 struct Popover {
     window: Window,
@@ -131,11 +131,7 @@ impl Popover {
                 desired_x.clamp(min_x, max_x.max(min_x))
             })
             .unwrap_or(desired_x);
-        let y = rect.position.y + f64::from(rect.size.height) + 3.0 * scale;
-        let arrow_x = ((anchor_x - x) / scale).clamp(38.0, POPOVER_WIDTH - 38.0);
-        let _ = self.webview.evaluate_script(&format!(
-            "document.documentElement.style.setProperty('--arrow-x', '{arrow_x:.1}px');"
-        ));
+        let y = rect.position.y + f64::from(rect.size.height) + 4.0 * scale;
         self.window
             .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
         self.window.set_visible(true);
@@ -651,7 +647,6 @@ fn popover_payload(engine: &Engine, vm: &ViewModel) -> String {
             "launch_at_login": vm.launch_at_login,
         },
         "labels": {
-            "app_name": t.app_display_name(),
             "status_title": status_title,
             "summary": summary,
             "primary_action": vm.primary_action,

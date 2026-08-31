@@ -8,8 +8,6 @@
       color-scheme: light;
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif;
       font-size: 13px;
-      --popover-inset-x: 16px;
-      --arrow-x: 190px;
       --bg: #f5f5f7;
       --ink: rgba(0, 0, 0, .85);
       --muted: rgba(60, 60, 67, .64);
@@ -51,31 +49,12 @@
 
     .float {
       position: absolute;
-      inset: 12px var(--popover-inset-x) 24px;
-      filter:
-        drop-shadow(0 10px 20px rgba(0, 0, 0, .18))
-        drop-shadow(0 2px 4px rgba(0, 0, 0, .06));
-      transition: filter 420ms ease;
-    }
-    .float::before {
-      content: "";
-      position: absolute;
-      z-index: 4;
-      top: 1.5px;
-      left: calc(var(--arrow-x, 50%) - var(--popover-inset-x) - 7px);
-      width: 14px;
-      height: 14px;
-      background: var(--bg);
-      border-left: 0.5px solid var(--stroke);
-      border-top: 0.5px solid var(--stroke);
-      border-top-left-radius: 3px;
-      transform: rotate(45deg);
-      transition: background 420ms ease, border-color 420ms ease;
+      inset: 0;
     }
 
     .panel {
       position: absolute;
-      inset: 8px 0 0;
+      inset: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -113,21 +92,6 @@
         inset 0 0.5px 0 rgba(255, 255, 255, .10);
     }
 
-    .header {
-      position: relative;
-      z-index: 3;
-      display: grid;
-      grid-template-columns: 36px 1fr 36px;
-      align-items: center;
-      flex: 0 0 44px;
-      padding: 4px 10px 0;
-    }
-    .app-title {
-      text-align: center;
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: -.01em;
-    }
     .icon-button {
       display: grid;
       place-items: center;
@@ -157,6 +121,7 @@
       transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1);
     }
     .view.visible { opacity: 1; pointer-events: auto; transform: translateX(0); }
+    .main-view { padding-top: 16px; }
     .main-view:not(.visible) { transform: translateX(-16px); }
 
     .hero {
@@ -395,7 +360,6 @@
     }
     .settings-actions { display: flex; justify-content: center; gap: 2px; margin-top: auto; padding-top: 10px; }
 
-    .panel.on-help .header { display: none; }
     .help-view { padding-top: 8px; }
     .help-body {
       flex: 1;
@@ -535,12 +499,6 @@
 <body>
   <div class="float" id="shell">
     <div class="panel">
-      <header class="header">
-        <span></span>
-        <div class="app-title" id="appTitle">Never Sleep</div>
-        <span></span>
-      </header>
-
       <div class="view-stack">
         <section class="view main-view visible" id="mainView">
           <button class="hero" id="heroButton" aria-label="Toggle screen-off standby">
@@ -740,7 +698,6 @@
       setLayerActive($('#mainView'), name === 'main');
       setLayerActive($('#settingsView'), name === 'settings');
       setLayerActive($('#helpView'), name === 'help');
-      document.querySelector('.panel').classList.toggle('on-help', name === 'help');
       if (name === 'help') {
         const body = $('#helpBody');
         if (body) body.scrollTop = 0;
@@ -788,7 +745,6 @@
       state = next;
       document.documentElement.lang = next.lang;
       shell.classList.toggle('active', !!next.active);
-      setText('appTitle', next.labels.app_name);
       setText('statusTitle', next.labels.status_title);
       setText('summary', next.labels.summary);
       setText('primaryButton', next.labels.primary_action);
@@ -884,7 +840,6 @@
         warning: '',
         options: { screen_off: true, lid_awake: true, resleep_display: true, lock_screen: false, battery_floor: true, launch_at_login: false },
         labels: {
-          app_name: zh ? '熄屏待命' : 'Never Sleep',
           status_title: active ? (zh ? '熄屏待命中' : 'Screen-Off Standby') : (zh ? '未开启' : 'Not Active'),
           summary: active ? (zh ? '屏幕已休眠，Mac 仍在线' : 'Display asleep, Mac stays online') : (zh ? '屏幕将关闭，Mac 保持在线' : 'Display off, Mac stays online'),
           primary_action: active ? (zh ? '结束熄屏待命' : 'End Screen-Off Standby') : (zh ? '开始熄屏待命' : 'Start Screen-Off Standby'),

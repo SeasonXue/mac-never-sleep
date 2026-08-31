@@ -231,4 +231,51 @@ mod tests {
             "active popover uses an opaque dark fill"
         );
     }
+
+    #[test]
+    fn popover_is_flush_without_arrow_shadow_or_app_title() {
+        let html = include_str!("../ui/popover.html");
+        assert!(
+            !html.contains(".float::before"),
+            "pointer arrow overlaps background text; flush the panel instead"
+        );
+        assert!(
+            !html.contains("--arrow-x"),
+            "arrow position is unused once the pointer is gone"
+        );
+        assert!(
+            !html.contains("drop-shadow(0 10px 20px"),
+            "outer drop-shadow around the panel must be removed"
+        );
+        assert!(
+            !html.contains("id=\"appTitle\""),
+            "Never Sleep / 熄屏待命 title chrome is redundant in the popover"
+        );
+        let float = css_rule(html, ".float");
+        assert!(
+            float.contains("inset: 0") || float.contains("inset:0"),
+            "panel shell must sit flush in the window, got: {float}"
+        );
+        assert!(
+            !float.contains("drop-shadow"),
+            "panel shell must not cast an outer shadow, got: {float}"
+        );
+        let panel = css_rule(html, ".panel");
+        assert!(
+            panel.contains("inset: 0") || panel.contains("inset:0"),
+            "panel must not reserve space for an arrow, got: {panel}"
+        );
+    }
+
+    fn css_rule(html: &str, selector: &str) -> String {
+        let marker = format!("{selector} {{");
+        let start = html
+            .find(&marker)
+            .unwrap_or_else(|| panic!("missing CSS rule {selector}"));
+        let body = &html[start + marker.len()..];
+        let end = body
+            .find('}')
+            .unwrap_or_else(|| panic!("unclosed CSS rule {selector}"));
+        body[..end].to_string()
+    }
 }
