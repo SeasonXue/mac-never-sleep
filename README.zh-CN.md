@@ -6,6 +6,33 @@
 
 界面 **默认英语**；系统语言为中文时（或在菜单里选择「简体中文」）使用中文。
 
+## 界面一览
+
+左键点一下菜单栏的太阳即可打开面板。点中央的大太阳开始——它会翻面成月亮，约 1.5 秒后屏幕关闭。所有功能都收在一个小巧、原生质感的弹出面板里。
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/main-idle-zh.png" width="260" alt="熄屏待命·未开启，点太阳即可开始">
+      <br><sub><b>一点即开</b> —— 屏幕关掉，电脑不睡。</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/main-active-zh.png" width="260" alt="熄屏待命中，屏幕已关、Mac 仍在线">
+      <br><sub><b>待命中</b> —— 屏幕已灭，ChatGPT / Codex 仍可连上。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/settings-zh.png" width="260" alt="熄屏待命设置，逐项开关与语言切换">
+      <br><sub><b>每项保护都是一个开关</b> —— 中英随心切换。</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/howto-zh.png" width="260" alt="熄屏待命内置使用说明">
+      <br><sub><b>内置使用说明</b> —— 怎么用，一点就懂。</sub>
+    </td>
+  </tr>
+</table>
+
 ## 为什么做这个，而不是再用一遍现成工具
 
 系统自带 `caffeinate`、菜单栏里的 KeepingYouAwake / Amphetamine 都能「别睡」。它们的默认路径几乎都是 **屏幕也别关**，或者把「允许关屏」藏在很深的选项里。合盖保活则往往要装 Enhancer、改 `pmset`，退出后还可能把电源策略留在脏状态。

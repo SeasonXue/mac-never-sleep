@@ -6,6 +6,33 @@ Keep a MacBook **awake with the display off**, so ChatGPT / Codex and similar cl
 
 The UI is **English by default**, with Simplified Chinese when the system language is Chinese (or when you choose it in the menu).
 
+## A look at the app
+
+One left-click on the menu-bar sun opens the panel. Tap the big sun to start — it flips to a moon and the display goes dark about 1.5 seconds later. Everything lives in one small, native-feeling popover.
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/main-idle-en.png" width="260" alt="Never Sleep idle — tap the sun to start screen-off standby">
+      <br><sub><b>One tap to start</b> — the display sleeps, the Mac stays awake.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/main-active-en.png" width="260" alt="Never Sleep active — screen off, Mac stays online">
+      <br><sub><b>Standby on</b> — screen off while ChatGPT / Codex keep connecting.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/settings-en.png" width="260" alt="Never Sleep settings with per-feature toggles and language switch">
+      <br><sub><b>Every safeguard is a toggle</b> — in English or 简体中文.</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/howto-en.png" width="260" alt="Never Sleep built-in How to use guide">
+      <br><sub><b>Built-in guide</b> — how it works, one tap away.</sub>
+    </td>
+  </tr>
+</table>
+
 ## Why this, instead of the usual tools
 
 Built-in `caffeinate` and menu-bar apps like KeepingYouAwake / Amphetamine all mean “don’t sleep”. Their default path is almost always **keep the display on**, or they bury “allow display sleep” deep in options. Closed-lid stay-awake often needs an Enhancer, or rewriting `pmset`, and can leave power policy dirty after quit.
