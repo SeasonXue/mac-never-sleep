@@ -117,24 +117,70 @@ jobs:
             prerelease_flag="--prerelease"
           fi
 
+          asset_id() {
+            local tag="$1"
+            local name="$2"
+            gh release view "${tag}" --json assets --jq \
+              ".assets[] | select(.name==\"${name}\") | .id"
+          }
+
+          delete_asset_if_present() {
+            local tag="$1"
+            local name="$2"
+            gh release delete-asset "${tag}" "${name}" --yes 2>/dev/null || true
+          }
+
+          rename_asset() {
+            local id="$1"
+            local new_name="$2"
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${id}" \
+              -f "name=${new_name}"
+          }
+
           upload_without_clobber() {
             local tag="$1"
             shift
-            local f staged
+            local f base staged previous old_id staging_id
+
+            # Drop leftover names from a failed prior run so a retry can upload.
+            for f in "$@"; do
+              base="$(basename "${f}")"
+              delete_asset_if_present "${tag}" "${base}.staging"
+              delete_asset_if_present "${tag}" "${base}.previous"
+            done
+            delete_asset_if_present "${tag}" "never-sleep-cli-macos"
+
+            # Upload replacements under .staging while canonical URLs stay live.
             for f in "$@"; do
               staged="$(basename "${f}").staging"
               cp "${f}" "${staged}"
               gh release upload "${tag}" "${staged}"
             done
+
+            # Park each live canonical, then rename staging onto that name.
             for f in "$@"; do
-              gh release delete-asset "${tag}" "$(basename "${f}")" --yes 2>/dev/null || true
-            done
-            # Drop the unsigned bare CLI from #9 if it is still attached.
-            gh release delete-asset "${tag}" "never-sleep-cli-macos" --yes 2>/dev/null || true
-            gh release upload "${tag}" "$@"
-            for f in "$@"; do
-              gh release delete-asset "${tag}" "$(basename "${f}").staging" --yes
-              rm -f "$(basename "${f}").staging"
+              base="$(basename "${f}")"
+              staged="${base}.staging"
+              previous="${base}.previous"
+              old_id="$(asset_id "${tag}" "${base}")"
+              staging_id="$(asset_id "${tag}" "${staged}")"
+              if [ -z "${staging_id}" ]; then
+                echo "Missing staging asset ${staged}." >&2
+                exit 1
+              fi
+              if [ -n "${old_id}" ]; then
+                rename_asset "${old_id}" "${previous}"
+              fi
+              if ! rename_asset "${staging_id}" "${base}"; then
+                echo "Failed to promote ${staged} to ${base}; restoring previous." >&2
+                if [ -n "${old_id}" ]; then
+                  rename_asset "${old_id}" "${base}" || true
+                fi
+                exit 1
+              fi
+              delete_asset_if_present "${tag}" "${previous}"
+              rm -f "${staged}"
             done
           }
 

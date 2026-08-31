@@ -47,6 +47,37 @@ fn replacement_assets_are_not_clobbered_in_place() {
 }
 
 #[test]
+fn stale_staging_assets_are_removed_before_retry() {
+    let body = function_body(RELEASE, "upload_without_clobber");
+    let first_upload = body
+        .find("gh release upload")
+        .expect("staging upload should happen inside upload_without_clobber");
+    let prefix = &body[..first_upload];
+    assert!(
+        prefix.contains(".staging")
+            && (prefix.contains("delete-asset") || prefix.contains("delete_asset_if_present")),
+        "leftover .staging names must be deleted before the first upload, otherwise a retry cannot upload them: {prefix}"
+    );
+}
+
+#[test]
+fn canonical_assets_stay_until_replacements_are_renamed() {
+    assert!(
+        RELEASE.contains("--method PATCH") && RELEASE.contains("releases/assets"),
+        "promote .staging onto the canonical download name by renaming, not by deleting first"
+    );
+    let body = function_body(RELEASE, "upload_without_clobber");
+    assert!(
+        body.contains(".previous"),
+        "park the live canonical asset under .previous so its bytes remain until the swap finishes"
+    );
+    assert!(
+        !body.contains("gh release upload \"${tag}\" \"$@\""),
+        "do not delete every canonical name and then batch-upload replacements"
+    );
+}
+
+#[test]
 fn cli_asset_preserves_unix_executable_mode() {
     assert!(
         RELEASE.contains("never-sleep-cli-macos.zip")
@@ -57,4 +88,28 @@ fn cli_asset_preserves_unix_executable_mode() {
         RELEASE.contains("chmod +x"),
         "release notes must tell users to chmod +x the CLI after download"
     );
+}
+
+fn function_body<'a>(src: &'a str, name: &str) -> &'a str {
+    let start = src
+        .find(&format!("{name}()"))
+        .unwrap_or_else(|| panic!("missing {name}()"));
+    let rest = &src[start..];
+    let open = rest
+        .find('{')
+        .unwrap_or_else(|| panic!("{name}() has no body"));
+    let mut depth = 0usize;
+    for (i, ch) in rest[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &rest[open..=open + i];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unclosed {name}()");
 }
