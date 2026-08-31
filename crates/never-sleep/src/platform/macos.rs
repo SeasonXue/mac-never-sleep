@@ -260,13 +260,23 @@ fn matching_service(class: &str) -> u32 {
     }
 }
 
+/// Current Mach task port. Bound locally so we do not use `libc::mach_task_self_`,
+/// which libc marks deprecated in favour of the `mach2` crate.
+extern "C" {
+    static mach_task_self_: u32;
+}
+
+fn current_mach_task() -> u32 {
+    unsafe { mach_task_self_ }
+}
+
 fn open_root_domain() -> Option<u32> {
     let service = matching_service("IOPMrootDomain");
     if service == 0 {
         return None;
     }
     let mut conn = 0u32;
-    let task = unsafe { libc::mach_task_self_ };
+    let task = current_mach_task();
     let ret = unsafe { IOServiceOpen(service, task, 0, &mut conn) };
     unsafe {
         let _ = IOObjectRelease(service);
