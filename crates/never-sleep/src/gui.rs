@@ -346,7 +346,14 @@ pub fn run() {
                 }
             }
             Event::UserEvent(UserEvent::Menu(id)) => {
-                handle_menu_event(&mut engine, platform.as_mut(), &handles, control_flow, id);
+                handle_menu_event(
+                    &mut engine,
+                    platform.as_mut(),
+                    &handles,
+                    control_flow,
+                    id,
+                    popover.as_ref(),
+                );
                 refresh_ui(
                     &handles,
                     &mut tray,
@@ -680,6 +687,24 @@ fn popover_payload(engine: &Engine, vm: &ViewModel) -> String {
             "launch_at_login": t.launch_at_login(),
             "help": t.help_title(),
             "quit": t.quit(),
+        },
+        "help": {
+            "title": t.help_title(),
+            "kicker": t.help_kicker(),
+            "lead": t.help_lead(),
+            "how": t.help_how(),
+            "step1_title": t.help_step1_title(),
+            "step1_detail": t.help_step1_detail(),
+            "step2_title": t.help_step2_title(),
+            "step2_detail": t.help_step2_detail(),
+            "step3_title": t.help_step3_title(),
+            "step3_before": t.help_step3_before(),
+            "step3_after": t.help_step3_after(),
+            "hotkey": DEFAULT_HOTKEY_LABEL,
+            "notes": t.help_notes(),
+            "note_lid": t.help_note_lid(),
+            "note_battery": t.help_note_battery(),
+            "note_quit": t.help_note_quit(),
         }
     })
     .to_string()
@@ -691,6 +716,7 @@ fn handle_menu_event(
     handles: &MenuHandles,
     control_flow: &mut ControlFlow,
     id: tray_icon::menu::MenuId,
+    popover: Option<&Popover>,
 ) {
     if id == handles.toggle.id() {
         dispatch(engine, platform, Input::Toggle);
@@ -698,8 +724,7 @@ fn handle_menu_event(
         stop_for_quit(engine, platform);
         *control_flow = ControlFlow::Exit;
     } else if id == handles.help.id() {
-        let t = engine.config.tr();
-        show_dialog(&t, t.help_title(), t.onboarding());
+        show_help(engine, popover);
     } else if id == handles.lang_en.id() {
         engine.config.language = Some(Lang::En);
         save_config(&engine.config);
@@ -820,8 +845,7 @@ fn handle_ui_command(
             }
         }
         UiCommand::Help => {
-            let t = engine.config.tr();
-            show_dialog(&t, t.help_title(), t.onboarding());
+            show_help(engine, popover.as_deref());
         }
         UiCommand::Quit => {
             stop_for_quit(engine, platform);
@@ -911,10 +935,27 @@ fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcInc
     let _ = reply.send(resp);
 }
 
+fn show_help(engine: &Engine, popover: Option<&Popover>) {
+    if let Some(panel) = popover {
+        if panel.visible
+            && panel
+                .webview
+                .evaluate_script(
+                    "window.NeverSleep && window.NeverSleep.showHelp && window.NeverSleep.showHelp();",
+                )
+                .is_ok()
+        {
+            return;
+        }
+    }
+    let t = engine.config.tr();
+    show_dialog(&t, t.help_title(), t.onboarding());
+}
+
 fn show_dialog(t: &Tr, title: &str, body: &str) {
     let ok = t.dialog_ok().replace('"', "\\\"");
     let script = format!(
-        "display dialog \"{}\" with title \"{}\" buttons {{\"{ok}\"}} default button 1",
+        "display dialog \"{}\" with title \"{}\" with icon note buttons {{\"{ok}\"}} default button 1",
         body.replace('\\', "\\\\")
             .replace('"', "\\\"")
             .replace('\n', "\\n"),

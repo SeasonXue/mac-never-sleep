@@ -22,6 +22,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 [workspace.lints.rust]
 dead_code = "warn"
 unused = "warn"
+# objc 0.2 `msg_send!` / `sel!` expand `cfg(feature = "cargo-clippy")` into this
+# crate. Clippy CI uses `-D warnings`; without check-cfg that is an error.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

@@ -424,6 +424,132 @@
     }
     .settings-actions { display: flex; justify-content: center; gap: 2px; margin-top: auto; padding-top: 10px; }
 
+    .panel.on-help .header { display: none; }
+    .help-view { padding-top: 8px; }
+    .help-body {
+      flex: 1;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding-bottom: 8px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--hairline) transparent;
+    }
+    .help-body::-webkit-scrollbar { width: 7px; }
+    .help-body::-webkit-scrollbar-thumb {
+      background: var(--hairline);
+      border-radius: 99px;
+    }
+
+    .help-lead {
+      margin: 0 0 12px;
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 590;
+      line-height: 1.35;
+      letter-spacing: -.02em;
+    }
+    .help-kicker {
+      display: block;
+      margin: 0 0 5px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+    }
+
+    .help-section {
+      margin: 0 0 6px;
+      padding: 0 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 510;
+      letter-spacing: -.01em;
+    }
+    html[lang="en"] .help-section {
+      font-size: 11px;
+      font-weight: 590;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .help-section + .card { margin-bottom: 14px; }
+    .help-body > .card:last-child { margin-bottom: 0; }
+
+    .help-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      gap: 10px;
+      align-items: start;
+      padding: 9px 12px;
+    }
+    .help-item:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      left: 44px;
+      right: 0;
+      bottom: 0;
+      height: 0.5px;
+      background: var(--hairline);
+    }
+    .help-index {
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      margin-top: 1px;
+      border-radius: 999px;
+      color: #fff;
+      background: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .help-icon {
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      margin-top: 1px;
+      color: var(--accent);
+    }
+    .help-icon svg { width: 15px; height: 15px; }
+    .help-item h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+    }
+    .help-item p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      letter-spacing: -.01em;
+    }
+    .help-item.note p { margin: 1px 0 0; color: var(--ink); }
+
+    .help-hotkey {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0 4px;
+    }
+    .kbd {
+      display: inline-block;
+      padding: 1px 6px;
+      border: 0.5px solid var(--hairline);
+      border-radius: 5px;
+      background: var(--fill);
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: .02em;
+      line-height: 1.4;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 150ms !important; animation-duration: 150ms !important; }
       .coin, .float.active .coin { transform: none; }
@@ -491,7 +617,7 @@
           </footer>
         </section>
 
-        <section class="view settings-view" id="settingsView">
+        <section class="view settings-view" id="settingsView" inert aria-hidden="true">
           <div class="settings-head">
             <button class="icon-button" id="backButton" aria-label="Back" title="Back">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
@@ -515,9 +641,77 @@
           </div>
 
           <div class="settings-actions">
-            <button class="text-button" data-command="help" id="helpButton">Help</button>
+            <button class="text-button" type="button" id="helpButton">How to use</button>
             <span class="divider"></span>
             <button class="text-button" data-command="quit" id="quitButtonSettings">Quit</button>
+          </div>
+        </section>
+
+        <section class="view settings-view help-view" id="helpView" inert aria-hidden="true">
+          <div class="settings-head">
+            <button class="icon-button" id="helpBackButton" aria-label="Back" title="Back">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <h2 id="helpTitle">How to use</h2>
+            <span></span>
+          </div>
+
+          <div class="help-body" id="helpBody">
+            <p class="help-lead">
+              <span class="help-kicker" id="helpKicker">Display off · Mac online</span>
+              <span id="helpLead">Remote clients such as ChatGPT and Codex can keep connecting.</span>
+            </p>
+
+            <div class="help-section" id="helpHowTitle">Get started</div>
+            <div class="card">
+              <div class="help-item">
+                <span class="help-index">1</span>
+                <div>
+                  <h3 id="helpStep1Title">Start standby</h3>
+                  <p id="helpStep1Detail">Click “Start Screen-Off Standby”. The display sleeps after about 1.5 seconds.</p>
+                </div>
+              </div>
+              <div class="help-item">
+                <span class="help-index">2</span>
+                <div>
+                  <h3 id="helpStep2Title">Stays out of your way</h3>
+                  <p id="helpStep2Detail">It will not fight you for the screen while you type; it sleeps again after you leave.</p>
+                </div>
+              </div>
+              <div class="help-item">
+                <span class="help-index">3</span>
+                <div>
+                  <h3 id="helpStep3Title">Come back any time</h3>
+                  <p class="help-hotkey">
+                    <span id="helpStep3Before">Press</span>
+                    <kbd class="kbd" id="helpHotkey">⌥⌘P</kbd>
+                    <span id="helpStep3After">or choose “End Standby” in the menu.</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="help-section" id="helpNotesTitle">Keep in mind</div>
+            <div class="card">
+              <div class="help-item note">
+                <span class="help-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 19h8"/></svg>
+                </span>
+                <p id="helpNoteLid">Closed-lid stay-awake is best-effort, more reliable on power. Lid open + display asleep is the reliable path.</p>
+              </div>
+              <div class="help-item note">
+                <span class="help-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="7" width="16" height="10" rx="2"/><path d="M21 10v4"/><path d="M6.5 10.5v3"/></svg>
+                </span>
+                <p id="helpNoteBattery">Standby ends automatically on low battery so the pack is not drained.</p>
+              </div>
+              <div class="help-item note">
+                <span class="help-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4.5V9h4.5"/></svg>
+                </span>
+                <p id="helpNoteQuit">Quitting restores normal sleep. Energy Saver settings are never rewritten.</p>
+              </div>
+            </div>
           </div>
         </section>
       </div>
@@ -531,6 +725,8 @@
     const previewMode = !window.ipc && new URLSearchParams(location.search).has('preview');
     let state = null;
     let busy = false;
+    let currentView = 'main';
+    let helpReturnView = 'settings';
 
     function post(message) {
       if (window.ipc && typeof window.ipc.postMessage === 'function') {
@@ -538,15 +734,90 @@
       }
     }
 
-    function setView(settings) {
-      $('#mainView').classList.toggle('visible', !settings);
-      $('#settingsView').classList.toggle('visible', settings);
-      $('#gearButton').style.visibility = settings ? 'hidden' : 'visible';
+    const FOCUSABLE = 'a[href], button, input, select, textarea, [tabindex]';
+
+    function setSubtreeTabStops(root, enabled) {
+      if (!root) return;
+      const nodes = [];
+      if (root.matches && root.matches(FOCUSABLE)) nodes.push(root);
+      nodes.push(...root.querySelectorAll(FOCUSABLE));
+      nodes.forEach((el) => {
+        if (enabled) {
+          if (!el.hasAttribute('data-tab-was')) return;
+          const previous = el.getAttribute('data-tab-was');
+          el.removeAttribute('data-tab-was');
+          if (previous === '') el.removeAttribute('tabindex');
+          else el.setAttribute('tabindex', previous);
+        } else if (!el.hasAttribute('data-tab-was')) {
+          el.setAttribute('data-tab-was', el.hasAttribute('tabindex') ? el.getAttribute('tabindex') : '');
+          el.setAttribute('tabindex', '-1');
+        } else {
+          el.setAttribute('tabindex', '-1');
+        }
+      });
     }
+
+    function setLayerActive(node, active) {
+      if (!node) return;
+      node.classList.toggle('visible', active);
+      node.toggleAttribute('inert', !active);
+      node.setAttribute('aria-hidden', active ? 'false' : 'true');
+      setSubtreeTabStops(node, active);
+    }
+
+    function setView(name) {
+      const previous = currentView;
+      currentView = name;
+      setLayerActive($('#mainView'), name === 'main');
+      setLayerActive($('#settingsView'), name === 'settings');
+      setLayerActive($('#helpView'), name === 'help');
+      document.querySelector('.panel').classList.toggle('on-help', name === 'help');
+      const gear = $('#gearButton');
+      const gearOn = name === 'main';
+      gear.style.visibility = gearOn ? 'visible' : 'hidden';
+      gear.toggleAttribute('inert', !gearOn);
+      setSubtreeTabStops(gear, gearOn);
+      if (name === 'help') {
+        const body = $('#helpBody');
+        if (body) body.scrollTop = 0;
+      }
+      if (previous === name) return;
+      const focusTarget = name === 'help' ? $('#helpBackButton') : name === 'settings' ? $('#backButton') : gear;
+      if (focusTarget) focusTarget.focus();
+    }
+
+    function showHelp(from) {
+      helpReturnView = from || (currentView === 'help' ? 'settings' : currentView);
+      setView('help');
+    }
+
+    // macOS 12.0–12.3 WKWebView ignores `inert`; keep hidden views out of tab order anyway.
+    setSubtreeTabStops($('#settingsView'), false);
+    setSubtreeTabStops($('#helpView'), false);
 
     function setText(id, value) {
       const node = document.getElementById(id);
       if (node && value != null) node.textContent = value;
+    }
+
+    function applyHelp(help) {
+      if (!help) return;
+      setText('helpTitle', help.title);
+      setText('helpKicker', help.kicker);
+      setText('helpLead', help.lead);
+      setText('helpHowTitle', help.how);
+      setText('helpStep1Title', help.step1_title);
+      setText('helpStep1Detail', help.step1_detail);
+      setText('helpStep2Title', help.step2_title);
+      setText('helpStep2Detail', help.step2_detail);
+      setText('helpStep3Title', help.step3_title);
+      setText('helpStep3Before', help.step3_before);
+      setText('helpStep3After', help.step3_after);
+      setText('helpHotkey', help.hotkey);
+      setText('helpNotesTitle', help.notes);
+      setText('helpNoteLid', help.note_lid);
+      setText('helpNoteBattery', help.note_battery);
+      setText('helpNoteQuit', help.note_quit);
     }
 
     function render(next) {
@@ -571,6 +842,7 @@
       setText('loginLabel', next.labels.launch_at_login);
       setText('helpButton', next.labels.help);
       setText('quitButtonSettings', next.labels.quit);
+      applyHelp(next.help);
 
       const warning = $('#warning');
       warning.textContent = next.warning || '';
@@ -590,6 +862,8 @@
       $('#gearButton').title = next.labels.settings;
       $('#backButton').setAttribute('aria-label', next.labels.back);
       $('#backButton').title = next.labels.back;
+      $('#helpBackButton').setAttribute('aria-label', next.labels.back);
+      $('#helpBackButton').title = next.labels.back;
       busy = false;
       $('#heroButton').disabled = false;
       $('#primaryButton').disabled = false;
@@ -618,6 +892,27 @@
       }, 900);
     }
 
+    function helpCopy(zh) {
+      return {
+        title: zh ? '使用说明' : 'How to use',
+        kicker: zh ? '关屏护屏 · 电脑在线' : 'Display off · Mac online',
+        lead: zh ? 'ChatGPT / Codex 等远程客户端仍可连上这台电脑。' : 'Remote clients such as ChatGPT and Codex can keep connecting.',
+        how: zh ? '怎么用' : 'Get started',
+        step1_title: zh ? '开始待命' : 'Start standby',
+        step1_detail: zh ? '点「开始熄屏待命」，约 1.5 秒后屏幕关闭。' : 'Click “Start Screen-Off Standby”. The display sleeps after about 1.5 seconds.',
+        step2_title: zh ? '不抢屏幕' : 'Stays out of your way',
+        step2_detail: zh ? '人在电脑前绝不强制关屏；走开后再自动关闭。' : 'It will not fight you for the screen while you type; it sleeps again after you leave.',
+        step3_title: zh ? '随时回来' : 'Come back any time',
+        step3_before: zh ? '按' : 'Press',
+        step3_after: zh ? '，或点菜单「结束待命」。' : 'or choose “End Standby” in the menu.',
+        hotkey: '⌥⌘P',
+        notes: zh ? '请留意' : 'Keep in mind',
+        note_lid: zh ? '合盖保活是尽力而为，插电更稳；最可靠仍是开盖熄屏。' : 'Closed-lid stay-awake is best-effort, more reliable on power. Lid open + display asleep is the reliable path.',
+        note_battery: zh ? '电量过低会自动结束，避免把电池耗干。' : 'Standby ends automatically on low battery so the pack is not drained.',
+        note_quit: zh ? '退出后立即恢复系统睡眠，不会改写节能设置。' : 'Quitting restores normal sleep. Energy Saver settings are never rewritten.'
+      };
+    }
+
     function previewState(active, lang) {
       const zh = lang === 'zh';
       return {
@@ -644,16 +939,19 @@
           launch_at_login: zh ? '登录时启动' : 'Launch at login',
           help: zh ? '使用说明' : 'How to use',
           quit: zh ? '退出' : 'Quit'
-        }
+        },
+        help: helpCopy(zh)
       };
     }
 
-    window.NeverSleep = { update: render };
+    window.NeverSleep = { update: render, showHelp: () => showHelp() };
     $('#heroButton').addEventListener('click', toggle);
     $('#primaryButton').addEventListener('click', toggle);
-    $('#gearButton').addEventListener('click', () => setView(true));
-    $('#moreButton').addEventListener('click', () => setView(true));
-    $('#backButton').addEventListener('click', () => setView(false));
+    $('#gearButton').addEventListener('click', () => setView('settings'));
+    $('#moreButton').addEventListener('click', () => setView('settings'));
+    $('#backButton').addEventListener('click', () => setView('main'));
+    $('#helpButton').addEventListener('click', () => showHelp('settings'));
+    $('#helpBackButton').addEventListener('click', () => setView(helpReturnView || 'settings'));
     $$('[data-duration]').forEach((select) => select.addEventListener('change', () => post({ type: 'set_duration', value: select.value })));
     $$('[data-option]').forEach((input) => input.addEventListener('change', () => post({ type: 'set_option', key: input.dataset.option, enabled: input.checked })));
     $$('[data-language]').forEach((button) => button.addEventListener('click', () => {
@@ -670,7 +968,9 @@
         document.documentElement.classList.add('preview');
         const params = new URLSearchParams(location.search);
         render(previewState(params.get('state') === 'active', params.get('lang') === 'zh' ? 'zh' : 'en'));
-        if (params.get('view') === 'settings') setView(true);
+        const view = params.get('view');
+        if (view === 'help') showHelp('main');
+        else if (view === 'settings') setView('settings');
       } else {
         post({ type: 'ready' });
       }
