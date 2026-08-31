@@ -117,6 +117,39 @@ fn cli_asset_preserves_unix_executable_mode() {
     );
 }
 
+#[test]
+fn remote_tag_lookup_fails_closed_on_transport_errors() {
+    assert!(
+        RELEASE.contains("ls-remote"),
+        "must look up the remote tag before publishing"
+    );
+    assert!(
+        RELEASE.contains("-ne 2") || RELEASE.contains("-eq 2") || RELEASE.contains("!= 2"),
+        "git ls-remote --exit-code uses status 2 for an absent tag; other statuses are errors and must abort"
+    );
+    assert!(
+        !RELEASE.contains(
+            "if git ls-remote --exit-code --tags origin \"refs/tags/${TAG}\" >/dev/null 2>&1; then"
+        ),
+        "do not fold transport failures into 'tag is missing'"
+    );
+}
+
+#[test]
+fn legacy_cli_asset_stays_until_zip_is_promoted() {
+    let body = function_body(RELEASE, "upload_without_clobber");
+    let last_promote = body
+        .rfind("rename_asset")
+        .expect("staging must be promoted with rename_asset");
+    let delete_legacy = body
+        .find("delete_asset_if_present \"${tag}\" \"never-sleep-cli-macos\"")
+        .expect("the bare never-sleep-cli-macos asset from #9 must still be removed eventually");
+    assert!(
+        delete_legacy > last_promote,
+        "do not delete the legacy CLI until never-sleep-cli-macos.zip has been promoted"
+    );
+}
+
 fn function_body<'a>(src: &'a str, name: &str) -> &'a str {
     let start = src
         .find(&format!("{name}()"))
