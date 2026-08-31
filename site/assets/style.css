@@ -188,10 +188,15 @@ html[lang="zh-Hans"] .kicker {
   margin-top: 22px;
 }
 .fine {
-  margin: 12px 0 0;
+  max-width: 52rem;
+  margin: 12px auto 0;
   color: var(--hero-muted);
   font-size: 13px;
 }
+.fine code, .get code, td code {
+  overflow-wrap: anywhere;
+}
+.brand-name { white-space: nowrap; }
 
 .hero-stage { padding: 8px 0 56px; }
 .shots {
@@ -511,8 +516,10 @@ a:focus-visible {
 @media (max-width: 560px) {
   .wrap { width: min(var(--max), calc(100% - 24px)); }
   .gallery { grid-template-columns: 1fr; }
-  .nav { gap: 10px; }
+  .nav { gap: 8px; }
+  .brand-name { display: none; }
   .language-row a { padding: 0 8px; font-size: 12px; }
+  .nav-end .btn { height: 32px; padding: 0 10px; font-size: 13px; }
   .hero-copy { padding-top: 28px; }
 }
 
