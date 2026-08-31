@@ -138,7 +138,7 @@ jobs:
           delete_asset_if_present() {
             local tag="$1"
             local name="$2"
-            gh release delete-asset "${tag}" "${name}" --yes 2>/dev/null || true
+            gh release delete-asset --yes -- "${tag}" "${name}" 2>/dev/null || true
           }
 
           retire_asset() {
@@ -153,7 +153,7 @@ jobs:
             if [ -z "${id}" ]; then
               return 0
             fi
-            gh release delete-asset "${tag}" "${name}" --yes
+            gh release delete-asset --yes -- "${tag}" "${name}"
           }
 
           rename_asset() {
@@ -186,7 +186,7 @@ jobs:
             for f in "$@"; do
               staged="$(basename "${f}").staging"
               cp "${f}" "${staged}"
-              gh release upload "${tag}" "${staged}"
+              gh release upload -- "${tag}" "${staged}"
             done
 
             # Park each live canonical, then rename staging onto that name.
@@ -215,7 +215,7 @@ jobs:
             done
           }
 
-          if gh release view "${TAG}" >/dev/null 2>&1; then
+          if gh release view -- "${TAG}" >/dev/null 2>&1; then
             git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}"
             existing_sha="$(git rev-list -n 1 "refs/tags/${TAG}")"
             if [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
@@ -224,16 +224,18 @@ jobs:
             fi
             upload_without_clobber "${TAG}" \
               "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip"
-            gh release edit "${TAG}" \
+            gh release edit \
               --title "Never Sleep ${TAG}" \
               --notes "${notes}" \
-              "${prerelease_flag}"
+              "${prerelease_flag}" \
+              -- "${TAG}"
             retire_asset "${TAG}" "never-sleep-cli-macos"
           else
-            gh release create "${TAG}" \
-              "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip" \
+            gh release create \
               --title "Never Sleep ${TAG}" \
               --notes "${notes}" \
               --target "${GITHUB_SHA}" \
-              "${prerelease_flag}"
+              "${prerelease_flag}" \
+              -- "${TAG}" \
+              "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip"
           fi

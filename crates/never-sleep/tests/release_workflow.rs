@@ -237,6 +237,84 @@ fn asset_lookup_failure_is_not_treated_as_absence() {
     );
 }
 
+#[test]
+fn gh_release_passes_leading_dash_tags_after_option_terminator() {
+    // workflow_dispatch can supply a valid git tag that starts with `-`
+    // (`-v1`, `--help`). Quoting does not stop `gh` from parsing it as a flag.
+    for tag in ["-v1", "--help"] {
+        let status = std::process::Command::new("git")
+            .args(["check-ref-format", &format!("refs/tags/{tag}")])
+            .status()
+            .expect("git check-ref-format must be available");
+        assert!(
+            status.success(),
+            "{tag} is a valid git tag name and must be publishable"
+        );
+    }
+
+    assert!(
+        !RELEASE.contains("gh release upload \"${tag}\""),
+        "gh release upload <tag> treats a leading-dash tag as a flag"
+    );
+    assert!(
+        RELEASE.contains("gh release upload -- \"${tag}\""),
+        "upload must put flags (if any) then -- then the tag"
+    );
+
+    for body in [
+        function_body(RELEASE, "delete_asset_if_present"),
+        function_body(RELEASE, "retire_asset"),
+    ] {
+        assert!(
+            !body.contains("gh release delete-asset \"${tag}\""),
+            "delete-asset <tag> treats a leading-dash tag as a flag: {body}"
+        );
+        assert!(
+            body.contains("gh release delete-asset") && body.contains("-- \"${tag}\""),
+            "delete-asset must pass --yes then -- then the tag: {body}"
+        );
+    }
+
+    assert!(
+        !RELEASE.contains("gh release view \"${TAG}\""),
+        "gh release view <tag> treats a leading-dash tag as a flag"
+    );
+    assert!(
+        RELEASE.contains("gh release view -- \"${TAG}\""),
+        "view must pass the tag after --"
+    );
+
+    assert!(
+        !RELEASE.contains("gh release edit \"${TAG}\""),
+        "gh release edit <tag> treats a leading-dash tag as a flag"
+    );
+    assert!(
+        !RELEASE.contains("gh release create \"${TAG}\""),
+        "gh release create <tag> treats a leading-dash tag as a flag"
+    );
+    assert!(
+        RELEASE.contains("gh release edit") && RELEASE.contains("gh release create"),
+        "existing-release edit and new-release create paths must remain"
+    );
+    let view = RELEASE
+        .find("if gh release view")
+        .expect("existing-release branch");
+    let rest = &RELEASE[view..];
+    let else_at = rest
+        .find("\n          else")
+        .expect("existing-release branch should have an else create path");
+    let existing = &rest[..else_at];
+    let create = &rest[else_at..];
+    assert!(
+        existing.contains("gh release edit") && existing.contains("-- \"${TAG}\""),
+        "edit must put --title/--notes/--prerelease before -- and the tag after: {existing}"
+    );
+    assert!(
+        create.contains("gh release create") && create.contains("-- \"${TAG}\""),
+        "create must put flags before -- and the tag after: {create}"
+    );
+}
+
 fn percent_encode_tag(tag: &str) -> String {
     let output = std::process::Command::new("python3")
         .args([
