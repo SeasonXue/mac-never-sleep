@@ -29,3 +29,6 @@ core-foundation = "0.10"
 
 [dev-dependencies]
 never-sleep-core = { workspace = true }
+
+[lints]
+workspace = true

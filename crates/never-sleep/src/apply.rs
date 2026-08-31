@@ -113,4 +113,107 @@ mod tests {
             "idle assertion failure must not leave standby on"
         );
     }
+
+    struct Rec {
+        host: HostSnapshot,
+        events: std::cell::RefCell<Vec<String>>,
+        fail_sleep: bool,
+    }
+
+    impl Rec {
+        fn new() -> Self {
+            Self {
+                host: FailPower.snapshot(),
+                events: std::cell::RefCell::new(Vec::new()),
+                fail_sleep: false,
+            }
+        }
+        fn push(&self, s: impl Into<String>) {
+            self.events.borrow_mut().push(s.into());
+        }
+    }
+
+    impl Platform for Rec {
+        fn snapshot(&self) -> HostSnapshot {
+            self.host.clone()
+        }
+        fn apply_power(&mut self, plan: PowerPlan) -> Result<(), String> {
+            self.push(format!("apply:{}", plan.prevent_idle_sleep));
+            Ok(())
+        }
+        fn release_power(&mut self) -> Result<(), String> {
+            self.push("release");
+            Ok(())
+        }
+        fn sleep_display(&self) -> Result<(), String> {
+            self.push("sleep");
+            if self.fail_sleep {
+                Err("no display".into())
+            } else {
+                Ok(())
+            }
+        }
+        fn lock_session(&self) {
+            self.push("lock");
+        }
+        fn notify(&self, title: &str, _body: &str) {
+            self.push(format!("notify:{title}"));
+        }
+        fn set_launch_at_login(&self, _enabled: bool) -> Result<(), String> {
+            Ok(())
+        }
+        fn cleanup_orphans(&self) {
+            self.push("cleanup");
+        }
+        fn doctor(&self) -> String {
+            String::new()
+        }
+    }
+
+    #[test]
+    fn start_applies_power_and_notifies() {
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = Rec::new();
+        dispatch(&mut engine, &mut platform, Input::Start);
+        assert!(engine.is_active());
+        let events = platform.events.borrow().clone();
+        assert!(events.iter().any(|e| e.starts_with("apply:")));
+        assert!(events.iter().any(|e| e.starts_with("notify:")));
+    }
+
+    #[test]
+    fn sleep_display_error_does_not_abort_session() {
+        let cfg = AppConfig {
+            display_off_delay_ms: 0,
+            ..AppConfig::default()
+        };
+        let mut engine = Engine::new(cfg);
+        let mut platform = Rec::new();
+        platform.fail_sleep = true;
+        dispatch(&mut engine, &mut platform, Input::Start);
+        assert!(engine.is_active());
+        assert!(platform.events.borrow().iter().any(|e| e == "sleep"));
+    }
+
+    #[test]
+    fn stop_for_quit_when_idle_releases_and_cleans() {
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = Rec::new();
+        stop_for_quit(&mut engine, &mut platform);
+        let events = platform.events.borrow().clone();
+        assert_eq!(events, vec!["release".to_string(), "cleanup".to_string()]);
+    }
+
+    #[test]
+    fn first_sleep_locks_when_configured() {
+        let cfg = AppConfig {
+            lock_screen: true,
+            display_off_delay_ms: 0,
+            ..AppConfig::default()
+        };
+        let mut engine = Engine::new(cfg);
+        let mut platform = Rec::new();
+        dispatch(&mut engine, &mut platform, Input::Start);
+        assert!(platform.events.borrow().iter().any(|e| e == "lock"));
+    }
 }

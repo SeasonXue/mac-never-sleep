@@ -1,7 +1,7 @@
 use crate::config::AppConfig;
 use crate::duration::{deadline_unix_secs, format_duration};
 use crate::i18n::{Lang, Tr};
-use crate::status::{build_view_model, HostSnapshot, JsonStatus, Thermal, ViewModel};
+use crate::status::{build_view_model, HostSnapshot, JsonStatus, ViewModel};
 use crate::DurationPref;
 use crate::SLEEP_DISPLAY_DEBOUNCE_MS;
 
@@ -192,7 +192,7 @@ impl Engine {
         let t = self.config.tr();
         let mut body = if self.config.screen_off {
             t.notify_started_body_screen_off(
-                (self.config.display_off_delay_ms.max(1) + 999) / 1000,
+                self.config.display_off_delay_ms.max(1).div_ceil(1000),
                 crate::DEFAULT_HOTKEY_LABEL,
             )
         } else {
@@ -263,7 +263,7 @@ impl Engine {
 
     fn should_auto_stop(&self, host: &HostSnapshot) -> Option<StopReason> {
         let session = self.session.as_ref()?;
-        if host.thermal == Thermal::Critical {
+        if host.thermal.is_emergency() {
             return Some(StopReason::ThermalEmergency);
         }
         if let Some(floor) = self.config.battery_floor_percent {
@@ -612,5 +612,158 @@ mod tests {
         assert_eq!(eng.view(&h).primary_action, "开始熄屏待命");
         eng.handle(Input::Start, &h);
         assert_eq!(eng.view(&h).primary_action, "结束待命");
+    }
+
+    #[test]
+    fn start_while_active_is_noop() {
+        let mut eng = Engine::new(cfg());
+        eng.handle(Input::Start, &host(0));
+        let e = eng.handle(Input::Start, &host(100));
+        assert!(e.is_empty());
+        assert!(eng.is_active());
+    }
+
+    #[test]
+    fn stop_while_idle_is_noop() {
+        let mut eng = Engine::new(cfg());
+        let e = eng.handle(
+            Input::Stop {
+                reason: StopReason::User,
+            },
+            &host(0),
+        );
+        assert!(e.is_empty());
+    }
+
+    #[test]
+    fn start_with_overrides_duration() {
+        let mut eng = Engine::new(cfg());
+        let h = host(0);
+        eng.handle(Input::StartWith(DurationPref::Hours { hours: 3 }), &h);
+        let st = eng.json_status(&h);
+        assert_eq!(st.remaining_secs, Some(3 * 3600));
+        assert_eq!(eng.config.duration, DurationPref::Hours { hours: 3 });
+    }
+
+    #[test]
+    fn resleep_disabled_does_not_reassert() {
+        let mut cfg = cfg();
+        cfg.resleep_display = false;
+        let mut eng = Engine::new(cfg);
+        eng.handle(Input::Start, &host(0));
+        eng.handle(Input::Tick, &host(1_500));
+        let mut h = host(1_500 + SLEEP_DISPLAY_DEBOUNCE_MS);
+        h.display_asleep = Some(false);
+        h.hid_idle_ms = 120_000;
+        let e = eng.handle(Input::DisplayWoke, &h);
+        assert!(!has_sleep(&e));
+    }
+
+    #[test]
+    fn battery_floor_none_never_stops() {
+        let mut cfg = cfg();
+        cfg.battery_floor_percent = None;
+        let mut eng = Engine::new(cfg);
+        eng.handle(Input::Start, &host(0));
+        let mut h = host(5_000);
+        h.on_ac = false;
+        h.battery_percent = Some(1);
+        let e = eng.handle(Input::Tick, &h);
+        assert!(!has_release(&e));
+        assert!(eng.is_active());
+    }
+
+    #[test]
+    fn user_stop_notifies_app_quit_does_not() {
+        let mut eng = Engine::new(cfg());
+        eng.handle(Input::Start, &host(0));
+        let e = eng.handle(
+            Input::Stop {
+                reason: StopReason::User,
+            },
+            &host(200),
+        );
+        assert!(has_release(&e));
+        assert!(e.iter().any(|x| matches!(x, Effect::Notify { .. })));
+
+        eng.handle(Input::Start, &host(300));
+        let e = eng.handle(
+            Input::Stop {
+                reason: StopReason::AppQuit,
+            },
+            &host(400),
+        );
+        assert!(has_release(&e));
+        assert!(!e.iter().any(|x| matches!(x, Effect::Notify { .. })));
+    }
+
+    #[test]
+    fn lid_awake_disabled_skips_clamshell_plan() {
+        let mut cfg = cfg();
+        cfg.keep_awake_on_lid_close = false;
+        let mut eng = Engine::new(cfg);
+        let e = eng.handle(Input::Start, &host(0));
+        let plan = apply_plan(&e).unwrap();
+        assert!(!plan.disable_clamshell_sleep);
+        assert!(!plan.prevent_system_sleep);
+        assert!(plan.prevent_idle_sleep);
+    }
+
+    #[test]
+    fn json_status_fields_match_host() {
+        let mut eng = Engine::new(cfg());
+        let mut h = host(0);
+        h.lid_closed = true;
+        h.display_asleep = Some(true);
+        eng.handle(Input::Start, &h);
+        let st = eng.json_status(&h);
+        assert_eq!(st.lid, "closed");
+        assert_eq!(st.display, "asleep");
+        assert!(!st.user_present);
+        assert_eq!(st.elapsed_secs, Some(0));
+        assert!(st.screen_off_enabled);
+        assert!(st.lid_awake_enabled);
+    }
+
+    #[test]
+    fn stop_reason_codes_roundtrip() {
+        for reason in [
+            StopReason::User,
+            StopReason::BatteryFloor,
+            StopReason::ThermalEmergency,
+            StopReason::DurationElapsed,
+            StopReason::AppQuit,
+            StopReason::AssertionFailed,
+        ] {
+            assert_eq!(StopReason::from_code(reason.code()), Some(reason));
+        }
+        assert_eq!(StopReason::from_code("nope"), None);
+        assert_eq!(StopReason::User.label_en(), "Ended by you");
+    }
+
+    #[test]
+    fn view_warns_when_lid_awake_on_battery() {
+        let mut eng = Engine::new(cfg());
+        let mut h = host(0);
+        h.on_ac = false;
+        eng.handle(Input::Start, &h);
+        let view = eng.view(&h);
+        assert!(view
+            .warnings
+            .iter()
+            .any(|w| w.contains("battery") || w.contains("电池")));
+    }
+
+    #[test]
+    fn display_slept_is_optimistic_until_host_says_awake() {
+        let mut cfg = cfg();
+        cfg.resleep_display = false;
+        let mut eng = Engine::new(cfg);
+        let mut h = host(0);
+        h.display_asleep = None;
+        eng.handle(Input::Start, &h);
+        eng.handle(Input::DisplaySlept, &h);
+        let st = eng.json_status(&h);
+        assert_eq!(st.display, "asleep");
     }
 }

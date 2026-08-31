@@ -1,6 +1,9 @@
 //! macOS 电源与主机状态。
 //!
 //! 不改写用户的 `pmset` 节能偏好。断言随进程释放；合盖标志在 Drop / panic / 孤儿锁里还原。
+//!
+//! IOKit / CoreFoundation 绑定 includes selectors used only on some OS versions;
+//! unused FFI symbols are expected.
 #![allow(dead_code)]
 
 use std::ffi::{c_char, c_void, CString};
@@ -808,6 +811,9 @@ impl Platform for MacPlatform {
 
 fn app_bundle_from_exe(exe: &std::path::Path) -> Option<std::path::PathBuf> {
     // Foo.app/Contents/MacOS/never-sleep
+    if !crate::paths::is_inside_app_bundle(exe) {
+        return None;
+    }
     let macos = exe.parent()?;
     let contents = macos.parent()?;
     let app = contents.parent()?;

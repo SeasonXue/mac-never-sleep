@@ -150,4 +150,28 @@ mod tests {
         assert!(next > now);
         assert!(next - now <= 24 * 3600 + 60);
     }
+
+    #[test]
+    fn deadline_unix_secs_for_each_pref() {
+        assert_eq!(
+            deadline_unix_secs(0, 0, 1_000, DurationPref::Indefinite),
+            None
+        );
+        assert_eq!(
+            deadline_unix_secs(0, 0, 1_000, DurationPref::Hours { hours: 2 }),
+            Some(1_000 + 7_200)
+        );
+        let until =
+            deadline_unix_secs(0, 0, 1_000, DurationPref::UntilLocal { hour: 8, minute: 0 });
+        assert!(until.is_some());
+        assert!(until.unwrap() > chrono::Local::now().timestamp() - 1);
+    }
+
+    #[test]
+    fn next_until_unix_secs_at_exact_target_rolls_forward() {
+        let offset = 0;
+        let now_unix = 8 * 3600;
+        let next = next_until_unix_secs(now_unix, offset, 8, 0);
+        assert_eq!(next - now_unix, 86_400);
+    }
 }

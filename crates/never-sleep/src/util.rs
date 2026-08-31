@@ -1,4 +1,4 @@
-#[allow(dead_code)]
+#[cfg(any(test, target_os = "macos"))]
 pub fn xml_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -31,6 +31,10 @@ mod tests {
             xml_escape(r#"C:\A & B <app>.app"#),
             r#"C:\A &amp; B &lt;app&gt;.app"#
         );
+        assert_eq!(
+            xml_escape(r#"say "hi" & 'bye'"#),
+            r#"say &quot;hi&quot; &amp; &apos;bye&apos;"#
+        );
     }
 
     #[test]
@@ -40,6 +44,11 @@ mod tests {
         let current = r#"<string>/Applications/Never Sleep.app</string>"#;
         assert!(!launch_agent_is_stale(
             current,
+            "/Applications/Never Sleep.app"
+        ));
+        let elsewhere = r#"<string>/tmp/never-sleep</string>"#;
+        assert!(launch_agent_is_stale(
+            elsewhere,
             "/Applications/Never Sleep.app"
         ));
     }
