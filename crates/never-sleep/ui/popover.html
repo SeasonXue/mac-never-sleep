@@ -394,13 +394,14 @@
     }
     .settings-actions { display: flex; justify-content: center; gap: 2px; margin-top: auto; padding-top: 10px; }
 
-    .help-view { padding-top: 0; }
+    .panel.on-help .header { display: none; }
+    .help-view { padding-top: 8px; }
     .help-body {
       flex: 1;
       min-height: 0;
       overflow-x: hidden;
       overflow-y: auto;
-      padding-bottom: 2px;
+      padding-bottom: 8px;
       scrollbar-width: thin;
       scrollbar-color: var(--hairline) transparent;
     }
@@ -411,9 +412,9 @@
     }
 
     .help-lead {
-      margin: 2px 0 14px;
+      margin: 0 0 12px;
       color: var(--ink);
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 590;
       line-height: 1.35;
       letter-spacing: -.02em;
@@ -468,13 +469,12 @@
       height: 22px;
       margin-top: 1px;
       border-radius: 999px;
-      color: var(--accent);
-      background: rgba(0, 122, 255, .12);
+      color: #fff;
+      background: var(--accent);
       font-size: 12px;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
     }
-    .float.active .help-index { background: rgba(10, 132, 255, .22); }
     .help-icon {
       display: grid;
       place-items: center;
@@ -667,7 +667,7 @@
                 <span class="help-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 19h8"/></svg>
                 </span>
-                <p id="helpNoteLid">Closed-lid stay-awake is best-effort, and more reliable on power. Lid open + display asleep is the reliable path.</p>
+                <p id="helpNoteLid">Closed-lid stay-awake is best-effort. Lid open + display asleep is the reliable path.</p>
               </div>
               <div class="help-item note">
                 <span class="help-icon" aria-hidden="true">
@@ -709,6 +709,7 @@
       $('#mainView').classList.toggle('visible', name === 'main');
       $('#settingsView').classList.toggle('visible', name === 'settings');
       $('#helpView').classList.toggle('visible', name === 'help');
+      document.querySelector('.panel').classList.toggle('on-help', name === 'help');
       $('#gearButton').style.visibility = name === 'main' ? 'visible' : 'hidden';
       if (name === 'help') {
         const body = $('#helpBody');
@@ -833,7 +834,7 @@
         step3_after: zh ? '，或点菜单「结束待命」。' : 'or choose “End Standby” in the menu.',
         hotkey: '⌥⌘P',
         notes: zh ? '请留意' : 'Keep in mind',
-        note_lid: zh ? '合盖保活是尽力而为，插电更稳；最可靠仍是开盖熄屏。' : 'Closed-lid stay-awake is best-effort, and more reliable on power. Lid open + display asleep is the reliable path.',
+        note_lid: zh ? '合盖保活是尽力而为，插电更稳；最可靠仍是开盖熄屏。' : 'Closed-lid stay-awake is best-effort. Lid open + display asleep is the reliable path.',
         note_battery: zh ? '电量过低会自动结束，避免把电池耗干。' : 'Standby ends automatically on low battery so the pack is not drained.',
         note_quit: zh ? '退出后立即恢复系统睡眠，不会改写节能设置。' : 'Quitting restores normal sleep. Energy Saver settings are never rewritten.'
       };

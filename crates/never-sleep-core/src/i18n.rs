@@ -163,7 +163,7 @@ impl Tr {
 
     pub fn help_note_lid(self) -> &'static str {
         self.pick(
-            "Closed-lid stay-awake is best-effort, and more reliable on power. Lid open + display asleep is the reliable path.",
+            "Closed-lid stay-awake is best-effort. Lid open + display asleep is the reliable path.",
             "合盖保活是尽力而为，插电更稳；最可靠仍是开盖熄屏。",
         )
     }
@@ -715,7 +715,7 @@ Get started
 3. Come back — press ⌥⌘P, or choose “End Standby” in the menu.
 
 Keep in mind
-• Closed-lid stay-awake is best-effort (more reliable on power). Lid open + display asleep is the reliable path.
+• Closed-lid stay-awake is best-effort. Lid open + display asleep is the reliable path.
 • Standby ends automatically on low battery so the pack is not drained.
 • Quitting restores normal sleep. Energy Saver settings are never rewritten.\
 ";
