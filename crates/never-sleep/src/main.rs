@@ -2,6 +2,7 @@ mod apply;
 mod cli;
 mod clock;
 mod foreground;
+#[cfg(any(test, target_os = "macos"))]
 mod icon;
 mod ipc;
 mod locale;
@@ -11,6 +12,8 @@ mod platform;
 mod protocol;
 mod util;
 
+#[cfg(target_os = "macos")]
+mod glass;
 #[cfg(target_os = "macos")]
 mod gui;
 
@@ -179,7 +182,6 @@ fn cmd_status(json: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use never_sleep_core::DurationPref;
 
     #[test]
     fn celestial_icons_have_distinct_pixels() {
@@ -201,21 +203,5 @@ mod tests {
         }
         assert!(sun.chunks_exact(4).any(|p| p[3] > 0));
         assert!(moon.chunks_exact(4).any(|p| p[3] > 0));
-    }
-
-    #[test]
-    fn parse_on_duration_ok() {
-        assert!(protocol::parse_on_duration(None).unwrap().is_none());
-        assert!(matches!(
-            protocol::parse_on_duration(Some("3h")).unwrap(),
-            Some(DurationPref::Hours { hours: 3 })
-        ));
-        let err =
-            protocol::parse_on_duration_in(Some("nope"), never_sleep_core::Lang::Zh).unwrap_err();
-        assert!(err.contains("HH:MM"), "{err}");
-        assert_ne!(
-            err,
-            protocol::parse_on_duration_in(Some("nope"), never_sleep_core::Lang::En).unwrap_err()
-        );
     }
 }

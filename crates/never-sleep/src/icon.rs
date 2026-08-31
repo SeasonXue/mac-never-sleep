@@ -1,5 +1,6 @@
 /// Monochrome menu-bar artwork derived from the anthropomorphic sun/moon app identity.
 /// macOS recolors the black + alpha template image for light and dark menu bars.
+#[cfg(any(test, target_os = "macos"))]
 pub fn celestial_icon(active: bool) -> (Vec<u8>, u32, u32) {
     const SIZE: u32 = 36;
     const SAMPLES: u32 = 4;
@@ -35,6 +36,7 @@ pub fn celestial_icon(active: bool) -> (Vec<u8>, u32, u32) {
     (rgba, SIZE, SIZE)
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn sun_sample(x: f32, y: f32) -> bool {
     let cx = 18.0;
     let cy = 18.0;
@@ -70,6 +72,7 @@ fn sun_sample(x: f32, y: f32) -> bool {
     (body && !(eye_cut || mouth_cut || brow_cut)) || eye_pupil
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn moon_sample(x: f32, y: f32) -> bool {
     let outer = circle(x, y, 17.8, 18.0, 13.2);
     let inner = circle(x, y, 11.2, 15.9, 10.7);
@@ -85,14 +88,17 @@ fn moon_sample(x: f32, y: f32) -> bool {
     (body && !(eye_cut || mouth_cut || brow_cut)) || eye_pupil
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn circle(x: f32, y: f32, cx: f32, cy: f32, radius: f32) -> bool {
     (x - cx).powi(2) + (y - cy).powi(2) <= radius.powi(2)
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn ellipse(x: f32, y: f32, cx: f32, cy: f32, rx: f32, ry: f32) -> bool {
     ((x - cx) / rx).powi(2) + ((y - cy) / ry).powi(2) <= 1.0
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn segment_distance(x: f32, y: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
     let vx = bx - ax;
     let vy = by - ay;

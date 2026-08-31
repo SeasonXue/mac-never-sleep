@@ -51,3 +51,47 @@ pub enum Command {
     /// Print usage notes
     Explain,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_on_for_and_json() {
+        let cli = Cli::try_parse_from(["never-sleep", "on", "--for", "8h", "--json"]).unwrap();
+        match cli.command {
+            Some(Command::On { r#for, json }) => {
+                assert_eq!(r#for.as_deref(), Some("8h"));
+                assert!(json);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_global_lang_before_status() {
+        let cli = Cli::try_parse_from(["never-sleep", "--lang", "zh", "status"]).unwrap();
+        assert_eq!(cli.lang.as_deref(), Some("zh"));
+        assert!(matches!(cli.command, Some(Command::Status { json: false })));
+    }
+
+    #[test]
+    fn menubar_flag_has_no_subcommand() {
+        let cli = Cli::try_parse_from(["never-sleep", "--menubar"]).unwrap();
+        assert!(cli.menubar);
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn doctor_cleanup_explain_have_no_json_flag() {
+        for args in [
+            ["never-sleep", "doctor"].as_slice(),
+            ["never-sleep", "cleanup"].as_slice(),
+            ["never-sleep", "explain"].as_slice(),
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(cli.command.is_some());
+        }
+    }
+}

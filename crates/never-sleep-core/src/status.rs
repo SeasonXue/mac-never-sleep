@@ -187,3 +187,114 @@ pub fn build_view_model(
         battery_floor_label: cfg.battery_floor_label(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AppConfig, Lang};
+
+    fn host() -> HostSnapshot {
+        HostSnapshot {
+            monotonic_ms: 5_000,
+            unix_secs: 1_700_000_000,
+            utc_offset_secs: 0,
+            on_ac: true,
+            battery_percent: Some(64),
+            lid_closed: false,
+            display_asleep: Some(false),
+            hid_idle_ms: 1_000,
+            thermal: Thermal::Nominal,
+        }
+    }
+
+    #[test]
+    fn user_present_requires_open_lid_and_recent_hid() {
+        let mut h = host();
+        assert!(h.user_present(45_000));
+        h.lid_closed = true;
+        assert!(!h.user_present(45_000));
+        h.lid_closed = false;
+        h.hid_idle_ms = 80_000;
+        assert!(!h.user_present(45_000));
+    }
+
+    #[test]
+    fn thermal_emergency_is_critical_only() {
+        assert!(!Thermal::Nominal.is_emergency());
+        assert!(!Thermal::Fair.is_emergency());
+        assert!(!Thermal::Serious.is_emergency());
+        assert!(Thermal::Critical.is_emergency());
+    }
+
+    #[test]
+    fn json_status_serde_field_names_are_stable() {
+        let st = JsonStatus {
+            active: false,
+            display: "awake".into(),
+            lid: "open".into(),
+            on_ac: false,
+            battery: Some(40),
+            remaining_secs: None,
+            user_present: true,
+            elapsed_secs: None,
+            stop_reason: Some("Ended by you".into()),
+            stop_reason_code: Some("user".into()),
+            screen_off_enabled: true,
+            lid_awake_enabled: false,
+        };
+        let v = serde_json::to_value(&st).unwrap();
+        for key in [
+            "active",
+            "display",
+            "lid",
+            "on_ac",
+            "battery",
+            "remaining_secs",
+            "user_present",
+            "elapsed_secs",
+            "stop_reason",
+            "stop_reason_code",
+            "screen_off_enabled",
+            "lid_awake_enabled",
+        ] {
+            assert!(v.get(key).is_some(), "missing {key}");
+        }
+        let back: JsonStatus = serde_json::from_value(v).unwrap();
+        assert_eq!(back.stop_reason_code.as_deref(), Some("user"));
+    }
+
+    #[test]
+    fn idle_view_mentions_display_policy() {
+        let cfg = AppConfig::default();
+        let view = build_view_model(&cfg, false, None, None, &host(), None, false);
+        assert!(!view.active);
+        assert!(view.detail_line.contains("display") || view.detail_line.contains("屏幕"));
+        assert_eq!(view.primary_action, cfg.tr().start_standby());
+    }
+
+    #[test]
+    fn last_stop_reason_surfaces_when_idle() {
+        let cfg = AppConfig::default();
+        let view = build_view_model(
+            &cfg,
+            false,
+            None,
+            None,
+            &host(),
+            Some("Battery too low"),
+            false,
+        );
+        assert_eq!(view.warnings, vec!["Battery too low".to_string()]);
+    }
+
+    #[test]
+    fn chinese_idle_status_is_localized() {
+        let cfg = AppConfig {
+            language: Some(Lang::Zh),
+            ..AppConfig::default()
+        };
+        let view = build_view_model(&cfg, false, None, None, &host(), None, false);
+        assert_eq!(view.primary_action, "开始熄屏待命");
+        assert!(view.status_line.contains("未待命"));
+    }
+}

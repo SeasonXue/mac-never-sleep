@@ -10,13 +10,14 @@
       font-size: 13px;
       --popover-inset-x: 16px;
       --arrow-x: 190px;
-      --bg: rgba(246, 246, 247, .72);
+      --bg: rgba(255, 255, 255, .34);
       --ink: rgba(0, 0, 0, .85);
       --muted: rgba(60, 60, 67, .64);
       --hairline: rgba(60, 60, 67, .16);
-      --stroke: rgba(0, 0, 0, .10);
-      --surface: rgba(255, 255, 255, .72);
-      --surface-solid: #fff;
+      --stroke: rgba(255, 255, 255, .58);
+      --rim: rgba(0, 0, 0, .16);
+      --surface: rgba(255, 255, 255, .46);
+      --surface-solid: rgba(255, 255, 255, .78);
       --surface-hover: rgba(0, 0, 0, .05);
       --fill: rgba(118, 118, 128, .12);
       --accent: #007aff;
@@ -24,6 +25,7 @@
       --switch-on: #34c759;
       --switch-off: #e5e5ea;
       --warning: #c93400;
+      --shine: rgba(255, 255, 255, .52);
     }
 
     * { box-sizing: border-box; }
@@ -65,9 +67,12 @@
       width: 14px;
       height: 14px;
       background: var(--bg);
+      -webkit-backdrop-filter: saturate(180%) blur(28px);
+      backdrop-filter: saturate(180%) blur(28px);
       border-left: 0.5px solid var(--stroke);
       border-top: 0.5px solid var(--stroke);
       border-top-left-radius: 3px;
+      box-shadow: inset 1px 1px 0 rgba(255, 255, 255, .45);
       transform: rotate(45deg);
       transition: background 420ms ease, border-color 420ms ease;
     }
@@ -78,25 +83,38 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      isolation: isolate;
       color: var(--ink);
-      background: var(--bg);
-      -webkit-backdrop-filter: saturate(180%) blur(40px);
-      backdrop-filter: saturate(180%) blur(40px);
+      background:
+        radial-gradient(ellipse 90% 42% at 50% -8%, var(--shine), transparent 58%),
+        var(--bg);
+      -webkit-backdrop-filter: saturate(190%) blur(48px);
+      backdrop-filter: saturate(190%) blur(48px);
       border: 0.5px solid var(--stroke);
       border-radius: 12px;
-      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, .55);
+      box-shadow:
+        0 0 0 0.5px var(--rim),
+        inset 0 0.5px 0 rgba(255, 255, 255, .78);
       transition: color 420ms ease, background 420ms ease, border-color 420ms ease, box-shadow 420ms ease;
+    }
+    html.native-glass .panel {
+      -webkit-backdrop-filter: saturate(170%) blur(22px);
+      backdrop-filter: saturate(170%) blur(22px);
+      background:
+        radial-gradient(ellipse 90% 42% at 50% -8%, rgba(255, 255, 255, .38), transparent 58%),
+        rgba(255, 255, 255, .16);
     }
 
     .float.active {
       color-scheme: dark;
-      --bg: rgba(30, 30, 32, .78);
+      --bg: rgba(18, 18, 20, .40);
       --ink: rgba(255, 255, 255, .92);
       --muted: rgba(235, 235, 245, .62);
       --hairline: rgba(84, 84, 88, .55);
-      --stroke: rgba(255, 255, 255, .14);
-      --surface: rgba(44, 44, 46, .72);
-      --surface-solid: #2c2c2e;
+      --stroke: rgba(255, 255, 255, .22);
+      --rim: rgba(0, 0, 0, .45);
+      --surface: rgba(44, 44, 46, .42);
+      --surface-solid: rgba(44, 44, 46, .72);
       --surface-hover: rgba(255, 255, 255, .08);
       --fill: rgba(120, 120, 128, .32);
       --accent: #0a84ff;
@@ -104,9 +122,17 @@
       --switch-on: #30d158;
       --switch-off: rgba(120, 120, 128, .36);
       --warning: #ff9f0a;
+      --shine: rgba(170, 198, 224, .16);
     }
     .float.active .panel {
-      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, .10);
+      box-shadow:
+        0 0 0 0.5px var(--rim),
+        inset 0 0.5px 0 rgba(255, 255, 255, .14);
+    }
+    html.native-glass .float.active .panel {
+      background:
+        radial-gradient(ellipse 90% 42% at 50% -8%, rgba(170, 198, 224, .14), transparent 58%),
+        rgba(18, 18, 22, .18);
     }
 
     .header {
@@ -140,7 +166,7 @@
     .icon-button:hover { color: var(--ink); background: var(--surface-hover); }
     .icon-button svg { width: 17px; height: 17px; }
 
-    .view-stack { position: relative; flex: 1; min-height: 0; }
+    .view-stack { position: relative; z-index: 3; flex: 1; min-height: 0; }
     .view {
       position: absolute;
       inset: 0;
@@ -243,10 +269,14 @@
 
     .card {
       overflow: hidden;
-      border: 0.5px solid var(--hairline);
+      border: 0.5px solid rgba(255, 255, 255, .46);
       border-radius: 10px;
       background: var(--surface);
+      -webkit-backdrop-filter: saturate(160%) blur(16px);
+      backdrop-filter: saturate(160%) blur(16px);
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, .45);
     }
+    .float.active .card { border-color: rgba(255, 255, 255, .12); }
     .row {
       position: relative;
       display: flex;

@@ -132,7 +132,11 @@ never-sleep        CLI + macOS 菜单栏
 
 ## 开发
 
+本仓库采用 **测试先行（TDD）**。流程、不变量和测试应写在哪里，见 [AGENTS.md](AGENTS.md)。
+
 ```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace          # Linux / Mac 都可跑核心测试
 # 菜单栏与 IOKit 只在 macOS 链接
 cargo build -p never-sleep --release   # 请在 Mac 上

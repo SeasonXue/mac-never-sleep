@@ -18,3 +18,10 @@ clap = { version = "4.5", features = ["derive"] }
 dirs = "5"
 ctrlc = "3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[workspace.lints.rust]
+dead_code = "warn"
+unused = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

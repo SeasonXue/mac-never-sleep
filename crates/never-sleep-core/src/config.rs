@@ -127,6 +127,9 @@ pub fn parse_duration_pref_in(raw: &str, lang: Lang) -> Result<DurationPref, Str
             .trim()
             .parse()
             .map_err(|_| t.parse_duration_error(raw))?;
+        if hours == 0 {
+            return Err(t.parse_duration_min_hour().into());
+        }
         return Ok(DurationPref::Hours { hours });
     }
     parse_until(&s, t)
@@ -170,6 +173,76 @@ mod tests {
                 minute: 30
             }
         );
+        assert_eq!(
+            parse_duration_pref("forever").unwrap(),
+            DurationPref::Indefinite
+        );
+        assert_eq!(
+            parse_duration_pref("inf").unwrap(),
+            DurationPref::Indefinite
+        );
+        assert_eq!(
+            parse_duration_pref("无限").unwrap(),
+            DurationPref::Indefinite
+        );
+        assert_eq!(
+            parse_duration_pref("3小时").unwrap(),
+            DurationPref::Hours { hours: 3 }
+        );
+        assert_eq!(
+            parse_duration_pref("until:08:00").unwrap(),
+            DurationPref::UntilLocal { hour: 8, minute: 0 }
+        );
+        assert_eq!(
+            parse_duration_pref(" 8H ").unwrap(),
+            DurationPref::Hours { hours: 8 }
+        );
+    }
+
+    #[test]
+    fn parse_duration_rejects_zero_hours() {
+        let en = parse_duration_pref("0h").unwrap_err();
+        assert!(en.contains("1 hour"), "{en}");
+        let zh = parse_duration_pref_in("0小时", Lang::Zh).unwrap_err();
+        assert!(zh.contains("1 小时") || zh.contains("indefinite"), "{zh}");
+    }
+
+    #[test]
+    fn parse_duration_rejects_invalid_clock() {
+        assert!(parse_duration_pref("24:00").is_err());
+        assert!(parse_duration_pref("12:60").is_err());
+        assert!(parse_duration_pref("until=ab:cd").is_err());
+    }
+
+    #[test]
+    fn duration_pref_labels_follow_language() {
+        assert_eq!(DurationPref::Indefinite.label(Lang::En), "Indefinite");
+        assert_eq!(DurationPref::Hours { hours: 1 }.label(Lang::En), "1 hour");
+        assert_eq!(DurationPref::Hours { hours: 3 }.label(Lang::En), "3 hours");
+        assert_eq!(
+            DurationPref::UntilLocal { hour: 8, minute: 0 }.label(Lang::Zh),
+            "到 08:00"
+        );
+    }
+
+    #[test]
+    fn battery_floor_label_matches_config() {
+        let cfg = AppConfig::default();
+        assert!(cfg.battery_floor_label().contains("20%"));
+        let mut off = cfg.clone();
+        off.battery_floor_percent = None;
+        assert_eq!(off.battery_floor_label(), off.tr().battery_floor_off());
+    }
+
+    #[test]
+    fn default_config_is_screen_off_standby() {
+        let cfg = AppConfig::default();
+        assert!(cfg.screen_off);
+        assert!(cfg.keep_awake_on_lid_close);
+        assert!(cfg.resleep_display);
+        assert_eq!(cfg.battery_floor_percent, Some(20));
+        assert!(!cfg.lock_screen);
+        assert_eq!(cfg.language, Some(Lang::En));
     }
 
     #[test]

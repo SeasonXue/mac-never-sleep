@@ -132,7 +132,11 @@ The engine only emits `ApplyPower` / `SleepDisplay` / `LockSession` / `Notify`. 
 
 ## Development
 
+Coding agents and contributors follow **test-first (TDD)** development. See [AGENTS.md](AGENTS.md) for the cycle, invariants, and where tests belong.
+
 ```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace          # core tests on Linux or Mac
 # Menu bar and IOKit link only on macOS
 cargo build -p never-sleep --release   # on a Mac

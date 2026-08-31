@@ -1,6 +1,9 @@
 //! macOS 电源与主机状态。
 //!
 //! 不改写用户的 `pmset` 节能偏好。断言随进程释放；合盖标志在 Drop / panic / 孤儿锁里还原。
+//!
+//! IOKit / CoreFoundation 绑定 includes selectors used only on some OS versions;
+//! unused FFI symbols are expected.
 #![allow(dead_code)]
 
 use std::ffi::{c_char, c_void, CString};
@@ -257,13 +260,22 @@ fn matching_service(class: &str) -> u32 {
     }
 }
 
+// Bound locally so we do not use libc::mach_task_self_, which libc marks deprecated.
+extern "C" {
+    static mach_task_self_: u32;
+}
+
+fn current_mach_task() -> u32 {
+    unsafe { mach_task_self_ }
+}
+
 fn open_root_domain() -> Option<u32> {
     let service = matching_service("IOPMrootDomain");
     if service == 0 {
         return None;
     }
     let mut conn = 0u32;
-    let task = unsafe { libc::mach_task_self_ };
+    let task = current_mach_task();
     let ret = unsafe { IOServiceOpen(service, task, 0, &mut conn) };
     unsafe {
         let _ = IOObjectRelease(service);
@@ -808,6 +820,9 @@ impl Platform for MacPlatform {
 
 fn app_bundle_from_exe(exe: &std::path::Path) -> Option<std::path::PathBuf> {
     // Foo.app/Contents/MacOS/never-sleep
+    if !crate::paths::is_inside_app_bundle(exe) {
+        return None;
+    }
     let macos = exe.parent()?;
     let contents = macos.parent()?;
     let app = contents.parent()?;

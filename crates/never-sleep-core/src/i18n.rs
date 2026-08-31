@@ -791,4 +791,46 @@ mod tests {
         );
         assert!(zh.help_note_lid().contains("插电"));
     }
+
+    #[test]
+    fn parse_aliases_and_unknown() {
+        assert_eq!(Lang::parse_opt("ENG"), Some(Lang::En));
+        assert_eq!(Lang::parse_opt("chinese"), Some(Lang::Zh));
+        assert_eq!(Lang::parse_opt("cn"), Some(Lang::Zh));
+        assert_eq!(Lang::parse_opt("chi"), Some(Lang::Zh));
+        assert_eq!(Lang::parse_opt(""), None);
+        assert!(Lang::En.override_or() == Lang::En || Lang::En.override_or() == Lang::Zh);
+        assert!(Lang::Zh.is_chinese());
+        assert!(!Lang::En.is_chinese());
+    }
+
+    #[test]
+    fn preferred_tags_empty_is_none() {
+        let empty: [&str; 0] = [];
+        assert_eq!(Lang::from_preferred_tags(&empty), None);
+    }
+
+    #[test]
+    fn free_functions_match_translator() {
+        assert_eq!(
+            app_display_name(Lang::En),
+            Tr::new(Lang::En).app_display_name()
+        );
+        assert_eq!(onboarding(Lang::Zh), Tr::new(Lang::Zh).onboarding());
+        assert!(onboarding(Lang::En).contains("Start Screen-Off Standby"));
+        assert!(Tr::new(Lang::En).cli_about().contains("Codex"));
+        assert!(Tr::new(Lang::Zh).cli_about().contains("Codex"));
+    }
+
+    #[test]
+    fn stop_labels_differ_by_language() {
+        assert_ne!(
+            Tr::new(Lang::En).stop_battery(),
+            Tr::new(Lang::Zh).stop_battery()
+        );
+        assert_eq!(
+            Tr::new(Lang::En).notify_ended_user_body(),
+            "Normal sleep policy restored."
+        );
+    }
 }

@@ -2,13 +2,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use never_sleep_core::{
-    parse_duration_pref_in, DurationPref, Engine, Input, Lang, StopReason, HEARTBEAT_MS,
-};
+use never_sleep_core::{DurationPref, Engine, Input, Lang, StopReason, HEARTBEAT_MS};
 
 use crate::apply::{dispatch, stop_for_quit};
 use crate::persist::load_config;
 use crate::platform::Platform;
+use crate::protocol;
 
 pub fn run_foreground(
     platform: &mut dyn Platform,
@@ -58,8 +57,20 @@ pub fn parse_optional_duration(
     raw: Option<&str>,
     lang: Lang,
 ) -> Result<Option<DurationPref>, String> {
-    match raw {
-        None => Ok(None),
-        Some(s) => parse_duration_pref_in(s, lang).map(Some),
+    protocol::parse_on_duration_in(raw, lang)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_optional_duration_passthrough() {
+        assert_eq!(parse_optional_duration(None, Lang::En).unwrap(), None);
+        assert_eq!(
+            parse_optional_duration(Some("1h"), Lang::En).unwrap(),
+            Some(DurationPref::Hours { hours: 1 })
+        );
+        assert!(parse_optional_duration(Some("0h"), Lang::En).is_err());
     }
 }
