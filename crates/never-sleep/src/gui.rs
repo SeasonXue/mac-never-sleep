@@ -23,7 +23,6 @@ use wry::http::{header, Request, Response, StatusCode};
 use wry::{WebView, WebViewBuilder};
 
 use crate::apply::{dispatch, stop_for_quit};
-use crate::glass;
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::persist::{load_config, save_config};
@@ -58,7 +57,6 @@ struct Popover {
     webview: WebView,
     visible: bool,
     last_payload: Option<String>,
-    native_glass: bool,
 }
 
 impl Popover {
@@ -95,15 +93,11 @@ impl Popover {
             .build(&window)
             .map_err(|e| format!("popover webview: {e}"))?;
 
-        let native_glass = glass::apply_popover_glass(&window);
-        mark_native_glass(&webview, native_glass);
-
         Ok(Self {
             window,
             webview,
             visible: false,
             last_payload: None,
-            native_glass,
         })
     }
 
@@ -158,17 +152,10 @@ impl Popover {
         if self.last_payload.as_deref() == Some(&payload) {
             return;
         }
-        mark_native_glass(&self.webview, self.native_glass);
         let script = format!("window.NeverSleep && window.NeverSleep.update({payload});");
         if self.webview.evaluate_script(&script).is_ok() {
             self.last_payload = Some(payload);
         }
-    }
-}
-
-fn mark_native_glass(webview: &WebView, enabled: bool) {
-    if enabled {
-        let _ = webview.evaluate_script("document.documentElement.classList.add('native-glass');");
     }
 }
 

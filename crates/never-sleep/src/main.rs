@@ -13,8 +13,6 @@ mod protocol;
 mod util;
 
 #[cfg(target_os = "macos")]
-mod glass;
-#[cfg(target_os = "macos")]
 mod gui;
 
 use clap::Parser;
@@ -203,5 +201,30 @@ mod tests {
         }
         assert!(sun.chunks_exact(4).any(|p| p[3] > 0));
         assert!(moon.chunks_exact(4).any(|p| p[3] > 0));
+    }
+
+    #[test]
+    fn popover_uses_solid_background_without_header_gear() {
+        let html = include_str!("../ui/popover.html");
+        assert!(
+            !html.contains("backdrop-filter"),
+            "popover must use a solid color, not frosted glass"
+        );
+        assert!(
+            !html.contains("id=\"gearButton\""),
+            "settings gear is not in the header"
+        );
+        assert!(
+            html.contains("id=\"moreButton\""),
+            "More Settings stays in the footer"
+        );
+        assert!(
+            html.contains("--bg: #f5f5f7"),
+            "idle popover uses an opaque light fill"
+        );
+        assert!(
+            html.contains("--bg: #1c1c1e"),
+            "active popover uses an opaque dark fill"
+        );
     }
 }
