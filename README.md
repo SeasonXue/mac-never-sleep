@@ -1,6 +1,6 @@
 # Never Sleep
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md) · **[Website](https://seasonxue.github.io/mac-never-sleep/)**
 
 Keep a MacBook **awake with the display off**, so ChatGPT / Codex and similar clients can connect and control the machine at any time. One click from the menu bar, plus an Agent-friendly CLI.
 

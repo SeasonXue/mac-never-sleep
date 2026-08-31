@@ -1,0 +1,23 @@
+{
+  "name": "Never Sleep",
+  "short_name": "Never Sleep",
+  "description": "Keep a MacBook awake with the display off so ChatGPT / Codex can connect.",
+  "lang": "en",
+  "start_url": "/mac-never-sleep/",
+  "scope": "/mac-never-sleep/",
+  "display": "browser",
+  "background_color": "#0b1f28",
+  "theme_color": "#0b1f28",
+  "icons": [
+    {
+      "src": "/mac-never-sleep/assets/app-icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/mac-never-sleep/assets/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
