@@ -267,6 +267,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn preview_lid_awake_matches_runtime_best_effort_copy() {
+        let html = include_str!("../ui/popover.html");
+        let en = Tr::new(Lang::En).lid_awake();
+        let zh = Tr::new(Lang::Zh).lid_awake();
+        assert!(
+            en.contains("best effort"),
+            "runtime English lid copy must keep the best-effort qualifier: {en}"
+        );
+        assert!(
+            html.contains(en),
+            "previewState must ship the same lid_awake string as Tr::lid_awake(), got runtime {en:?}"
+        );
+        assert!(
+            html.contains(zh),
+            "previewState must ship the same Chinese lid_awake string as Tr::lid_awake(), got runtime {zh:?}"
+        );
+    }
+
+    #[test]
+    fn help_body_keeps_a_pointer_scroll_affordance() {
+        let html = include_str!("../ui/popover.html");
+        let help_body = css_rule(html, ".help-body");
+        assert!(
+            !help_body.contains("scrollbar-width: none"),
+            "hiding the help scrollbar leaves pointer users with no way to reach lower items: {help_body}"
+        );
+        assert!(
+            help_body.contains("scrollbar-width: thin") || help_body.contains("overflow-y: scroll"),
+            "help body needs a visible, draggable scrollbar, got: {help_body}"
+        );
+        assert!(
+            !html.contains(".help-body::-webkit-scrollbar { width: 0"),
+            "webkit scrollbar width 0 removes the only draggable thumb"
+        );
+    }
+
     fn css_rule(html: &str, selector: &str) -> String {
         let marker = format!("{selector} {{");
         let start = html

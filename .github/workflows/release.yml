@@ -43,12 +43,14 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "Publishing version ${version} as tag ${tag}"
 
-      - name: Zip the .app bundle
+      - name: Zip the .app bundle and CLI
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             "dist/Never Sleep.app" "Never-Sleep-macos.zip"
-          cp target/release/never-sleep never-sleep-cli-macos
-          ls -lh Never-Sleep-macos.zip never-sleep-cli-macos
+          cp target/release/never-sleep never-sleep
+          chmod +x never-sleep
+          ditto -c -k never-sleep never-sleep-cli-macos.zip
+          ls -lh Never-Sleep-macos.zip never-sleep-cli-macos.zip
 
       - name: Publish GitHub Release
         env:
@@ -71,8 +73,12 @@ jobs:
              open "Never Sleep.app"
              \`\`\`
              (Or right-click the app and choose **Open**, then confirm.)
-          3. \`never-sleep-cli-macos\` is the standalone CLI for SSH / Agent use; rename it to
-             \`never-sleep\` and put it on your \`PATH\`.
+          3. \`never-sleep-cli-macos.zip\` is the standalone CLI for SSH / Agent use.
+             Unzip it, then make it executable and put it on your \`PATH\`:
+             \`\`\`bash
+             unzip never-sleep-cli-macos.zip
+             chmod +x never-sleep
+             \`\`\`
 
           Requires macOS 12+.
 
@@ -88,25 +94,62 @@ jobs:
              open "Never Sleep.app"
              \`\`\`
              （或右键点击 App 选择「打开」并确认。）
-          3. \`never-sleep-cli-macos\` 是用于 SSH / Agent 场景的命令行版本，可重命名为
-             \`never-sleep\` 并放入 \`PATH\`。
+          3. \`never-sleep-cli-macos.zip\` 是用于 SSH / Agent 场景的命令行版本。解压后执行
+             \`chmod +x never-sleep\`，再将 \`never-sleep\` 放入 \`PATH\`。
 
           需要 macOS 12 及以上。
           EOF
           )
 
-          prerelease_flag=""
+          # Bind a newly created tag to this checkout. If the tag already exists,
+          # refuse to publish when it names a different commit.
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            existing_sha="$(git rev-list -n 1 "refs/tags/${TAG}")"
+            if [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
+              echo "Tag ${TAG} already points at ${existing_sha}, not this checkout ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+          fi
+
+          prerelease_flag="--prerelease=false"
           if [ "${PRERELEASE}" = "true" ]; then
             prerelease_flag="--prerelease"
           fi
 
+          upload_without_clobber() {
+            local tag="$1"
+            shift
+            local f staged
+            for f in "$@"; do
+              staged="$(basename "${f}").staging"
+              cp "${f}" "${staged}"
+              gh release upload "${tag}" "${staged}"
+            done
+            for f in "$@"; do
+              gh release delete-asset "${tag}" "$(basename "${f}")" --yes 2>/dev/null || true
+            done
+            # Drop the unsigned bare CLI from #9 if it is still attached.
+            gh release delete-asset "${tag}" "never-sleep-cli-macos" --yes 2>/dev/null || true
+            gh release upload "${tag}" "$@"
+            for f in "$@"; do
+              gh release delete-asset "${tag}" "$(basename "${f}").staging" --yes
+              rm -f "$(basename "${f}").staging"
+            done
+          }
+
           if gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release upload "${TAG}" \
-              "Never-Sleep-macos.zip" "never-sleep-cli-macos" --clobber
-          else
-            gh release create "${TAG}" \
-              "Never-Sleep-macos.zip" "never-sleep-cli-macos" \
+            gh release edit "${TAG}" \
               --title "Never Sleep ${TAG}" \
               --notes "${notes}" \
-              ${prerelease_flag}
+              "${prerelease_flag}"
+            upload_without_clobber "${TAG}" \
+              "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip"
+          else
+            gh release create "${TAG}" \
+              "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip" \
+              --title "Never Sleep ${TAG}" \
+              --notes "${notes}" \
+              --target "${GITHUB_SHA}" \
+              "${prerelease_flag}"
           fi
