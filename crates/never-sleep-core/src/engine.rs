@@ -609,7 +609,7 @@ mod tests {
         cfg.language = Some(Lang::Zh);
         let mut eng = Engine::new(cfg);
         let h = host(0);
-        assert_eq!(eng.view(&h).primary_action, "开始熄屏待命");
+        assert_eq!(eng.view(&h).primary_action, "开始关屏待命");
         eng.handle(Input::Start, &h);
         assert_eq!(eng.view(&h).primary_action, "结束待命");
     }

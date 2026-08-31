@@ -97,8 +97,8 @@ fn chinese_homepage_mirrors_hreflang_and_uses_product_name() {
         "Chinese page must use zh-Hans, matching the app localization"
     );
     assert!(
-        html.contains("<title>熄屏待命 — 屏幕关掉，电脑不睡</title>"),
-        "Chinese title should use the Finder display name"
+        html.contains("<title>Never Sleep — 屏幕关掉，电脑不睡</title>"),
+        "Chinese title should use the Never Sleep product name"
     );
     assert_eq!(
         attr(&html, r#"rel="canonical" href=""#),
@@ -131,9 +131,9 @@ fn json_ld_describes_a_free_macos_utility() {
         .find(|node| node.get("@type").and_then(Value::as_str) == Some("SoftwareApplication"))
         .expect("SoftwareApplication node");
     assert_eq!(app.get("name").and_then(Value::as_str), Some("Never Sleep"));
-    assert_eq!(
-        app.get("alternateName").and_then(Value::as_str),
-        Some("熄屏待命")
+    assert!(
+        app.get("alternateName").is_none(),
+        "Never Sleep is the only product name; do not advertise 熄屏待命 as an alternateName"
     );
     assert_eq!(
         app.get("operatingSystem").and_then(Value::as_str),
@@ -311,6 +311,25 @@ fn readme_screenshot_tables_keep_images_top_aligned() {
                 "{name}: keep each screenshot and its caption in separate rows so wrapping cannot move the images"
             );
         }
+    }
+}
+
+#[test]
+fn pages_brand_never_sleep_in_both_languages() {
+    for rel in ["index.html", "zh/index.html", "404.html"] {
+        let html = read(rel);
+        assert!(
+            !html.contains("熄屏待命"),
+            "{rel} must brand the product as Never Sleep, not 熄屏待命"
+        );
+    }
+    for name in ["README.md", "README.zh-CN.md"] {
+        let text = fs::read_to_string(readme_root().join(name))
+            .unwrap_or_else(|err| panic!("missing {name}: {err}"));
+        assert!(
+            !text.contains("熄屏待命"),
+            "{name} must brand the product as Never Sleep, not 熄屏待命"
+        );
     }
 }
 

@@ -616,9 +616,9 @@ fn popover_payload(engine: &Engine, vm: &ViewModel) -> String {
         DurationPref::Hours { .. } | DurationPref::UntilLocal { .. } => "indefinite",
     };
     let status_title = if vm.active {
-        pick("Screen-Off Standby", "熄屏待命中")
+        t.panel_active_title()
     } else {
-        pick("Not Active", "未开启")
+        t.panel_idle_title()
     };
     let summary = if vm.active {
         pick("Display asleep, Mac stays online", "屏幕已休眠，Mac 仍在线")

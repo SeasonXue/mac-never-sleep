@@ -4,7 +4,7 @@ Instructions for coding agents working in this repository. Human-facing product 
 
 ## What this repo is
 
-Never Sleep (`熄屏待命`) keeps a MacBook **awake with the display off** so remote clients (ChatGPT / Codex and similar) can connect. The menu bar is the primary UI; the CLI talks to the same process over a Unix socket, or occupies the foreground when no menu bar is running.
+Never Sleep (`never-sleep`) keeps a MacBook **awake with the display off** so remote clients (ChatGPT / Codex and similar) can connect. The menu bar is the primary UI; the CLI talks to the same process over a Unix socket, or occupies the foreground when no menu bar is running.
 
 Hard product rules (do not weaken these):
 

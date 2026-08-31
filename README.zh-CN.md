@@ -1,4 +1,4 @@
-# 熄屏待命（Never Sleep）
+# Never Sleep
 
 [English](README.md) | [简体中文](README.zh-CN.md) · **[网站](https://seasonxue.github.io/mac-never-sleep/zh/)**
 
@@ -13,10 +13,10 @@
 <table>
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-idle-zh.png" width="260" alt="熄屏待命·未开启，点太阳即可开始">
+      <img src="docs/screenshots/main-idle-zh.png" width="260" alt="Never Sleep 未开启，点太阳即可开始">
     </td>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-active-zh.png" width="260" alt="熄屏待命中，屏幕已关、Mac 仍在线">
+      <img src="docs/screenshots/main-active-zh.png" width="260" alt="Never Sleep 关屏待命中，屏幕已关、Mac 仍在线">
     </td>
   </tr>
   <tr>
@@ -29,10 +29,10 @@
   </tr>
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/settings-zh.png" width="260" alt="熄屏待命设置，逐项开关与语言切换">
+      <img src="docs/screenshots/settings-zh.png" width="260" alt="Never Sleep 设置，逐项开关与语言切换">
     </td>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/howto-zh.png" width="260" alt="熄屏待命内置使用说明">
+      <img src="docs/screenshots/howto-zh.png" width="260" alt="Never Sleep 内置使用说明">
     </td>
   </tr>
   <tr>
@@ -55,7 +55,7 @@
 
 体验上的硬指标：
 
-1. **一键进入**：菜单第一项就是「开始熄屏待命」，1.5 秒后关屏，系统保持运行。
+1. **一键进入**：菜单第一项就是「开始关屏待命」，1.5 秒后关屏，系统保持运行。
 2. **不跟人抢屏幕**：你坐在电脑前敲键盘，绝不强制关屏；HID 空闲一段时间或合上盖，再自动关。
 3. **远程操作把屏幕点亮也不怕**：人不在时周期性重申 `displaysleepnow`。Codex 用合成事件点亮屏幕时，几秒内会再灭掉。
 4. **回来的路永远在**：全局快捷键 `⌥⌘P`（屏幕灭了也能按），或再点菜单。
@@ -74,7 +74,7 @@ cargo build -p never-sleep --release
 open "dist/Never Sleep.app"
 ```
 
-菜单栏默认显示拟人化太阳图标。左键打开控制面板，点击中央太阳即可开始；太阳会翻面变成月亮，约 1.5 秒后屏幕关闭。再次点击月亮即可结束待命。右键图标仍可打开原生备用菜单。Finder 在中文系统上会显示「熄屏待命」。
+菜单栏默认显示拟人化太阳图标。左键打开控制面板，点击中央太阳即可开始；太阳会翻面变成月亮，约 1.5 秒后屏幕关闭。再次点击月亮即可结束待命。右键图标仍可打开原生备用菜单。Finder 显示 **Never Sleep**。
 
 | 选项 | 默认 | 含义 |
 | --- | --- | --- |
@@ -160,7 +160,7 @@ never-sleep        CLI + macOS 菜单栏
 
 ## 与常见工具对比
 
-| | 熄屏待命 | caffeinate | KeepingYouAwake | Amphetamine |
+| | Never Sleep | caffeinate | KeepingYouAwake | Amphetamine |
 | --- | --- | --- | --- | --- |
 | 默认关屏 | 是，还强制关 | `-i` 才允许关屏 | 否 | 需改会话选项 |
 | 远程点亮后再关 | 是 | 否 | 否 | 否 |

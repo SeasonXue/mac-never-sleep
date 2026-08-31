@@ -90,7 +90,15 @@ impl Tr {
     }
 
     pub fn app_display_name(self) -> &'static str {
-        self.pick(APP_NAME, "熄屏待命")
+        self.pick(APP_NAME, APP_NAME)
+    }
+
+    pub fn panel_idle_title(self) -> &'static str {
+        self.pick("Not Active", "未开启")
+    }
+
+    pub fn panel_active_title(self) -> &'static str {
+        self.pick("Screen-Off Standby", "关屏待命中")
     }
 
     pub fn onboarding(self) -> &'static str {
@@ -98,7 +106,7 @@ impl Tr {
     }
 
     pub fn welcome_title(self) -> &'static str {
-        self.pick("Welcome to Never Sleep", "欢迎使用熄屏待命")
+        self.pick("Welcome to Never Sleep", "欢迎使用 Never Sleep")
     }
 
     pub fn help_title(self) -> &'static str {
@@ -127,7 +135,7 @@ impl Tr {
     pub fn help_step1_detail(self) -> &'static str {
         self.pick(
             "Click “Start Screen-Off Standby”. The display sleeps after about 1.5 seconds.",
-            "点「开始熄屏待命」，约 1.5 秒后屏幕关闭。",
+            "点「开始关屏待命」，约 1.5 秒后屏幕关闭。",
         )
     }
 
@@ -216,7 +224,7 @@ impl Tr {
     }
 
     pub fn start_standby(self) -> &'static str {
-        self.pick("Start Screen-Off Standby", "开始熄屏待命")
+        self.pick("Start Screen-Off Standby", "开始关屏待命")
     }
 
     pub fn end_standby(self) -> &'static str {
@@ -386,7 +394,7 @@ impl Tr {
     }
 
     pub fn notify_started_title(self) -> &'static str {
-        self.pick("Screen-off standby is on", "已进入熄屏待命")
+        self.pick("Screen-off standby is on", "已进入关屏待命")
     }
 
     pub fn notify_started_body_screen_off(self, seconds: u64, hotkey: &str) -> String {
@@ -415,7 +423,7 @@ impl Tr {
     }
 
     pub fn notify_ended_title(self) -> &'static str {
-        self.pick("Standby ended", "熄屏待命已结束")
+        self.pick("Standby ended", "关屏待命已结束")
     }
 
     pub fn notify_ended_user_body(self) -> &'static str {
@@ -461,7 +469,7 @@ impl Tr {
     pub fn already_running(self) -> &'static str {
         self.pick(
             "Never Sleep is already running in the menu bar.",
-            "熄屏待命已在菜单栏运行。",
+            "Never Sleep 已在菜单栏运行。",
         )
     }
 
@@ -518,9 +526,10 @@ impl Tr {
                 "Menu bar is not running. Open {}, or run `never-sleep on` in the foreground.",
                 self.app_display_name()
             ),
-            Lang::Zh => {
-                "菜单栏未运行。请先打开「熄屏待命」，或使用 never-sleep on 以前台方式启动。".into()
-            }
+            Lang::Zh => format!(
+                "菜单栏未运行。请先打开 {}，或使用 never-sleep on 以前台方式启动。",
+                self.app_display_name()
+            ),
         }
     }
 
@@ -550,7 +559,7 @@ impl Tr {
     pub fn foreground_started(self) -> &'static str {
         self.pick(
             "Standby is on. The display will sleep; the Mac stays awake. Press Ctrl-C to end.",
-            "熄屏待命已开启。屏幕将关闭，电脑保持运行。按 Ctrl-C 结束。",
+            "关屏待命已开启。屏幕将关闭，电脑保持运行。按 Ctrl-C 结束。",
         )
     }
 
@@ -582,7 +591,7 @@ impl Tr {
     pub fn assertion_reason(self) -> &'static str {
         self.pick(
             "Never Sleep: keep the Mac awake for remote clients",
-            "熄屏待命：保持系统运行供远程客户端连接",
+            "Never Sleep：保持系统运行供远程客户端连接",
         )
     }
 
@@ -614,7 +623,7 @@ impl Tr {
     }
 
     pub fn doctor_title(self) -> &'static str {
-        self.pick("Never Sleep diagnostics", "熄屏待命诊断")
+        self.pick("Never Sleep diagnostics", "Never Sleep 诊断")
     }
 
     pub fn doctor_snapshot(
@@ -693,7 +702,7 @@ impl Tr {
     pub fn cli_about(self) -> &'static str {
         self.pick(
             "Never Sleep: turn the Mac display off and keep the machine awake for ChatGPT / Codex remote sessions",
-            "熄屏待命：关掉 Mac 屏幕、不让电脑睡眠，方便 ChatGPT / Codex 远程连接",
+            "Never Sleep：关掉 Mac 屏幕、不让电脑睡眠，方便 ChatGPT / Codex 远程连接",
         )
     }
 }
@@ -721,9 +730,9 @@ Keep in mind
 ";
 
 const ONBOARDING_ZH: &str = "\
-熄屏待命会关掉屏幕，同时不让 Mac 进入睡眠。ChatGPT / Codex 等远程客户端仍可连上这台电脑。\n\n\
+Never Sleep 会关掉屏幕，同时不让 Mac 进入睡眠。ChatGPT / Codex 等远程客户端仍可连上这台电脑。\n\n\
 怎么用\n\
-1. 开始待命 — 点「开始熄屏待命」，约 1.5 秒后屏幕关闭。\n\
+1. 开始待命 — 点「开始关屏待命」，约 1.5 秒后屏幕关闭。\n\
 2. 不抢屏幕 — 人在电脑前绝不强制关屏；走开后再自动关闭。\n\
 3. 随时回来 — 按 ⌥⌘P，或点菜单「结束待命」。\n\n\
 请留意\n\
@@ -766,9 +775,40 @@ mod tests {
             Tr::new(Lang::En).start_standby(),
             "Start Screen-Off Standby"
         );
-        assert_eq!(Tr::new(Lang::Zh).start_standby(), "开始熄屏待命");
         assert_eq!(Tr::new(Lang::En).app_display_name(), "Never Sleep");
-        assert_eq!(Tr::new(Lang::Zh).app_display_name(), "熄屏待命");
+    }
+
+    #[test]
+    fn product_name_is_never_sleep_in_both_languages() {
+        assert_eq!(Tr::new(Lang::En).app_display_name(), APP_NAME);
+        assert_eq!(Tr::new(Lang::Zh).app_display_name(), APP_NAME);
+        let zh = Tr::new(Lang::Zh);
+        for s in [
+            zh.app_display_name(),
+            zh.welcome_title(),
+            zh.start_standby(),
+            zh.end_standby(),
+            zh.help_step1_detail(),
+            zh.notify_started_title(),
+            zh.notify_ended_title(),
+            zh.already_running(),
+            zh.foreground_started(),
+            zh.assertion_reason(),
+            zh.doctor_title(),
+            zh.cli_about(),
+            zh.onboarding(),
+            zh.panel_idle_title(),
+            zh.panel_active_title(),
+            zh.menubar_not_running().as_str(),
+        ] {
+            assert!(
+                !s.contains("熄屏待命"),
+                "the product is Never Sleep in both languages, got {s}"
+            );
+        }
+        assert_eq!(zh.start_standby(), "开始关屏待命");
+        assert_eq!(zh.panel_active_title(), "关屏待命中");
+        assert_eq!(zh.end_standby(), "结束待命");
     }
 
     #[test]

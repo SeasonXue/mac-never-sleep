@@ -294,7 +294,7 @@ mod tests {
             ..AppConfig::default()
         };
         let view = build_view_model(&cfg, false, None, None, &host(), None, false);
-        assert_eq!(view.primary_action, "开始熄屏待命");
+        assert_eq!(view.primary_action, "开始关屏待命");
         assert!(view.status_line.contains("未待命"));
     }
 }
