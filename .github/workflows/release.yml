@@ -21,6 +21,9 @@ permissions:
 jobs:
   release-macos:
     runs-on: macos-latest
+    concurrency:
+      group: never-sleep-macos-release
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -136,6 +139,15 @@ jobs:
             gh release delete-asset "${tag}" "${name}" --yes 2>/dev/null || true
           }
 
+          retire_asset() {
+            local tag="$1"
+            local name="$2"
+            if [ -z "$(asset_id "${tag}" "${name}")" ]; then
+              return 0
+            fi
+            gh release delete-asset "${tag}" "${name}" --yes
+          }
+
           rename_asset() {
             local id="$1"
             local new_name="$2"
@@ -193,16 +205,22 @@ jobs:
               delete_asset_if_present "${tag}" "${previous}"
               rm -f "${staged}"
             done
-            delete_asset_if_present "${tag}" "never-sleep-cli-macos"
           }
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}"
+            existing_sha="$(git rev-list -n 1 "refs/tags/${TAG}")"
+            if [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
+              echo "Tag ${TAG} already points at ${existing_sha}, not this checkout ${GITHUB_SHA}." >&2
+              exit 1
+            fi
+            upload_without_clobber "${TAG}" \
+              "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip"
             gh release edit "${TAG}" \
               --title "Never Sleep ${TAG}" \
               --notes "${notes}" \
               "${prerelease_flag}"
-            upload_without_clobber "${TAG}" \
-              "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip"
+            retire_asset "${TAG}" "never-sleep-cli-macos"
           else
             gh release create "${TAG}" \
               "Never-Sleep-macos.zip" "never-sleep-cli-macos.zip" \

@@ -137,16 +137,70 @@ fn remote_tag_lookup_fails_closed_on_transport_errors() {
 
 #[test]
 fn legacy_cli_asset_stays_until_zip_is_promoted() {
-    let body = function_body(RELEASE, "upload_without_clobber");
-    let last_promote = body
-        .rfind("rename_asset")
-        .expect("staging must be promoted with rename_asset");
-    let delete_legacy = body
-        .find("delete_asset_if_present \"${tag}\" \"never-sleep-cli-macos\"")
+    let upload_call = RELEASE
+        .find("upload_without_clobber \"${TAG}\"")
+        .expect("existing-release path must call upload_without_clobber");
+    let retire = RELEASE
+        .find("retire_asset \"${TAG}\" \"never-sleep-cli-macos\"")
         .expect("the bare never-sleep-cli-macos asset from #9 must still be removed eventually");
     assert!(
-        delete_legacy > last_promote,
+        retire > upload_call,
         "do not delete the legacy CLI until never-sleep-cli-macos.zip has been promoted"
+    );
+}
+
+#[test]
+fn existing_release_revalidates_tag_before_update() {
+    assert!(
+        RELEASE.contains("concurrency:"),
+        "serialize release jobs so two runs cannot race the absent-tag path"
+    );
+    let view = RELEASE
+        .find("if gh release view")
+        .expect("existing-release branch");
+    let rest = &RELEASE[view..];
+    let else_at = rest
+        .find("\n          else")
+        .expect("existing-release branch should have an else create path");
+    let branch = &rest[..else_at];
+    assert!(
+        branch.contains("rev-list") && branch.contains("GITHUB_SHA"),
+        "must revalidate the tag SHA immediately before updating an existing release: {branch}"
+    );
+}
+
+#[test]
+fn existing_release_edits_metadata_after_asset_promotion() {
+    let view = RELEASE
+        .find("if gh release view")
+        .expect("existing-release branch");
+    let rest = &RELEASE[view..];
+    let else_at = rest
+        .find("\n          else")
+        .expect("existing-release branch should have an else create path");
+    let branch = &rest[..else_at];
+    let upload = branch
+        .find("upload_without_clobber")
+        .expect("existing-release path must promote assets");
+    let edit = branch
+        .find("gh release edit")
+        .expect("existing-release path must still update notes and prerelease");
+    assert!(
+        upload < edit,
+        "do not publish notes naming never-sleep-cli-macos.zip before that asset exists: {branch}"
+    );
+}
+
+#[test]
+fn retiring_legacy_cli_propagates_delete_failures() {
+    let body = function_body(RELEASE, "retire_asset");
+    assert!(
+        !body.contains("|| true"),
+        "a failed delete of the live legacy CLI must fail the job: {body}"
+    );
+    assert!(
+        body.contains("delete-asset"),
+        "retire_asset must delete the named GitHub release asset: {body}"
     );
 }
 
