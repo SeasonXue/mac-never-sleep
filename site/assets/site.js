@@ -24,11 +24,12 @@
     "https://api.github.com/repos/SeasonXue/mac-never-sleep/releases/latest";
   const CACHE_KEY = "never-sleep-latest-tag";
 
+  // GitHub Release tags are the workflow's tag space, not just dotted versions:
+  // v0.1.1, release/v1, and release#1 must all display as returned.
   function latestReleaseLabel(tagName) {
     if (typeof tagName !== "string") return null;
-    const match = tagName.trim().match(/v?\d+\.\d+(?:\.\d+)?/);
-    if (!match) return null;
-    return match[0].startsWith("v") ? match[0] : `v${match[0]}`;
+    const tag = tagName.trim();
+    return tag === "" ? null : tag;
   }
 
   function applyReleaseTag(tagName) {

@@ -509,6 +509,30 @@ fn pages_bind_visible_version_to_latest_github_release() {
 }
 
 #[test]
+fn latest_release_label_keeps_workflow_tag_names() {
+    let js = read("assets/site.js");
+    let func = js
+        .split("function latestReleaseLabel")
+        .nth(1)
+        .and_then(|rest| rest.split("function ").next())
+        .expect("latestReleaseLabel must exist so the page can show GitHub tag_name");
+    assert!(
+        !func.contains(".match("),
+        "do not extract a dotted version from tag_name; release.yml accepts arbitrary tags such as release/v1 and release#1, got {func}"
+    );
+    assert!(
+        func.contains(".trim()"),
+        "still strip surrounding whitespace from tag_name, got {func}"
+    );
+    for tag in ["release/v1", "release#1"] {
+        assert!(
+            js.contains(tag),
+            "site.js must name {tag} as a valid GitHub Release tag so the dotted-version regex cannot come back"
+        );
+    }
+}
+
+#[test]
 fn github_pages_deploy_is_removed() {
     let root = readme_root();
     assert!(
