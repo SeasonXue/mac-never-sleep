@@ -469,17 +469,19 @@ details p {
   text-align: center;
 }
 .get .card-block {
-  max-width: 680px;
+  max-width: 720px;
   margin: 0 auto;
-  padding: 28px 24px;
+  padding: 32px 36px;
   border: 0.5px solid var(--hairline);
   border-radius: var(--radius);
   background: var(--surface);
 }
 .get ol {
-  max-width: 520px;
-  margin: 16px auto 0;
-  padding-left: 20px;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 20px auto 0;
+  padding: 0 0.4em 0 1.7em;
   color: var(--muted);
   text-align: left;
 }

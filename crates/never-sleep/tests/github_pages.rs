@@ -470,3 +470,42 @@ fn pages_show_the_shipping_app_version() {
         );
     }
 }
+
+#[test]
+fn download_steps_center_as_a_shrink_wrapped_block() {
+    let css = read("assets/style.css");
+    let ol = css_rule(&css, ".get ol");
+    assert!(
+        ol.contains("width: fit-content") || ol.contains("width: max-content"),
+        "the numbered install steps must shrink to the text so the block can sit in the middle of the card, got {ol:?}"
+    );
+    assert!(
+        ol.contains("margin:") && ol.contains("auto"),
+        "the steps list must be centered as a block, not hug the left padding, got {ol:?}"
+    );
+    assert!(
+        !ol.contains("max-width: 520px"),
+        "a 520px left-aligned column is what made the list look left-heavy, got {ol:?}"
+    );
+}
+
+#[test]
+fn pages_bind_visible_version_to_latest_github_release() {
+    let js = read("assets/site.js");
+    assert!(
+        js.contains("api.github.com/repos/SeasonXue/mac-never-sleep/releases/latest"),
+        "the marketing page must read the latest GitHub Release tag instead of freezing a version in HTML"
+    );
+    assert!(js.contains("tag_name"), "latest-release JSON uses tag_name");
+    for rel in ["index.html", "zh/index.html"] {
+        let html = read(rel);
+        assert!(
+            html.contains("data-release-tag"),
+            "{rel} visible version labels must be live-updated from GitHub Releases"
+        );
+        assert!(
+            html.contains(r#"class="release-ver""#),
+            "{rel} download card still shows a version even before JS runs"
+        );
+    }
+}
