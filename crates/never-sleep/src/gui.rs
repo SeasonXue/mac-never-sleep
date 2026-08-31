@@ -49,7 +49,7 @@ enum UiCommand {
     Hide,
 }
 
-const POPOVER_WIDTH: f64 = 380.0;
+const POPOVER_WIDTH: f64 = 320.0;
 const POPOVER_HEIGHT: f64 = 480.0;
 
 struct Popover {
