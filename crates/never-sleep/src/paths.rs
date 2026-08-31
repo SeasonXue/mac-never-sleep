@@ -4,7 +4,28 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
+/// Process override for the support directory. Empty values are ignored.
+pub const DATA_DIR_ENV: &str = "NEVER_SLEEP_DATA_DIR";
+
+#[cfg(test)]
+thread_local! {
+    static DATA_DIR_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+static TEST_DIR_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn data_dir() -> PathBuf {
+    #[cfg(test)]
+    if let Some(dir) = DATA_DIR_OVERRIDE.with(|slot| slot.borrow().clone()) {
+        return dir;
+    }
+    if let Ok(raw) = std::env::var(DATA_DIR_ENV) {
+        if !raw.is_empty() {
+            return PathBuf::from(raw);
+        }
+    }
     if cfg!(target_os = "macos") {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -53,6 +74,43 @@ pub fn is_inside_app_bundle(exe: &Path) -> bool {
         .any(|c| c.as_os_str().to_string_lossy().ends_with(".app"))
 }
 
+/// Temporary support directory for unit tests. Redirects `data_dir()` on this
+/// thread so IPC / `save_config` never touch the user's real files.
+#[cfg(test)]
+pub struct TestDataDir {
+    path: PathBuf,
+}
+
+#[cfg(test)]
+impl TestDataDir {
+    pub fn install() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "never-sleep-test-{}-{}",
+            std::process::id(),
+            TEST_DIR_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&path).expect("temp data dir");
+        DATA_DIR_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(path.clone()));
+        Self { path }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestDataDir {
+    fn drop(&mut self) {
+        DATA_DIR_OVERRIDE.with(|slot| {
+            if slot.borrow().as_ref() == Some(&self.path) {
+                *slot.borrow_mut() = None;
+            }
+        });
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,6 +123,15 @@ mod tests {
         assert_eq!(ipc_socket_path(), dir.join("ipc.sock"));
         assert_eq!(session_lock_path(), dir.join("session.lock"));
         assert!(launch_agent_path().ends_with("com.seasonxue.never-sleep.plist"));
+    }
+
+    #[test]
+    fn test_data_dir_redirects_config_and_socket() {
+        let isolated = TestDataDir::install();
+        assert_eq!(data_dir(), isolated.path());
+        assert_eq!(config_path(), isolated.path().join("config.toml"));
+        assert_eq!(ipc_socket_path(), isolated.path().join("ipc.sock"));
+        assert!(!ipc_socket_path().exists());
     }
 
     #[test]

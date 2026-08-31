@@ -129,6 +129,7 @@ mod tests {
 
     #[test]
     fn try_send_without_listener_is_none() {
+        let _isolated = crate::paths::TestDataDir::install();
         assert!(try_send(&IpcRequest::Status).is_none());
         assert!(try_send(&IpcRequest::Ping).is_none());
     }

@@ -105,6 +105,7 @@ mod tests {
 
     #[test]
     fn assertion_failure_aborts_session() {
+        let _isolated = crate::paths::TestDataDir::install();
         let mut engine = Engine::new(AppConfig::default());
         let mut platform = FailPower;
         dispatch(&mut engine, &mut platform, Input::Start);
@@ -172,6 +173,7 @@ mod tests {
 
     #[test]
     fn start_applies_power_and_notifies() {
+        let _isolated = crate::paths::TestDataDir::install();
         let mut engine = Engine::new(AppConfig::default());
         let mut platform = Rec::new();
         dispatch(&mut engine, &mut platform, Input::Start);
@@ -183,6 +185,7 @@ mod tests {
 
     #[test]
     fn sleep_display_error_does_not_abort_session() {
+        let _isolated = crate::paths::TestDataDir::install();
         let cfg = AppConfig {
             display_off_delay_ms: 0,
             ..AppConfig::default()
@@ -206,6 +209,7 @@ mod tests {
 
     #[test]
     fn first_sleep_locks_when_configured() {
+        let _isolated = crate::paths::TestDataDir::install();
         let cfg = AppConfig {
             lock_screen: true,
             display_off_delay_ms: 0,

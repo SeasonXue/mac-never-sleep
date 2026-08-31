@@ -84,6 +84,7 @@ mod tests {
 
     #[test]
     fn stub_platform_accepts_power_plan() {
+        let _isolated = crate::paths::TestDataDir::install();
         let mut p = StubPlatform;
         let host = p.snapshot();
         assert!(host.on_ac);

@@ -80,7 +80,7 @@ This repository is developed **test-first**. Do not start with production code f
 | IPC / CLI protocol | `crates/never-sleep/src/protocol.rs`, `cli.rs` |
 | Paths, XML, locale helpers | the module that owns them |
 
-Drive host state through `HostSnapshot`. Do not hit real IOKit, `pmset`, or the user’s `~/Library/Application Support/Never Sleep/` from unit tests.
+Drive host state through `HostSnapshot`. Do not hit real IOKit, `pmset`, or the user’s `~/Library/Application Support/Never Sleep/` from unit tests. Tests that call `try_send`, `save_config`, or `load_config` must install `paths::TestDataDir` so they use a unique temp directory on the current thread.
 
 Prefer table-driven cases for parsers and language tags. Name tests after the product rule (`user_present_does_not_resleep`, not `test1`).
 
@@ -121,7 +121,7 @@ Closed-lid stay-awake is **best effort**. The reliable path is lid open + displa
 
 ## IPC and paths
 
-- Config: `~/Library/Application Support/Never Sleep/config.toml` (macOS) or `$XDG_DATA_HOME/never-sleep` (Linux stub).
+- Config: `~/Library/Application Support/Never Sleep/config.toml` (macOS) or `$XDG_DATA_HOME/never-sleep` (Linux stub). Override with `NEVER_SLEEP_DATA_DIR`.
 - Socket: `ipc.sock` in that directory. Line-delimited JSON. Requests use `{"cmd":"on"|"off"|"toggle"|"status"|"quit"|"ping", ...}`.
 - While the menu bar is running, CLI commands must talk to that process (`try_send`). Only `on` may fall back to a foreground session.
 
