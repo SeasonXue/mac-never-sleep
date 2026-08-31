@@ -248,6 +248,64 @@ fn css_rule<'a>(css: &'a str, selector: &str) -> &'a str {
         .unwrap_or_else(|| panic!("expected {selector} rule"))
 }
 
+fn png_ihdr_color_type(path: &Path) -> u8 {
+    let data = fs::read(path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
+    assert!(
+        data.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "{} is not a PNG",
+        path.display()
+    );
+    assert_eq!(&data[12..16], b"IHDR", "{} missing IHDR", path.display());
+    data[25]
+}
+
+#[test]
+fn how_to_section_labels_share_the_card_column() {
+    let css = read("assets/style.css");
+    let help = css_rule(&css, ".help-section");
+    let steps = css_rule(&css, ".steps");
+    assert!(
+        help.contains("max-width: 640px"),
+        "Get started / Keep in mind labels must use the same column as the cards, got {help:?}"
+    );
+    assert!(
+        steps.contains("max-width: 640px"),
+        "step cards stay in a 640px column, got {steps:?}"
+    );
+    assert!(
+        help.contains("margin: 0 auto") || help.contains("margin-left: auto"),
+        "labels must center with the cards instead of hugging the left of the wrap, got {help:?}"
+    );
+}
+
+#[test]
+fn marketing_screenshots_keep_transparent_rounded_corners() {
+    let names = [
+        "howto-en.png",
+        "howto-zh.png",
+        "main-active-en.png",
+        "main-active-zh.png",
+        "main-idle-en.png",
+        "main-idle-zh.png",
+        "settings-en.png",
+        "settings-zh.png",
+    ];
+    for dir in [
+        site_root().join("assets/screenshots"),
+        readme_root().join("docs/screenshots"),
+    ] {
+        for name in names {
+            let path = dir.join(name);
+            let color = png_ihdr_color_type(&path);
+            assert_eq!(
+                color, 6,
+                "{} must be RGBA so rounded-corner leftover pixels stay transparent on the gallery cards, got color type {color}",
+                path.display()
+            );
+        }
+    }
+}
+
 #[test]
 fn hero_shots_top_align_when_captions_wrap() {
     let css = read("assets/style.css");
