@@ -319,14 +319,16 @@
     .divider { width: 0.5px; height: 12px; margin: 0 2px; background: var(--hairline); }
 
     .settings-view { padding-top: 0; }
-    .settings-head {
+    /* Shared page header for sub-sheets (Settings, How to use): centered title
+       with a leading Back button, kept identical so navigation feels consistent. */
+    .sheet-head {
       display: grid;
       grid-template-columns: 32px 1fr 32px;
       align-items: center;
       height: 36px;
       margin: 0 0 8px;
     }
-    .settings-head h2 { margin: 0; text-align: center; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+    .sheet-head h2 { margin: 0; text-align: center; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
     .settings-view .card { flex: 0 0 auto; }
     .settings-view .row { min-height: 36px; padding: 6px 12px; }
     .language-row {
@@ -360,21 +362,17 @@
     }
     .settings-actions { display: flex; justify-content: center; gap: 2px; margin-top: auto; padding-top: 10px; }
 
-    .help-view { padding-top: 8px; }
+    .help-view { padding-top: 0; }
     .help-body {
       flex: 1;
       min-height: 0;
       overflow-x: hidden;
       overflow-y: auto;
       padding-bottom: 8px;
-      scrollbar-width: thin;
-      scrollbar-color: var(--hairline) transparent;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
     }
-    .help-body::-webkit-scrollbar { width: 7px; }
-    .help-body::-webkit-scrollbar-thumb {
-      background: var(--hairline);
-      border-radius: 99px;
-    }
+    .help-body::-webkit-scrollbar { width: 0; height: 0; }
 
     .help-lead {
       margin: 0 0 12px;
@@ -545,7 +543,7 @@
         </section>
 
         <section class="view settings-view" id="settingsView" inert aria-hidden="true">
-          <div class="settings-head">
+          <div class="sheet-head">
             <button class="icon-button" id="backButton" aria-label="Back" title="Back">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
             </button>
@@ -575,7 +573,7 @@
         </section>
 
         <section class="view settings-view help-view" id="helpView" inert aria-hidden="true">
-          <div class="settings-head">
+          <div class="sheet-head">
             <button class="icon-button" id="helpBackButton" aria-label="Back" title="Back">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
             </button>
