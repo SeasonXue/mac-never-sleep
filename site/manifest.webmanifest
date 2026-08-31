@@ -1,7 +1,7 @@
 {
   "name": "Never Sleep",
   "short_name": "Never Sleep",
-  "description": "Keep a MacBook awake with the display off so ChatGPT / Codex can connect.",
+  "description": "Keep a MacBook awake with the display off for downloads, a mini server, remote sessions, and a darker desk.",
   "lang": "en",
   "start_url": "/",
   "scope": "/",

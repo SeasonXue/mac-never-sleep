@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Never Sleep — 屏幕关掉，电脑不睡</title>
-  <meta name="description" content="Never Sleep 让 MacBook 屏幕关掉、电脑不睡，方便 ChatGPT / Codex 等远程客户端随时连上。菜单栏一点即可，不改系统节能设置。">
+  <meta name="description" content="Never Sleep 让 MacBook 屏幕关掉、电脑不睡：挂机下载、当成迷你服务器、远程会话、护屏省电。菜单栏一点即可，不改系统节能设置。">
   <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#0b1f28">
   <meta name="author" content="SeasonXue">
@@ -20,7 +20,7 @@
   <meta property="og:locale" content="zh_CN">
   <meta property="og:locale:alternate" content="en_US">
   <meta property="og:title" content="Never Sleep — 屏幕关掉，电脑不睡">
-  <meta property="og:description" content="让 MacBook 熄屏但保持唤醒，方便 ChatGPT / Codex 随时连接。菜单栏一键，Agent 可用命令行。">
+  <meta property="og:description" content="让 MacBook 熄屏但保持唤醒：挂机下载、迷你服务器、远程会话、护屏省电。菜单栏一键，Agent 可用命令行。">
   <meta property="og:url" content="https://never-sleep.xyz-ai.app/zh/">
   <meta property="og:image" content="https://never-sleep.xyz-ai.app/assets/og.png">
   <meta property="og:image:width" content="1200">
@@ -28,7 +28,7 @@
   <meta property="og:image:alt" content="Never Sleep：版画风太阳与月亮，旁白为屏幕关掉，电脑不睡。">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Never Sleep — 屏幕关掉，电脑不睡">
-  <meta name="twitter:description" content="让 MacBook 熄屏但保持唤醒，方便 ChatGPT / Codex 随时连接。">
+  <meta name="twitter:description" content="让 MacBook 熄屏但保持唤醒：挂机下载、迷你服务器、远程会话、护屏省电。">
   <meta name="twitter:image" content="https://never-sleep.xyz-ai.app/assets/og.png">
   <link rel="stylesheet" href="../assets/style.css">
   <script type="application/ld+json">
@@ -38,7 +38,7 @@
       {
         "@type": "SoftwareApplication",
         "name": "Never Sleep",
-        "description": "让 MacBook 屏幕关掉、电脑不睡，方便 ChatGPT、Codex 等客户端随时连上。",
+        "description": "让 MacBook 屏幕关掉、电脑不睡，用于挂机下载、迷你服务器、远程会话和护屏省电。",
         "url": "https://never-sleep.xyz-ai.app/zh/",
         "downloadUrl": "https://github.com/SeasonXue/mac-never-sleep/releases/latest",
         "image": "https://never-sleep.xyz-ai.app/assets/og.png",
@@ -57,7 +57,15 @@
             "name": "Never Sleep 做什么？",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "关闭 MacBook 屏幕，同时保持电脑唤醒，让 ChatGPT、Codex 等远程客户端仍可连接。"
+              "text": "关闭 MacBook 屏幕，同时保持电脑唤醒。用于挂机下载、当成迷你服务器、远程会话、护屏和降低空闲功耗。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "是不是只给 ChatGPT / Codex 用？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "不是。远程 Agent 只是场景之一。挂机下载、把 MacBook 当迷你服务器、护屏、降低空闲功耗，都是同一套关屏保活。"
             }
           },
           {
@@ -85,6 +93,7 @@
         </a>
         <nav class="nav-links" aria-label="本页">
           <a href="#features">为什么</a>
+          <a href="#uses">场景</a>
           <a href="#look">界面</a>
           <a href="#how">怎么用</a>
           <a href="#cli">命令行</a>
@@ -102,7 +111,7 @@
       <div class="hero-copy">
         <p class="kicker">macOS 菜单栏 · Never Sleep</p>
         <h1>屏幕关掉，<br>电脑不睡。</h1>
-        <p class="lede">人走了，屏幕必须灭；机器必须醒。ChatGPT、Codex、SSH 随时能连上——你坐在键盘前时，它绝不抢屏。</p>
+        <p class="lede">人走了，屏幕必须灭，机器必须醒。挂机下载、把 MacBook 当迷你服务器、远程会话，或只是护屏省电——你坐在键盘前时，它绝不抢屏。</p>
         <div class="cta-row">
           <a class="btn btn-primary btn-lg" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">下载 Mac 应用</a>
           <a class="btn btn-ghost btn-lg" href="https://github.com/SeasonXue/mac-never-sleep">查看源码</a>
@@ -117,7 +126,7 @@
           </figure>
           <figure class="shot">
             <img src="../assets/screenshots/main-active-zh.png" width="320" height="480" alt="Never Sleep 关屏待命中：月亮面板，屏幕已关、Mac 仍在线">
-            <figcaption>待命中——屏幕已灭，远程客户端仍可连上。</figcaption>
+            <figcaption>待命中——屏幕已灭，电脑继续干活。</figcaption>
           </figure>
         </div>
         <div class="celestial" aria-hidden="true">
@@ -137,7 +146,40 @@
       </div>
     </section>
 
-    <section class="section" id="features" style="padding-top:0">
+    <section class="section" id="uses" style="padding-top:0">
+      <div class="wrap">
+        <h2>适用场景</h2>
+        <p class="section-lead">机制只有一件，场景不只 ChatGPT。</p>
+        <div class="grid">
+          <article class="card feature">
+            <h3>挂机下载</h3>
+            <p>大文件、App Store 更新、Time Machine 可以整夜跑。屏幕关掉，传输不停。</p>
+          </article>
+          <article class="card feature">
+            <h3>当成一台迷你服务器</h3>
+            <p>SSH、文件共享、本地站点或家庭实验室，更像一台 Mac mini。最稳妥仍是开盖熄屏；合盖保活是尽力而为。</p>
+          </article>
+          <article class="card feature">
+            <h3>护屏</h3>
+            <p>真·显示器休眠，不是把亮度拉到 0。少发热、少损耗，桌上也更暗。</p>
+          </article>
+          <article class="card feature">
+            <h3>降低功耗</h3>
+            <p>背光是 MacBook 空闲功耗的大头。关掉屏幕，CPU、磁盘和网络仍可用。</p>
+          </article>
+          <article class="card feature">
+            <h3>远程会话</h3>
+            <p>ChatGPT、Codex、Cursor、屏幕共享或 SSH。远程输入把屏幕点亮也不怕，人不在时会再关掉。</p>
+          </article>
+          <article class="card feature">
+            <h3>长时间任务不用守着</h3>
+            <p>编译、转码、备份、同步可以过夜跑完。时长预设加上电量下限，结束得很干净。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
       <div class="wrap">
         <h2>和应用里一样的硬指标</h2>
         <p class="section-lead">菜单栏、命令行和这个页面描述的是同一份约定。</p>
@@ -155,7 +197,7 @@
           <article class="card feature">
             <span class="index">3</span>
             <h3>远程点亮也不怕</h3>
-            <p>人不在时，若 Codex 用合成事件把屏幕点亮，会再把显示器关掉。</p>
+            <p>人不在时，若远程或合成输入把屏幕点亮，会再把显示器关掉。</p>
           </article>
           <article class="card feature">
             <span class="index">4</span>
@@ -204,7 +246,7 @@
     <section class="section" id="how">
       <div class="wrap">
         <h2>怎么用</h2>
-        <p class="section-lead">关屏护屏 · 电脑在线。ChatGPT / Codex 等远程客户端仍可连上这台电脑。</p>
+        <p class="section-lead">关屏护屏 · 电脑在线。下载、迷你服务器、远程会话和长时间任务都能继续跑。</p>
         <p class="help-section">怎么用</p>
         <div class="card steps">
           <div class="help-item">
@@ -341,11 +383,15 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
     <section class="section" id="faq">
       <div class="wrap">
         <h2>常见问题</h2>
-        <p class="section-lead">和面板里「使用说明」同一口径。</p>
+        <p class="section-lead">和产品约定同一口径。</p>
         <div class="faq">
           <details open>
             <summary>Never Sleep 做什么？</summary>
-            <p>关闭 MacBook 屏幕，同时保持电脑唤醒，让 ChatGPT、Codex 等远程客户端仍可连接。</p>
+            <p>关闭 MacBook 屏幕，同时保持电脑唤醒。用于挂机下载、当成迷你服务器、远程会话、护屏和降低空闲功耗。</p>
+          </details>
+          <details>
+            <summary>是不是只给 ChatGPT / Codex 用？</summary>
+            <p>不是。远程 Agent 只是场景之一。挂机下载、把 MacBook 当迷你服务器、护屏、降低空闲功耗，都是同一套关屏保活。</p>
           </details>
           <details>
             <summary>会像 caffeinate 一样把屏幕一直亮着吗？</summary>
