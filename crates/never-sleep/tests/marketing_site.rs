@@ -193,6 +193,79 @@ fn english_copy_keeps_product_invariants() {
 }
 
 #[test]
+fn copy_covers_everyday_use_cases_not_only_chatgpt() {
+    let en_site = read("index.html");
+    let zh_site = read("zh/index.html");
+    let en_readme = fs::read_to_string(readme_root().join("README.md"))
+        .unwrap_or_else(|err| panic!("missing README.md: {err}"));
+    let zh_readme = fs::read_to_string(readme_root().join("README.zh-CN.md"))
+        .unwrap_or_else(|err| panic!("missing README.zh-CN.md: {err}"));
+
+    assert!(
+        en_site.contains(r#"id="uses""#),
+        "English page needs a use-cases section crawlers and nav can reach"
+    );
+    assert!(
+        zh_site.contains(r#"id="uses""#),
+        "Chinese page needs the matching 适用场景 section"
+    );
+    assert!(
+        en_readme.contains("## What it's for"),
+        "English README must name everyday jobs, not only ChatGPT / Codex"
+    );
+    assert!(
+        zh_readme.contains("## 适用场景"),
+        "Chinese README must name 适用场景"
+    );
+
+    let en_needles = [
+        ("unattended downloads", "download"),
+        ("Mac mini-style server", "mini"),
+        ("protect the display", "protect"),
+        ("lower idle power", "power"),
+        ("long-running jobs", "compile"),
+    ];
+    for (label, needle) in en_needles {
+        let hay = en_site.to_ascii_lowercase();
+        assert!(
+            hay.contains(needle),
+            "English site should describe {label}; missing {needle:?}"
+        );
+        assert!(
+            en_readme.to_ascii_lowercase().contains(needle),
+            "English README should describe {label}; missing {needle:?}"
+        );
+    }
+    for (label, needle) in [
+        ("挂机下载", "下载"),
+        ("当成迷你服务器", "服务器"),
+        ("护屏", "护屏"),
+        ("降低功耗", "功耗"),
+        ("长时间任务", "编译"),
+    ] {
+        assert!(
+            zh_site.contains(needle),
+            "Chinese site should describe {label}; missing {needle:?}"
+        );
+        assert!(
+            zh_readme.contains(needle),
+            "Chinese README should describe {label}; missing {needle:?}"
+        );
+    }
+
+    let description = attr(&en_site, r#"name="description" content=""#).to_ascii_lowercase();
+    assert!(
+        description.contains("download") || description.contains("server"),
+        "meta description must sell the product job beyond ChatGPT, got: {description}"
+    );
+    let zh_description = attr(&zh_site, r#"name="description" content=""#);
+    assert!(
+        zh_description.contains("下载") || zh_description.contains("服务器"),
+        "Chinese meta description must sell jobs beyond ChatGPT, got: {zh_description}"
+    );
+}
+
+#[test]
 fn sitemap_and_robots_point_at_the_product_origin() {
     let robots = read("robots.txt");
     assert!(robots.contains("User-agent: *"));

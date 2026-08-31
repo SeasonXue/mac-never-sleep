@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) · **[Website](https://never-sleep.xyz-ai.app/)**
 
-Keep a MacBook **awake with the display off**, so ChatGPT / Codex and similar clients can connect and control the machine at any time. One click from the menu bar, plus an Agent-friendly CLI.
+Keep a MacBook **awake with the display off**. Overnight downloads, a Mac mini-style server, remote sessions, or just a darker, lower-power desk — one click from the menu bar, plus an Agent-friendly CLI.
 
 The UI is **English by default**, with Simplified Chinese when the system language is Chinese (or when you choose it in the menu).
 
@@ -24,7 +24,7 @@ One left-click on the menu-bar sun opens the panel. Tap the big sun to start —
       <sub><b>One tap to start</b> — the display sleeps, the Mac stays awake.</sub>
     </td>
     <td align="center" valign="top">
-      <sub><b>Standby on</b> — screen off while ChatGPT / Codex keep connecting.</sub>
+      <sub><b>Standby on</b> — screen off, the Mac keeps working.</sub>
     </td>
   </tr>
   <tr>
@@ -45,19 +45,30 @@ One left-click on the menu-bar sun opens the panel. Tap the big sun to start —
   </tr>
 </table>
 
+## What it's for
+
+The job is always the same: **display off, Mac awake**. That is useful for more than one ChatGPT session.
+
+- **Unattended downloads** — leave a large transfer, App Store update, or Time Machine running overnight. The panel goes dark; the download does not.
+- **MacBook as a mini server** — SSH, file sharing, a local site, or a home lab, closer to a Mac mini. **Lid open + display asleep is the reliable path**; closed-lid stay-awake is best effort.
+- **Protect the display** — real display sleep, not brightness 0. Less heat and wear on the panel, and the desk stays dark.
+- **Lower idle power** — the backlight is a large part of a MacBook’s idle draw. Sleep the panel; keep CPU, disk, and network available.
+- **Remote sessions** — ChatGPT, Codex, Cursor, Screen Sharing, or SSH. If remote input wakes the panel, it goes dark again while you are away.
+- **Long-running jobs** — compiles, encodes, backups, and syncs can finish overnight. Duration presets (1 / 3 / 8 hours, or until 08:00) and a battery floor stop it safely.
+
 ## Why this, instead of the usual tools
 
 Built-in `caffeinate` and menu-bar apps like KeepingYouAwake / Amphetamine all mean “don’t sleep”. Their default path is almost always **keep the display on**, or they bury “allow display sleep” deep in options. Closed-lid stay-awake often needs an Enhancer, or rewriting `pmset`, and can leave power policy dirty after quit.
 
 This product collapses the scenario to one job:
 
-> When you leave, the display must go dark (panel, power, privacy). The machine must stay awake (remote clients can connect any time).
+> When you leave, the display must go dark (panel, power, privacy). The machine must stay awake (downloads, a mini server, remote sessions).
 
 Hard requirements:
 
 1. **One-click start**: the first menu item is “Start Screen-Off Standby”. The display sleeps after 1.5 seconds; the system keeps running.
 2. **Do not fight the person at the keyboard**: while you type, it never force-sleeps the display; after HID idle or a closed lid, it sleeps the display again.
-3. **Remote input waking the panel is fine**: while you are away it reasserts `displaysleepnow`. If Codex lights the screen with synthetic events, it goes dark again within a few seconds.
+3. **Remote input waking the panel is fine**: while you are away it reasserts `displaysleepnow`. If a remote session lights the screen with synthetic events, it goes dark again within a few seconds.
 4. **There is always a way back**: global hotkey `⌥⌘P` (works with the display off), or the menu.
 5. **Do not rewrite Energy Saver**: only in-process IOKit assertions. Quit, crash, or relaunch restores the clamshell flag. No leftover `pmset disablesleep 1`.
 6. **Agent-friendly**: the same state is readable via `never-sleep status --json`. Codex can run `never-sleep on --for 8h`.

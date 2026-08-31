@@ -525,6 +525,7 @@ a:focus-visible {
 @media (max-width: 860px) {
   .nav-links { display: none; }
   .grid { grid-template-columns: 1fr; }
+  #uses .grid { grid-template-columns: 1fr 1fr; }
   .gallery { grid-template-columns: 1fr 1fr; }
   .shots { grid-template-columns: 1fr; max-width: 360px; }
 }
@@ -532,6 +533,7 @@ a:focus-visible {
 @media (max-width: 560px) {
   .wrap { width: min(var(--max), calc(100% - 24px)); }
   .gallery { grid-template-columns: 1fr; }
+  #uses .grid { grid-template-columns: 1fr; }
   .nav { gap: 8px; }
   .brand-name { display: none; }
   .language-row a { padding: 0 8px; font-size: 12px; }

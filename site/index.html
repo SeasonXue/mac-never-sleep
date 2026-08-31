@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Never Sleep — Display off, Mac stays awake</title>
-  <meta name="description" content="Never Sleep keeps a MacBook awake with the display off so ChatGPT, Codex, and other remote clients can connect. One click from the menu bar. No Energy Saver rewrite.">
+  <meta name="description" content="Never Sleep keeps a MacBook awake with the display off — for downloads, a Mac mini-style server, remote sessions, and a darker, lower-power desk. One click from the menu bar. No Energy Saver rewrite.">
   <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#0b1f28">
   <meta name="author" content="SeasonXue">
@@ -20,7 +20,7 @@
   <meta property="og:locale" content="en_US">
   <meta property="og:locale:alternate" content="zh_CN">
   <meta property="og:title" content="Never Sleep — Display off, Mac stays awake">
-  <meta property="og:description" content="Keep a MacBook awake with the display off so ChatGPT / Codex can connect. Menu bar one-click, Agent-friendly CLI.">
+  <meta property="og:description" content="Keep a MacBook awake with the display off — downloads, a Mac mini-style server, remote sessions, or a darker desk. Menu bar one-click, Agent-friendly CLI.">
   <meta property="og:url" content="https://never-sleep.xyz-ai.app/">
   <meta property="og:image" content="https://never-sleep.xyz-ai.app/assets/og.png">
   <meta property="og:image:width" content="1200">
@@ -28,7 +28,7 @@
   <meta property="og:image:alt" content="Never Sleep: engraved sun and moon beside the words Display off. Mac stays awake.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Never Sleep — Display off, Mac stays awake">
-  <meta name="twitter:description" content="Keep a MacBook awake with the display off so ChatGPT / Codex can connect.">
+  <meta name="twitter:description" content="Keep a MacBook awake with the display off — downloads, a mini server, remote sessions, or a darker desk.">
   <meta name="twitter:image" content="https://never-sleep.xyz-ai.app/assets/og.png">
   <link rel="stylesheet" href="assets/style.css">
   <script type="application/ld+json">
@@ -38,7 +38,7 @@
       {
         "@type": "SoftwareApplication",
         "name": "Never Sleep",
-        "description": "Keep a MacBook awake with the display off so ChatGPT, Codex, and similar clients can connect.",
+        "description": "Keep a MacBook awake with the display off for unattended downloads, a Mac mini-style server, remote sessions, and a darker, lower-power desk.",
         "url": "https://never-sleep.xyz-ai.app/",
         "downloadUrl": "https://github.com/SeasonXue/mac-never-sleep/releases/latest",
         "image": "https://never-sleep.xyz-ai.app/assets/og.png",
@@ -74,7 +74,15 @@
             "name": "What does Never Sleep do?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "It puts the MacBook display to sleep while keeping the machine awake so remote clients such as ChatGPT and Codex can still connect."
+              "text": "It puts the MacBook display to sleep while keeping the machine awake. Use it for unattended downloads, a Mac mini-style server, remote clients, screen protection, and lower idle power."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is this only for ChatGPT and Codex?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Remote agents are one job. People also use it for unattended downloads, leaving a MacBook running like a Mac mini, protecting the panel, and cutting idle power."
             }
           },
           {
@@ -126,6 +134,7 @@
         </a>
         <nav class="nav-links" aria-label="Page">
           <a href="#features">Why</a>
+          <a href="#uses">Uses</a>
           <a href="#look">Look</a>
           <a href="#how">How to</a>
           <a href="#cli">CLI</a>
@@ -143,7 +152,7 @@
       <div class="hero-copy">
         <p class="kicker">macOS menu bar</p>
         <h1>Display off.<br>Mac stays awake.</h1>
-        <p class="lede">When you leave, the panel goes dark. The machine stays online so ChatGPT, Codex, and SSH can connect any time — without fighting you at the keyboard.</p>
+        <p class="lede">When you leave, the panel goes dark. The Mac stays awake for downloads, a Mac mini-style server, remote sessions, or just a darker, lower-power desk — without fighting you at the keyboard.</p>
         <div class="cta-row">
           <a class="btn btn-primary btn-lg" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">Download for Mac</a>
           <a class="btn btn-ghost btn-lg" href="https://github.com/SeasonXue/mac-never-sleep">View source</a>
@@ -158,7 +167,7 @@
           </figure>
           <figure class="shot">
             <img src="assets/screenshots/main-active-en.png" width="320" height="480" alt="Never Sleep active: moon face, screen-off standby, Mac still online">
-            <figcaption>Standby on — screen off while remote clients keep connecting.</figcaption>
+            <figcaption>Standby on — screen off, the Mac keeps working.</figcaption>
           </figure>
         </div>
         <div class="celestial" aria-hidden="true">
@@ -178,7 +187,40 @@
       </div>
     </section>
 
-    <section class="section" id="features" style="padding-top:0">
+    <section class="section" id="uses" style="padding-top:0">
+      <div class="wrap">
+        <h2>What it’s for</h2>
+        <p class="section-lead">Same mechanism, several jobs. Display off, Mac awake — not only ChatGPT.</p>
+        <div class="grid">
+          <article class="card feature">
+            <h3>Unattended downloads</h3>
+            <p>Leave a large transfer, App Store update, or Time Machine running overnight. The panel goes dark; the download does not.</p>
+          </article>
+          <article class="card feature">
+            <h3>MacBook as a mini server</h3>
+            <p>SSH, file sharing, a local site, or a home lab — closer to a Mac mini. Lid open + display asleep is the reliable path; closed-lid stay-awake is best effort.</p>
+          </article>
+          <article class="card feature">
+            <h3>Protect the display</h3>
+            <p>Real display sleep, not brightness 0. Less heat and wear on the panel, and the desk stays dark.</p>
+          </article>
+          <article class="card feature">
+            <h3>Lower idle power</h3>
+            <p>The backlight is a large part of a MacBook’s idle draw. Sleep the panel; keep CPU, disk, and network available.</p>
+          </article>
+          <article class="card feature">
+            <h3>Remote sessions</h3>
+            <p>ChatGPT, Codex, Cursor, Screen Sharing, or SSH. If remote input wakes the panel, it goes dark again while you are away.</p>
+          </article>
+          <article class="card feature">
+            <h3>Long-running jobs</h3>
+            <p>Compiles, encodes, backups, and syncs can finish overnight. Duration presets and a battery floor stop it safely.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
       <div class="wrap">
         <h2>Hard rules, same as the app</h2>
         <p class="section-lead">The menu-bar panel, the CLI, and this page all describe the same contract.</p>
@@ -196,7 +238,7 @@
           <article class="card feature">
             <span class="index">3</span>
             <h3>Remote wake is fine</h3>
-            <p>If Codex lights the screen with synthetic events, Never Sleep reasserts display sleep while you are away.</p>
+            <p>If remote or synthetic input lights the screen, Never Sleep reasserts display sleep while you are away.</p>
           </article>
           <article class="card feature">
             <span class="index">4</span>
@@ -245,7 +287,7 @@
     <section class="section" id="how">
       <div class="wrap">
         <h2>How to use</h2>
-        <p class="section-lead">Display off · Mac online. Remote clients such as ChatGPT and Codex can keep connecting.</p>
+        <p class="section-lead">Display off · Mac online. Downloads, a mini server, remote clients, and long jobs keep running.</p>
         <p class="help-section">Get started</p>
         <div class="card steps">
           <div class="help-item">
@@ -382,11 +424,15 @@ never-sleep doctor      <span class="cmt"># assertions, battery, lid</span></pre
     <section class="section" id="faq">
       <div class="wrap">
         <h2>FAQ</h2>
-        <p class="section-lead">Short answers matching the in-app guide.</p>
+        <p class="section-lead">Short answers matching the product contract.</p>
         <div class="faq">
           <details open>
             <summary>What does Never Sleep do?</summary>
-            <p>It puts the MacBook display to sleep while keeping the machine awake so remote clients such as ChatGPT and Codex can still connect.</p>
+            <p>It puts the MacBook display to sleep while keeping the machine awake. Use it for unattended downloads, a Mac mini-style server, remote clients, screen protection, and lower idle power.</p>
+          </details>
+          <details>
+            <summary>Is this only for ChatGPT and Codex?</summary>
+            <p>No. Remote agents are one job. People also use it for unattended downloads, leaving a MacBook running like a Mac mini, protecting the panel, and cutting idle power.</p>
           </details>
           <details>
             <summary>Does it keep the display on like caffeinate?</summary>
