@@ -78,6 +78,33 @@ fn canonical_assets_stay_until_replacements_are_renamed() {
 }
 
 #[test]
+fn rename_uses_rest_numeric_asset_id() {
+    let body = function_body(RELEASE, "asset_id");
+    assert!(
+        !body.contains("gh release view"),
+        "gh release view --json assets .id is a GraphQL node ID (RA_...), not the REST integer: {body}"
+    );
+    assert!(
+        body.contains("gh api")
+            && (body.contains("releases/tags") || body.contains("releases/assets")),
+        "must look up the integer REST asset id: {body}"
+    );
+}
+
+#[test]
+fn orphaned_previous_asset_is_restored_before_cleanup() {
+    let body = function_body(RELEASE, "upload_without_clobber");
+    let first_upload = body
+        .find("gh release upload")
+        .expect("staging upload should happen inside upload_without_clobber");
+    let prefix = &body[..first_upload];
+    assert!(
+        prefix.contains(".previous") && prefix.contains("rename_asset"),
+        "when .previous exists and the canonical name does not, restore it before treating it as stale: {prefix}"
+    );
+}
+
+#[test]
 fn cli_asset_preserves_unix_executable_mode() {
     assert!(
         RELEASE.contains("never-sleep-cli-macos.zip")

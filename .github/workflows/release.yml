@@ -120,7 +120,7 @@ jobs:
           asset_id() {
             local tag="$1"
             local name="$2"
-            gh release view "${tag}" --json assets --jq \
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq \
               ".assets[] | select(.name==\"${name}\") | .id"
           }
 
@@ -141,13 +141,19 @@ jobs:
           upload_without_clobber() {
             local tag="$1"
             shift
-            local f base staged previous old_id staging_id
+            local f base staged previous old_id staging_id prev_id
 
             # Drop leftover names from a failed prior run so a retry can upload.
             for f in "$@"; do
               base="$(basename "${f}")"
+              previous="${base}.previous"
+              old_id="$(asset_id "${tag}" "${base}")"
+              prev_id="$(asset_id "${tag}" "${previous}")"
+              if [ -n "${prev_id}" ] && [ -z "${old_id}" ]; then
+                rename_asset "${prev_id}" "${base}"
+              fi
               delete_asset_if_present "${tag}" "${base}.staging"
-              delete_asset_if_present "${tag}" "${base}.previous"
+              delete_asset_if_present "${tag}" "${previous}"
             done
             delete_asset_if_present "${tag}" "never-sleep-cli-macos"
 
