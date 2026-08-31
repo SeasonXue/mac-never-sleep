@@ -1,10 +1,5 @@
 use never_sleep_core::Lang;
 
-/// Process override, then OS locale. Used for the effective UI language.
-pub fn detect() -> Lang {
-    Lang::from_override_env().unwrap_or_else(detect_system)
-}
-
 /// macOS preferred languages / Unix locale only. Ignores `--lang` and
 /// `NEVER_SLEEP_LANG` so those stay process-scoped.
 pub fn detect_system() -> Lang {
@@ -66,8 +61,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_returns_supported_lang() {
-        assert!(matches!(detect(), Lang::En | Lang::Zh));
+    fn detect_system_returns_supported_lang() {
         assert!(matches!(detect_system(), Lang::En | Lang::Zh));
     }
 }

@@ -23,9 +23,10 @@ pub fn load_config() -> AppConfig {
 }
 
 fn system_config() -> AppConfig {
-    let mut cfg = AppConfig::default();
-    cfg.language = Some(locale::detect_system());
-    cfg
+    AppConfig {
+        language: Some(locale::detect_system()),
+        ..AppConfig::default()
+    }
 }
 
 pub fn save_config(cfg: &AppConfig) {
