@@ -333,6 +333,20 @@ fn pages_brand_never_sleep_in_both_languages() {
     }
 }
 
+fn shipping_app_version() -> String {
+    let plist = fs::read_to_string(readme_root().join("packaging/Info.plist"))
+        .expect("packaging/Info.plist must exist");
+    plist
+        .split("<key>CFBundleShortVersionString</key>")
+        .nth(1)
+        .and_then(|rest| rest.split("<string>").nth(1))
+        .and_then(|rest| rest.split("</string>").next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| panic!("CFBundleShortVersionString missing from Info.plist"))
+        .to_string()
+}
+
 #[test]
 fn download_cta_points_at_the_github_release() {
     let html = read("index.html");
@@ -344,4 +358,57 @@ fn download_cta_points_at_the_github_release() {
         Path::new(&site_root()).join("assets/style.css").is_file(),
         "CSS is a separate file so HTML stays crawlable and cacheable"
     );
+}
+
+#[test]
+fn pages_do_not_advertise_building_from_source() {
+    for rel in ["index.html", "zh/index.html"] {
+        let html = read(rel);
+        for needle in [
+            "cargo build",
+            "package-macos.sh",
+            "build it on a Mac",
+            "自行编译",
+        ] {
+            assert!(
+                !html.contains(needle),
+                "{rel} must send people to the GitHub Release, not a source build; found {needle:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn pages_show_the_shipping_app_version() {
+    let version = shipping_app_version();
+    assert!(
+        version.chars().all(|ch| ch.is_ascii_digit() || ch == '.'),
+        "CFBundleShortVersionString should be a dotted version, got {version:?}"
+    );
+    for rel in ["index.html", "zh/index.html"] {
+        let html = read(rel);
+        assert!(
+            html.contains(&format!("v{version}")),
+            "{rel} must show the shipping version as v{version}"
+        );
+        assert!(
+            html.contains(r#"class="release-ver""#),
+            "{rel} download card must surface the version, not hide it in JSON-LD"
+        );
+        let graph = json_ld(&html);
+        let nodes: Vec<&Value> = match graph.get("@graph") {
+            Some(Value::Array(items)) => items.iter().collect(),
+            _ => vec![&graph],
+        };
+        let app = nodes
+            .iter()
+            .find(|node| node.get("@type").and_then(Value::as_str) == Some("SoftwareApplication"))
+            .unwrap_or_else(|| panic!("{rel} needs SoftwareApplication JSON-LD"));
+        assert_eq!(
+            app.get("softwareVersion").and_then(Value::as_str),
+            Some(version.as_str()),
+            "{rel} JSON-LD softwareVersion must match Info.plist, got {:?}",
+            app.get("softwareVersion")
+        );
+    }
 }
