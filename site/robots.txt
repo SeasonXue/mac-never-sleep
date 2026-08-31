@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://seasonxue.github.io/mac-never-sleep/sitemap.xml
+Sitemap: https://never-sleep.xyz-ai.app/sitemap.xml

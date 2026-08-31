@@ -1,8 +1,10 @@
-//! SEO and product-style contracts for the GitHub Pages marketing site.
+//! SEO and product-style contracts for the Cloudflare marketing site.
 //!
 //! The pages are static HTML so crawlers see real copy (no JS-only body).
 //! Field names here are a publishing contract: titles, hreflang, canonical
 //! URLs, and JSON-LD types should stay stable once the site is live.
+
+const SITE: &str = "https://never-sleep.xyz-ai.app";
 
 use serde_json::Value;
 use std::fs;
@@ -52,19 +54,19 @@ fn english_homepage_has_seo_contract() {
     );
     assert_eq!(
         attr(&html, r#"rel="canonical" href=""#),
-        "https://seasonxue.github.io/mac-never-sleep/"
+        "https://never-sleep.xyz-ai.app/"
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="en" href=""#),
-        "https://seasonxue.github.io/mac-never-sleep/"
+        "https://never-sleep.xyz-ai.app/"
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="zh-Hans" href=""#),
-        "https://seasonxue.github.io/mac-never-sleep/zh/"
+        "https://never-sleep.xyz-ai.app/zh/"
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="x-default" href=""#),
-        "https://seasonxue.github.io/mac-never-sleep/"
+        "https://never-sleep.xyz-ai.app/"
     );
     assert_eq!(
         attr(&html, r#"property="og:title" content=""#),
@@ -73,7 +75,7 @@ fn english_homepage_has_seo_contract() {
     assert_eq!(attr(&html, r#"property="og:type" content=""#), "website");
     assert_eq!(
         attr(&html, r#"property="og:url" content=""#),
-        "https://seasonxue.github.io/mac-never-sleep/"
+        "https://never-sleep.xyz-ai.app/"
     );
     assert!(
         attr(&html, r#"property="og:image" content=""#).ends_with("/og.png"),
@@ -102,15 +104,15 @@ fn chinese_homepage_mirrors_hreflang_and_uses_product_name() {
     );
     assert_eq!(
         attr(&html, r#"rel="canonical" href=""#),
-        "https://seasonxue.github.io/mac-never-sleep/zh/"
+        "https://never-sleep.xyz-ai.app/zh/"
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="en" href=""#),
-        "https://seasonxue.github.io/mac-never-sleep/"
+        "https://never-sleep.xyz-ai.app/"
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="zh-Hans" href=""#),
-        "https://seasonxue.github.io/mac-never-sleep/zh/"
+        "https://never-sleep.xyz-ai.app/zh/"
     );
     assert!(
         html.contains("合盖") && html.contains("尽力而为"),
@@ -191,20 +193,17 @@ fn english_copy_keeps_product_invariants() {
 }
 
 #[test]
-fn sitemap_and_robots_point_at_github_pages() {
+fn sitemap_and_robots_point_at_the_product_origin() {
     let robots = read("robots.txt");
     assert!(robots.contains("User-agent: *"));
     assert!(robots.contains("Allow: /"));
     assert!(
-        robots.contains("Sitemap: https://seasonxue.github.io/mac-never-sleep/sitemap.xml"),
+        robots.contains(&format!("Sitemap: {SITE}/sitemap.xml")),
         "robots.txt must advertise the sitemap"
     );
     let sitemap = read("sitemap.xml");
-    for loc in [
-        "https://seasonxue.github.io/mac-never-sleep/",
-        "https://seasonxue.github.io/mac-never-sleep/zh/",
-    ] {
-        assert!(sitemap.contains(loc), "sitemap missing {loc}");
+    for loc in [format!("{SITE}/"), format!("{SITE}/zh/")] {
+        assert!(sitemap.contains(&loc), "sitemap missing {loc}");
     }
     assert!(
         sitemap.contains("hreflang=\"en\"") && sitemap.contains("hreflang=\"zh-Hans\""),
@@ -216,7 +215,6 @@ fn sitemap_and_robots_point_at_github_pages() {
 fn required_static_assets_exist() {
     let root = site_root();
     for rel in [
-        ".nojekyll",
         "404.html",
         "manifest.webmanifest",
         "assets/sun.png",
@@ -232,7 +230,7 @@ fn required_static_assets_exist() {
         "assets/site.js",
     ] {
         let path = root.join(rel);
-        assert!(path.is_file(), "missing Pages asset {}", path.display());
+        assert!(path.is_file(), "missing site asset {}", path.display());
     }
 }
 
@@ -506,6 +504,61 @@ fn pages_bind_visible_version_to_latest_github_release() {
         assert!(
             html.contains(r#"class="release-ver""#),
             "{rel} download card still shows a version even before JS runs"
+        );
+    }
+}
+
+#[test]
+fn github_pages_deploy_is_removed() {
+    let root = readme_root();
+    assert!(
+        !root.join(".github/workflows/pages.yml").exists(),
+        "Cloudflare hosts the site; do not keep a GitHub Pages deploy workflow"
+    );
+    assert!(
+        !site_root().join(".nojekyll").exists(),
+        ".nojekyll is a GitHub Pages Jekyll switch; Cloudflare does not need it"
+    );
+}
+
+#[test]
+fn site_is_served_from_the_custom_domain_root() {
+    for rel in [
+        "index.html",
+        "zh/index.html",
+        "404.html",
+        "robots.txt",
+        "sitemap.xml",
+        "manifest.webmanifest",
+    ] {
+        let text = read(rel);
+        assert!(
+            !text.contains("github.io"),
+            "{rel} must not advertise the retired GitHub Pages host"
+        );
+    }
+    for rel in ["404.html", "manifest.webmanifest"] {
+        let text = read(rel);
+        assert!(
+            !text.contains("/mac-never-sleep/"),
+            "{rel} must not use the GitHub Pages project-site prefix"
+        );
+    }
+    let manifest = read("manifest.webmanifest");
+    assert!(
+        manifest.contains(r#""start_url": "/""#),
+        "PWA start_url must be the domain root on Cloudflare, got {manifest}"
+    );
+    for name in ["README.md", "README.zh-CN.md"] {
+        let text = fs::read_to_string(readme_root().join(name))
+            .unwrap_or_else(|err| panic!("missing {name}: {err}"));
+        assert!(
+            text.contains(SITE),
+            "{name} must link the Cloudflare origin {SITE}"
+        );
+        assert!(
+            !text.contains("github.io"),
+            "{name} must not keep the GitHub Pages URL"
         );
     }
 }
