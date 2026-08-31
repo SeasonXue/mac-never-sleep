@@ -22,6 +22,7 @@ chrono = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 tray-icon = "0.19"
 tao = "0.30.8"
+wry = { version = "0.56.1", default-features = false }
 global-hotkey = "0.6"
 libc = "0.2"
 core-foundation = "0.10"

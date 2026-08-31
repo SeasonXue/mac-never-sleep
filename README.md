@@ -35,7 +35,7 @@ cargo build -p never-sleep --release
 open "dist/Never Sleep.app"
 ```
 
-A moon icon appears in the menu bar. Click **Start Screen-Off Standby**.
+An anthropomorphic sun appears in the menu bar. Left-click it to open the control panel, then click the large sun to start. It flips into the moon before the display turns off about 1.5 seconds later; click the moon again to end standby. Right-click keeps the native fallback menu available.
 
 | Option | Default | Meaning |
 | --- | --- | --- |

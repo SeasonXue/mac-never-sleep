@@ -182,13 +182,14 @@ mod tests {
     use never_sleep_core::DurationPref;
 
     #[test]
-    fn moon_icon_has_pixels() {
-        let (px, w, h) = icon::moon_icon(true);
-        assert_eq!((w, h), (32, 32));
-        assert_eq!(px.len(), 32 * 32 * 4);
-        assert!(px.iter().any(|&b| b != 0));
-        let (idle, _, _) = icon::moon_icon(false);
-        assert_eq!(idle.len(), px.len());
+    fn celestial_icons_have_distinct_pixels() {
+        let (moon, w, h) = icon::celestial_icon(true);
+        assert_eq!((w, h), (36, 36));
+        assert_eq!(moon.len(), 36 * 36 * 4);
+        assert!(moon.iter().any(|&b| b != 0));
+        let (sun, _, _) = icon::celestial_icon(false);
+        assert_eq!(sun.len(), moon.len());
+        assert_ne!(sun, moon);
     }
 
     #[test]

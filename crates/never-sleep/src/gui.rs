@@ -1,17 +1,26 @@
+use std::borrow::Cow;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use never_sleep_core::{
-    AppConfig, DurationPref, Engine, Input, Lang, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
+    AppConfig, DurationPref, Engine, Input, Lang, StopReason, Tr, ViewModel, DEFAULT_BATTERY_FLOOR,
     DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
 };
-use tao::event::{Event, StartCause};
-use tao::event_loop::{ControlFlow, EventLoopBuilder};
-use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+use serde::Deserialize;
+use serde_json::json;
+use tao::dpi::{LogicalSize, PhysicalPosition};
+use tao::event::{Event, StartCause, WindowEvent};
+use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy};
+use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS, WindowBuilderExtMacOS};
+use tao::window::{Window, WindowBuilder};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tray_icon::{TrayIcon, TrayIconBuilder};
+use tray_icon::{
+    MouseButton, MouseButtonState, Rect as TrayRect, TrayIcon, TrayIconBuilder, TrayIconEvent,
+};
+use wry::http::{header, Request, Response, StatusCode};
+use wry::{WebView, WebViewBuilder};
 
 use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
@@ -21,9 +30,161 @@ use crate::platform::{default_platform, Platform};
 use crate::protocol::{IpcRequest, IpcResponse};
 
 enum UserEvent {
-    Tick,
     Hotkey,
     Menu(tray_icon::menu::MenuId),
+    Tray(TrayRect),
+    Ui(UiCommand),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum UiCommand {
+    Ready,
+    Toggle,
+    SetDuration { value: String },
+    SetOption { key: String, enabled: bool },
+    SetLanguage { language: String },
+    Help,
+    Quit,
+    Hide,
+}
+
+const POPOVER_WIDTH: f64 = 360.0;
+const POPOVER_HEIGHT: f64 = 510.0;
+
+struct Popover {
+    window: Window,
+    webview: WebView,
+    visible: bool,
+    last_payload: Option<String>,
+}
+
+impl Popover {
+    fn build(
+        event_loop: &EventLoop<UserEvent>,
+        proxy: EventLoopProxy<UserEvent>,
+    ) -> Result<Self, String> {
+        let window = WindowBuilder::new()
+            .with_title("Never Sleep")
+            .with_inner_size(LogicalSize::new(POPOVER_WIDTH, POPOVER_HEIGHT))
+            .with_resizable(false)
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_visible(false)
+            .with_always_on_top(true)
+            .with_has_shadow(false)
+            .with_movable_by_window_background(false)
+            .build(event_loop)
+            .map_err(|e| format!("popover window: {e}"))?;
+
+        let ipc_proxy = proxy.clone();
+        let webview = WebViewBuilder::new()
+            .with_transparent(true)
+            .with_accept_first_mouse(true)
+            .with_custom_protocol("never-sleep".into(), move |_id, request| {
+                popover_asset_response(request)
+            })
+            .with_ipc_handler(move |request| {
+                if let Ok(command) = serde_json::from_str::<UiCommand>(request.body()) {
+                    let _ = ipc_proxy.send_event(UserEvent::Ui(command));
+                }
+            })
+            .with_url("never-sleep://localhost/")
+            .build(&window)
+            .map_err(|e| format!("popover webview: {e}"))?;
+
+        Ok(Self {
+            window,
+            webview,
+            visible: false,
+            last_payload: None,
+        })
+    }
+
+    fn toggle_at(&mut self, rect: TrayRect) {
+        if self.visible {
+            self.hide();
+            return;
+        }
+
+        let scale = self.window.scale_factor();
+        let width = POPOVER_WIDTH * scale;
+        let anchor_x = rect.position.x + f64::from(rect.size.width) / 2.0;
+        let desired_x = anchor_x - width / 2.0;
+        let x = self
+            .window
+            .available_monitors()
+            .find(|monitor| {
+                let position = monitor.position();
+                let size = monitor.size();
+                anchor_x >= f64::from(position.x)
+                    && anchor_x <= f64::from(position.x) + f64::from(size.width)
+                    && rect.position.y >= f64::from(position.y)
+                    && rect.position.y <= f64::from(position.y) + f64::from(size.height)
+            })
+            .map(|monitor| {
+                let position = monitor.position();
+                let size = monitor.size();
+                let margin = 8.0 * scale;
+                let min_x = f64::from(position.x) + margin;
+                let max_x = f64::from(position.x) + f64::from(size.width) - width - margin;
+                desired_x.clamp(min_x, max_x.max(min_x))
+            })
+            .unwrap_or(desired_x);
+        let y = rect.position.y + f64::from(rect.size.height) + 3.0 * scale;
+        let arrow_x = ((anchor_x - x) / scale).clamp(22.0, POPOVER_WIDTH - 22.0);
+        let _ = self.webview.evaluate_script(&format!(
+            "document.documentElement.style.setProperty('--arrow-x', '{arrow_x:.1}px');"
+        ));
+        self.window
+            .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+        self.window.set_visible(true);
+        self.window.set_focus();
+        self.visible = true;
+    }
+
+    fn hide(&mut self) {
+        self.window.set_visible(false);
+        self.visible = false;
+    }
+
+    fn update(&mut self, payload: String) {
+        if self.last_payload.as_deref() == Some(&payload) {
+            return;
+        }
+        let script = format!("window.NeverSleep && window.NeverSleep.update({payload});");
+        if self.webview.evaluate_script(&script).is_ok() {
+            self.last_payload = Some(payload);
+        }
+    }
+}
+
+fn popover_asset_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    let (status, content_type, bytes): (StatusCode, &str, &'static [u8]) =
+        match request.uri().path() {
+            "/" | "/index.html" => (
+                StatusCode::OK,
+                "text/html; charset=utf-8",
+                include_bytes!("../ui/popover.html"),
+            ),
+            "/assets/sun.png" => (
+                StatusCode::OK,
+                "image/png",
+                include_bytes!("../ui/assets/sun.png"),
+            ),
+            "/assets/moon.png" => (
+                StatusCode::OK,
+                "image/png",
+                include_bytes!("../ui/assets/moon.png"),
+            ),
+            _ => (StatusCode::NOT_FOUND, "text/plain", b"not found"),
+        };
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Cow::Borrowed(bytes))
+        .expect("valid embedded popover response")
 }
 
 struct MenuHandles {
@@ -69,6 +230,7 @@ pub fn run() {
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
     let proxy_menu = event_loop.create_proxy();
     let proxy_hk = proxy_menu.clone();
+    let proxy_tray = proxy_menu.clone();
 
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         let _ = proxy_menu.send_event(UserEvent::Menu(event.id));
@@ -76,6 +238,17 @@ pub fn run() {
     GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
         if event.state() == HotKeyState::Pressed {
             let _ = proxy_hk.send_event(UserEvent::Hotkey);
+        }
+    }));
+    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+        if let TrayIconEvent::Click {
+            rect,
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            let _ = proxy_tray.send_event(UserEvent::Tray(rect));
         }
     }));
 
@@ -90,6 +263,13 @@ pub fn run() {
 
     let menu = Menu::new();
     let handles = build_menu(&menu, &engine.config);
+    let mut popover = match Popover::build(&event_loop, event_loop.create_proxy()) {
+        Ok(popover) => Some(popover),
+        Err(error) => {
+            eprintln!("{error}");
+            None
+        }
+    };
     let mut tray: Option<TrayIcon> = None;
     let mut last_tick = Instant::now();
     let mut shown_onboarding = engine.config.onboarding_done;
@@ -100,7 +280,13 @@ pub fn run() {
 
         while let Ok(incoming) = ipc_rx.try_recv() {
             handle_ipc(&mut engine, platform.as_mut(), incoming);
-            refresh_ui(&handles, &mut tray, &engine, platform.as_mut());
+            refresh_ui(
+                &handles,
+                &mut tray,
+                &mut popover,
+                &engine,
+                platform.as_mut(),
+            );
         }
 
         match event {
@@ -108,6 +294,7 @@ pub fn run() {
                 let icon = tray_icon(false);
                 tray = TrayIconBuilder::new()
                     .with_menu(Box::new(menu.clone()))
+                    .with_menu_on_left_click(popover.is_none())
                     .with_tooltip(engine.config.tr().app_display_name())
                     .with_icon(icon)
                     .with_icon_as_template(true)
@@ -120,23 +307,86 @@ pub fn run() {
                     let t = engine.config.tr();
                     show_dialog(&t, t.welcome_title(), t.onboarding());
                 }
-                refresh_ui(&handles, &mut tray, &engine, platform.as_mut());
+                refresh_ui(
+                    &handles,
+                    &mut tray,
+                    &mut popover,
+                    &engine,
+                    platform.as_mut(),
+                );
             }
-            Event::NewEvents(StartCause::ResumeTimeReached { .. })
-            | Event::UserEvent(UserEvent::Tick) => {
+            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 if last_tick.elapsed() >= Duration::from_millis(400) {
                     last_tick = Instant::now();
                     dispatch(&mut engine, platform.as_mut(), Input::Tick);
-                    refresh_ui(&handles, &mut tray, &engine, platform.as_mut());
+                    refresh_ui(
+                        &handles,
+                        &mut tray,
+                        &mut popover,
+                        &engine,
+                        platform.as_mut(),
+                    );
                 }
             }
             Event::UserEvent(UserEvent::Menu(id)) => {
                 handle_menu_event(&mut engine, platform.as_mut(), &handles, control_flow, id);
-                refresh_ui(&handles, &mut tray, &engine, platform.as_mut());
+                refresh_ui(
+                    &handles,
+                    &mut tray,
+                    &mut popover,
+                    &engine,
+                    platform.as_mut(),
+                );
             }
             Event::UserEvent(UserEvent::Hotkey) => {
                 dispatch(&mut engine, platform.as_mut(), Input::Toggle);
-                refresh_ui(&handles, &mut tray, &engine, platform.as_mut());
+                refresh_ui(
+                    &handles,
+                    &mut tray,
+                    &mut popover,
+                    &engine,
+                    platform.as_mut(),
+                );
+            }
+            Event::UserEvent(UserEvent::Tray(rect)) => {
+                refresh_ui(
+                    &handles,
+                    &mut tray,
+                    &mut popover,
+                    &engine,
+                    platform.as_mut(),
+                );
+                if let Some(panel) = popover.as_mut() {
+                    panel.toggle_at(rect);
+                }
+            }
+            Event::UserEvent(UserEvent::Ui(command)) => {
+                handle_ui_command(
+                    command,
+                    &mut engine,
+                    platform.as_mut(),
+                    &handles,
+                    popover.as_mut(),
+                    control_flow,
+                );
+                refresh_ui(
+                    &handles,
+                    &mut tray,
+                    &mut popover,
+                    &engine,
+                    platform.as_mut(),
+                );
+            }
+            Event::WindowEvent {
+                window_id,
+                event: WindowEvent::Focused(false) | WindowEvent::CloseRequested,
+                ..
+            } => {
+                if let Some(popover) = popover.as_mut() {
+                    if popover.window.id() == window_id {
+                        popover.hide();
+                    }
+                }
             }
             Event::LoopDestroyed => {
                 stop_for_quit(&mut engine, platform.as_mut());
@@ -282,11 +532,13 @@ fn apply_static_labels(handles: &MenuHandles, lang: Lang) {
 fn refresh_ui(
     handles: &MenuHandles,
     tray: &mut Option<TrayIcon>,
+    popover: &mut Option<Popover>,
     engine: &Engine,
     platform: &mut dyn Platform,
 ) {
     let host = platform.snapshot();
     let vm = engine.view(&host);
+    let popover_state = popover.as_ref().map(|_| popover_payload(engine, &vm));
     handles.status.set_text(vm.status_line);
     handles.detail.set_text(vm.detail_line);
     let warn = vm.warnings.first().cloned().unwrap_or_default();
@@ -328,6 +580,81 @@ fn refresh_ui(
         t.set_tooltip(Some(vm.tooltip)).ok();
         t.set_icon(Some(tray_icon(vm.active))).ok();
     }
+    if let (Some(panel), Some(payload)) = (popover.as_mut(), popover_state) {
+        panel.update(payload);
+    }
+}
+
+fn popover_payload(engine: &Engine, vm: &ViewModel) -> String {
+    let lang = engine.config.lang();
+    let t = engine.config.tr();
+    let pick = |en: &'static str, zh: &'static str| if lang == Lang::Zh { zh } else { en };
+    let duration = match vm.duration {
+        DurationPref::Indefinite => "indefinite",
+        DurationPref::Hours { hours: 1 } => "1h",
+        DurationPref::Hours { hours: 3 } => "3h",
+        DurationPref::Hours { hours: 8 } => "8h",
+        DurationPref::UntilLocal { hour: 8, minute: 0 } => "until_0800",
+        DurationPref::Hours { .. } | DurationPref::UntilLocal { .. } => "indefinite",
+    };
+    let status_title = if vm.active {
+        pick("Screen-Off Standby", "熄屏待命中")
+    } else {
+        pick("Not Active", "未开启")
+    };
+    let summary = if vm.active {
+        pick("Display asleep, Mac stays online", "屏幕已休眠，Mac 仍在线")
+    } else {
+        pick("Display off, Mac stays online", "屏幕将关闭，Mac 保持在线")
+    };
+    let battery_label = match engine.config.battery_floor_percent {
+        Some(percent) => match lang {
+            Lang::En => format!("End at {percent}% battery"),
+            Lang::Zh => format!("电量低于 {percent}% 时结束"),
+        },
+        None => pick("End at low battery", "低电量时结束").to_string(),
+    };
+
+    json!({
+        "active": vm.active,
+        "lang": if lang == Lang::Zh { "zh" } else { "en" },
+        "duration": duration,
+        "warning": vm.warnings.first().cloned().unwrap_or_default(),
+        "options": {
+            "screen_off": vm.screen_off,
+            "lid_awake": vm.keep_awake_on_lid_close,
+            "resleep_display": vm.resleep_display,
+            "lock_screen": vm.lock_screen,
+            "battery_floor": engine.config.battery_floor_percent.is_some(),
+            "launch_at_login": vm.launch_at_login,
+        },
+        "labels": {
+            "app_name": t.app_display_name(),
+            "status_title": status_title,
+            "summary": summary,
+            "primary_action": vm.primary_action,
+            "duration": t.duration_menu(),
+            "duration_options": {
+                "indefinite": t.indefinite(),
+                "1h": t.hours(1),
+                "3h": t.hours(3),
+                "8h": t.hours(8),
+                "until_0800": t.until_clock(8, 0),
+            },
+            "resleep": pick("Re-sleep after you leave", "人离开后自动再关屏"),
+            "battery": battery_label,
+            "more_settings": pick("More Settings", "更多设置"),
+            "settings": pick("Settings", "设置"),
+            "back": pick("Back", "返回"),
+            "screen_off": t.screen_off_now(),
+            "lid_awake": t.lid_awake(),
+            "lock_screen": t.lock_screen(),
+            "launch_at_login": t.launch_at_login(),
+            "help": t.help_title(),
+            "quit": t.quit(),
+        }
+    })
+    .to_string()
 }
 
 fn handle_menu_event(
@@ -396,6 +723,87 @@ fn handle_menu_event(
             platform,
             DurationPref::UntilLocal { hour: 8, minute: 0 },
         );
+    }
+}
+
+fn handle_ui_command(
+    command: UiCommand,
+    engine: &mut Engine,
+    platform: &mut dyn Platform,
+    handles: &MenuHandles,
+    popover: Option<&mut Popover>,
+    control_flow: &mut ControlFlow,
+) {
+    match command {
+        UiCommand::Ready => {
+            if let Some(panel) = popover {
+                panel.last_payload = None;
+            }
+        }
+        UiCommand::Toggle => {
+            dispatch(engine, platform, Input::Toggle);
+        }
+        UiCommand::SetDuration { value } => {
+            let pref = match value.as_str() {
+                "indefinite" => Some(DurationPref::Indefinite),
+                "1h" => Some(DurationPref::Hours { hours: 1 }),
+                "3h" => Some(DurationPref::Hours { hours: 3 }),
+                "8h" => Some(DurationPref::Hours { hours: 8 }),
+                "until_0800" => Some(DurationPref::UntilLocal { hour: 8, minute: 0 }),
+                _ => None,
+            };
+            if let Some(pref) = pref {
+                set_duration(engine, platform, pref);
+            }
+        }
+        UiCommand::SetOption { key, enabled } => {
+            match key.as_str() {
+                "screen_off" => engine.config.screen_off = enabled,
+                "lid_awake" => engine.config.keep_awake_on_lid_close = enabled,
+                "resleep_display" => engine.config.resleep_display = enabled,
+                "lock_screen" => engine.config.lock_screen = enabled,
+                "battery_floor" => {
+                    engine.config.battery_floor_percent = enabled.then_some(DEFAULT_BATTERY_FLOOR)
+                }
+                "launch_at_login" => {
+                    if let Err(error) = platform.set_launch_at_login(enabled) {
+                        platform.notify(engine.config.tr().login_item_title(), &error);
+                    } else {
+                        engine.config.launch_at_login = enabled;
+                    }
+                }
+                _ => return,
+            }
+            save_config(&engine.config);
+            if key == "lid_awake" && engine.is_active() {
+                dispatch(engine, platform, Input::Tick);
+            }
+        }
+        UiCommand::SetLanguage { language } => {
+            let lang = match language.as_str() {
+                "en" => Some(Lang::En),
+                "zh" => Some(Lang::Zh),
+                _ => None,
+            };
+            if let Some(lang) = lang {
+                engine.config.language = Some(lang);
+                save_config(&engine.config);
+                apply_static_labels(handles, lang);
+            }
+        }
+        UiCommand::Help => {
+            let t = engine.config.tr();
+            show_dialog(&t, t.help_title(), t.onboarding());
+        }
+        UiCommand::Quit => {
+            stop_for_quit(engine, platform);
+            *control_flow = ControlFlow::Exit;
+        }
+        UiCommand::Hide => {
+            if let Some(panel) = popover {
+                panel.hide();
+            }
+        }
     }
 }
 
