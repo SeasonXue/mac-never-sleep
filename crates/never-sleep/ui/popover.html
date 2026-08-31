@@ -10,15 +10,15 @@
       font-size: 13px;
       --popover-inset-x: 16px;
       --arrow-x: 190px;
-      --bg: rgba(246, 246, 247, .86);
+      --bg: rgba(246, 246, 247, .72);
       --ink: rgba(0, 0, 0, .85);
       --muted: rgba(60, 60, 67, .64);
-      --hairline: rgba(60, 60, 67, .18);
-      --stroke: rgba(0, 0, 0, .12);
-      --surface: rgba(255, 255, 255, .78);
+      --hairline: rgba(60, 60, 67, .16);
+      --stroke: rgba(0, 0, 0, .10);
+      --surface: rgba(255, 255, 255, .72);
       --surface-solid: #fff;
       --surface-hover: rgba(0, 0, 0, .05);
-      --fill: rgba(120, 120, 128, .16);
+      --fill: rgba(118, 118, 128, .12);
       --accent: #007aff;
       --accent-ink: #fff;
       --switch-on: #34c759;
@@ -52,9 +52,8 @@
       position: absolute;
       inset: 12px var(--popover-inset-x) 24px;
       filter:
-        drop-shadow(0 0 0.5px rgba(0, 0, 0, .20))
-        drop-shadow(0 8px 18px rgba(0, 0, 0, .16))
-        drop-shadow(0 1.5px 3px rgba(0, 0, 0, .06));
+        drop-shadow(0 10px 20px rgba(0, 0, 0, .18))
+        drop-shadow(0 2px 4px rgba(0, 0, 0, .06));
       transition: filter 420ms ease;
     }
     .float::before {
@@ -91,7 +90,7 @@
 
     .float.active {
       color-scheme: dark;
-      --bg: rgba(30, 30, 32, .92);
+      --bg: rgba(30, 30, 32, .78);
       --ink: rgba(255, 255, 255, .92);
       --muted: rgba(235, 235, 245, .62);
       --hairline: rgba(84, 84, 88, .55);
@@ -265,7 +264,7 @@
       height: 0.5px;
       background: var(--hairline);
     }
-    .row label, .row .row-label { flex: 1; min-width: 0; line-height: 1.25; letter-spacing: -.01em; }
+    .row label:not(.switch), .row .row-label { flex: 1; min-width: 0; line-height: 1.25; letter-spacing: -.01em; }
     select {
       max-width: 148px;
       margin: 0;
@@ -290,9 +289,12 @@
 
     .switch {
       position: relative;
-      flex: 0 0 38px;
-      width: 38px;
-      height: 22px;
+      flex: 0 0 40px;
+      width: 40px;
+      min-width: 40px;
+      max-width: 40px;
+      height: 24px;
+      align-self: center;
     }
     .switch input {
       position: absolute;
@@ -307,7 +309,7 @@
     .switch span {
       position: absolute;
       inset: 0;
-      border-radius: 11px;
+      border-radius: 999px;
       background: var(--switch-off);
       transition: background 180ms ease;
       pointer-events: none;
@@ -315,8 +317,8 @@
     .switch span::after {
       content: "";
       position: absolute;
-      width: 20px;
-      height: 20px;
+      width: 22px;
+      height: 22px;
       left: 1px;
       top: 1px;
       border-radius: 50%;
@@ -638,6 +640,7 @@
         document.documentElement.classList.add('preview');
         const params = new URLSearchParams(location.search);
         render(previewState(params.get('state') === 'active', params.get('lang') === 'zh' ? 'zh' : 'en'));
+        if (params.get('view') === 'settings') setView(true);
       } else {
         post({ type: 'ready' });
       }
