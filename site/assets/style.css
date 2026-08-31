@@ -483,17 +483,17 @@ details p {
   color: var(--muted);
   text-align: left;
 }
-.get pre {
-  max-width: 520px;
-  margin: 16px auto 0;
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: var(--fill);
-  overflow-x: auto;
-  text-align: left;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
+.release-ver {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -.02em;
 }
+.release-ver a {
+  color: inherit;
+  text-decoration: none;
+}
+.release-ver a:hover { text-decoration: underline; }
 
 .site-footer {
   padding: 28px 0 40px;

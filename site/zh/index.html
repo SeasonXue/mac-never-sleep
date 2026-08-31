@@ -44,7 +44,7 @@
         "image": "https://seasonxue.github.io/mac-never-sleep/assets/og.png",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "macOS 12+",
-        "softwareVersion": "0.1.0",
+        "softwareVersion": "0.1.1",
         "inLanguage": "zh-Hans",
         "license": "https://github.com/SeasonXue/mac-never-sleep/blob/main/LICENSE",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
@@ -107,7 +107,7 @@
           <a class="btn btn-primary btn-lg" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">下载 Mac 应用</a>
           <a class="btn btn-ghost btn-lg" href="https://github.com/SeasonXue/mac-never-sleep">查看源码</a>
         </div>
-        <p class="fine">macOS 12+ · MIT · 未签名构建：右键打开即可（首次需允许）。</p>
+        <p class="fine">v0.1.1 · macOS 12+ · MIT · 未签名构建：右键打开即可（首次需允许）。</p>
       </div>
       <div class="hero-stage">
         <div class="shots">
@@ -371,7 +371,8 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
       <div class="wrap">
         <div class="card-block">
           <h2>开始使用 Never Sleep</h2>
-          <p class="section-lead">从 GitHub Releases 下载菜单栏应用，或在 Mac 上自行编译。</p>
+          <p class="release-ver"><a href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">v0.1.1</a></p>
+          <p class="section-lead">从 GitHub Releases 下载菜单栏应用。</p>
           <div class="cta-row">
             <a class="btn btn-primary btn-lg" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">下载 Never Sleep</a>
             <a class="btn btn-dark btn-lg" href="https://github.com/SeasonXue/mac-never-sleep">在 GitHub 上加星</a>
@@ -381,9 +382,6 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
             <li>该构建未签名。请右键选择「打开」，或执行 <code>xattr -dr com.apple.quarantine "Never Sleep.app"</code>。</li>
             <li>左键点菜单栏太阳，再点面板里的大太阳即可开始。</li>
           </ol>
-          <pre>cargo build -p never-sleep --release
-./scripts/package-macos.sh
-open "dist/Never Sleep.app"</pre>
         </div>
       </div>
     </section>
@@ -391,7 +389,7 @@ open "dist/Never Sleep.app"</pre>
 
   <footer class="site-footer">
     <div class="wrap">
-      <p>Never Sleep · MIT 许可 · macOS 12+</p>
+      <p>Never Sleep · v0.1.1 · MIT 许可 · macOS 12+</p>
       <p>
         <a href="https://github.com/SeasonXue/mac-never-sleep">GitHub</a>
         · <a href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">发布</a>
