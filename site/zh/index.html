@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>熄屏待命 — 屏幕关掉，电脑不睡</title>
-  <meta name="description" content="熄屏待命让 MacBook 屏幕关掉、电脑不睡，方便 ChatGPT / Codex 等远程客户端随时连上。菜单栏一点即可，不改系统节能设置。">
+  <title>Never Sleep — 屏幕关掉，电脑不睡</title>
+  <meta name="description" content="Never Sleep 让 MacBook 屏幕关掉、电脑不睡，方便 ChatGPT / Codex 等远程客户端随时连上。菜单栏一点即可，不改系统节能设置。">
   <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#0b1f28">
   <meta name="author" content="SeasonXue">
@@ -16,18 +16,18 @@
   <link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
   <link rel="manifest" href="../manifest.webmanifest">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="熄屏待命">
+  <meta property="og:site_name" content="Never Sleep">
   <meta property="og:locale" content="zh_CN">
   <meta property="og:locale:alternate" content="en_US">
-  <meta property="og:title" content="熄屏待命 — 屏幕关掉，电脑不睡">
+  <meta property="og:title" content="Never Sleep — 屏幕关掉，电脑不睡">
   <meta property="og:description" content="让 MacBook 熄屏但保持唤醒，方便 ChatGPT / Codex 随时连接。菜单栏一键，Agent 可用命令行。">
   <meta property="og:url" content="https://seasonxue.github.io/mac-never-sleep/zh/">
   <meta property="og:image" content="https://seasonxue.github.io/mac-never-sleep/assets/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="熄屏待命：版画风太阳与月亮，旁白为屏幕关掉，电脑不睡。">
+  <meta property="og:image:alt" content="Never Sleep：版画风太阳与月亮，旁白为屏幕关掉，电脑不睡。">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="熄屏待命 — 屏幕关掉，电脑不睡">
+  <meta name="twitter:title" content="Never Sleep — 屏幕关掉，电脑不睡">
   <meta name="twitter:description" content="让 MacBook 熄屏但保持唤醒，方便 ChatGPT / Codex 随时连接。">
   <meta name="twitter:image" content="https://seasonxue.github.io/mac-never-sleep/assets/og.png">
   <link rel="stylesheet" href="../assets/style.css">
@@ -38,7 +38,6 @@
       {
         "@type": "SoftwareApplication",
         "name": "Never Sleep",
-        "alternateName": "熄屏待命",
         "description": "让 MacBook 屏幕关掉、电脑不睡，方便 ChatGPT、Codex 等客户端随时连上。",
         "url": "https://seasonxue.github.io/mac-never-sleep/zh/",
         "downloadUrl": "https://github.com/SeasonXue/mac-never-sleep/releases/latest",
@@ -55,7 +54,7 @@
         "mainEntity": [
           {
             "@type": "Question",
-            "name": "熄屏待命做什么？",
+            "name": "Never Sleep 做什么？",
             "acceptedAnswer": {
               "@type": "Answer",
               "text": "关闭 MacBook 屏幕，同时保持电脑唤醒，让 ChatGPT、Codex 等远程客户端仍可连接。"
@@ -82,7 +81,7 @@
       <div class="nav">
         <a class="brand" href="./">
           <img src="../assets/app-icon.png" width="32" height="32" alt="">
-          <span class="brand-name">熄屏待命</span>
+          <span class="brand-name">Never Sleep</span>
         </a>
         <nav class="nav-links" aria-label="本页">
           <a href="#features">为什么</a>
@@ -113,17 +112,17 @@
       <div class="hero-stage">
         <div class="shots">
           <figure class="shot">
-            <img src="../assets/screenshots/main-idle-zh.png" width="320" height="480" alt="熄屏待命未开启：点太阳即可开始">
+            <img src="../assets/screenshots/main-idle-zh.png" width="320" height="480" alt="Never Sleep 未开启：点太阳即可开始">
             <figcaption>点太阳开始，约 1.5 秒后关屏。</figcaption>
           </figure>
           <figure class="shot">
-            <img src="../assets/screenshots/main-active-zh.png" width="320" height="480" alt="熄屏待命中：月亮面板，屏幕已关、Mac 仍在线">
+            <img src="../assets/screenshots/main-active-zh.png" width="320" height="480" alt="Never Sleep 关屏待命中：月亮面板，屏幕已关、Mac 仍在线">
             <figcaption>待命中——屏幕已灭，远程客户端仍可连上。</figcaption>
           </figure>
         </div>
         <div class="celestial" aria-hidden="true">
-          <div class="coin"><img src="../assets/sun.png" alt=""></div>
-          <div class="coin"><img src="../assets/moon.png" alt=""></div>
+          <div class="coin sun"><img src="../assets/sun.png" alt=""></div>
+          <div class="coin moon"><img src="../assets/moon.png" alt=""></div>
         </div>
       </div>
     </div>
@@ -146,7 +145,7 @@
           <article class="card feature">
             <span class="index">1</span>
             <h3>一键进入</h3>
-            <p>点太阳「开始熄屏待命」。约 1.5 秒后关屏，系统保持运行。</p>
+            <p>点太阳「开始关屏待命」。约 1.5 秒后关屏，系统保持运行。</p>
           </article>
           <article class="card feature">
             <span class="index">2</span>
@@ -183,7 +182,7 @@
         <p class="section-lead">所有功能收在一个小巧、原生质感的弹出面板里。默认英语；选「简体中文」即切换。</p>
         <div class="gallery">
           <figure>
-            <img src="../assets/screenshots/main-idle-zh.png" width="260" height="390" alt="未开启，拟人化太阳与开始熄屏待命">
+            <img src="../assets/screenshots/main-idle-zh.png" width="260" height="390" alt="未开启，拟人化太阳与开始关屏待命">
             <figcaption>一点即开</figcaption>
           </figure>
           <figure>
@@ -212,7 +211,7 @@
             <span class="index">1</span>
             <div>
               <h3>开始待命</h3>
-              <p>点「开始熄屏待命」，约 1.5 秒后屏幕关闭。</p>
+              <p>点「开始关屏待命」，约 1.5 秒后屏幕关闭。</p>
             </div>
           </div>
           <div class="help-item">
@@ -280,11 +279,11 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
         <p class="section-lead">和 README 同一张表——默认关屏才是产品，不是藏起来的选项。</p>
         <div class="table-wrap">
           <table>
-            <caption>熄屏待命与 caffeinate、KeepingYouAwake、Amphetamine</caption>
+            <caption>Never Sleep 与 caffeinate、KeepingYouAwake、Amphetamine</caption>
             <thead>
               <tr>
                 <th scope="col"></th>
-                <th scope="col">熄屏待命</th>
+                <th scope="col">Never Sleep</th>
                 <th scope="col">caffeinate</th>
                 <th scope="col">KeepingYouAwake</th>
                 <th scope="col">Amphetamine</th>
@@ -345,7 +344,7 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
         <p class="section-lead">和面板里「使用说明」同一口径。</p>
         <div class="faq">
           <details open>
-            <summary>熄屏待命做什么？</summary>
+            <summary>Never Sleep 做什么？</summary>
             <p>关闭 MacBook 屏幕，同时保持电脑唤醒，让 ChatGPT、Codex 等远程客户端仍可连接。</p>
           </details>
           <details>
@@ -361,7 +360,7 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
             <p>不会。只用进程内 IOKit 断言。退出、崩溃或再次启动会还原合盖标志，不改写节能设置。</p>
           </details>
           <details>
-            <summary>怎么结束熄屏待命？</summary>
+            <summary>怎么结束关屏待命？</summary>
             <p>按 <kbd>⌥⌘P</kbd>，点菜单「结束待命」，或运行 <code>never-sleep off</code>。</p>
           </details>
         </div>
@@ -371,10 +370,10 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
     <section class="section get" id="download">
       <div class="wrap">
         <div class="card-block">
-          <h2>开始熄屏待命</h2>
+          <h2>开始使用 Never Sleep</h2>
           <p class="section-lead">从 GitHub Releases 下载菜单栏应用，或在 Mac 上自行编译。</p>
           <div class="cta-row">
-            <a class="btn btn-primary btn-lg" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">下载熄屏待命</a>
+            <a class="btn btn-primary btn-lg" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">下载 Never Sleep</a>
             <a class="btn btn-dark btn-lg" href="https://github.com/SeasonXue/mac-never-sleep">在 GitHub 上加星</a>
           </div>
           <ol>
@@ -392,7 +391,7 @@ open "dist/Never Sleep.app"</pre>
 
   <footer class="site-footer">
     <div class="wrap">
-      <p>熄屏待命 · Never Sleep · MIT 许可 · macOS 12+</p>
+      <p>Never Sleep · MIT 许可 · macOS 12+</p>
       <p>
         <a href="https://github.com/SeasonXue/mac-never-sleep">GitHub</a>
         · <a href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">发布</a>

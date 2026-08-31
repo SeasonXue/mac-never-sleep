@@ -180,6 +180,8 @@ fn cmd_status(json: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn celestial_icons_have_distinct_pixels() {
@@ -249,7 +251,7 @@ mod tests {
         );
         assert!(
             !html.contains("id=\"appTitle\""),
-            "Never Sleep / 熄屏待命 title chrome is redundant in the popover"
+            "Never Sleep title chrome is redundant in the popover"
         );
         let float = css_rule(html, ".float");
         assert!(
@@ -284,6 +286,53 @@ mod tests {
             html.contains(zh),
             "previewState must ship the same Chinese lid_awake string as Tr::lid_awake(), got runtime {zh:?}"
         );
+    }
+
+    #[test]
+    fn preview_copy_matches_runtime_actions_and_product_name() {
+        let html = include_str!("../ui/popover.html");
+        let en = Tr::new(Lang::En);
+        let zh = Tr::new(Lang::Zh);
+        for needle in [
+            en.start_standby(),
+            en.end_standby(),
+            en.panel_idle_title(),
+            en.panel_active_title(),
+            zh.start_standby(),
+            zh.end_standby(),
+            zh.panel_idle_title(),
+            zh.panel_active_title(),
+            zh.help_step1_detail(),
+        ] {
+            assert!(
+                html.contains(needle),
+                "previewState must ship the same string as Tr, missing {needle:?}"
+            );
+        }
+        assert!(
+            !html.contains("熄屏待命"),
+            "popover preview must not use the old Chinese product name"
+        );
+    }
+
+    #[test]
+    fn finder_display_name_is_never_sleep_in_both_localizations() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packaging");
+        for rel in [
+            "en.lproj/InfoPlist.strings",
+            "zh-Hans.lproj/InfoPlist.strings",
+        ] {
+            let text = fs::read_to_string(root.join(rel))
+                .unwrap_or_else(|err| panic!("missing {}: {err}", root.join(rel).display()));
+            assert!(
+                text.contains("CFBundleDisplayName = \"Never Sleep\";"),
+                "{rel} must show Never Sleep in Finder"
+            );
+            assert!(
+                !text.contains("熄屏待命"),
+                "{rel} must not use the old Chinese product name"
+            );
+        }
     }
 
     #[test]

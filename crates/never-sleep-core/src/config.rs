@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::i18n::{Lang, Tr};
 use crate::{DEFAULT_BATTERY_FLOOR, DEFAULT_DISPLAY_OFF_DELAY_MS, DEFAULT_USER_IDLE_RESLEEP_MS};
 
-/// 用户偏好。全部有安全默认值，首次启动即可「一键熄屏待命」。
+/// 用户偏好。全部有安全默认值，首次启动即可「一键关屏待命」。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     /// 默认时长（菜单里改，下次启动沿用）

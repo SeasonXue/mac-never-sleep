@@ -1,4 +1,4 @@
-/* Simplified Chinese */
-CFBundleDisplayName = "熄屏待命";
-CFBundleName = "熄屏待命";
-NSAppleEventsUsageDescription = "熄屏待命用通知和可选锁屏与系统对话。";
+/* Simplified Chinese — product name stays Never Sleep */
+CFBundleDisplayName = "Never Sleep";
+CFBundleName = "Never Sleep";
+NSAppleEventsUsageDescription = "Never Sleep 用通知和可选锁屏与系统对话。";
