@@ -1,0 +1,112 @@
+name: Release macOS app
+
+# Manually triggered: build, package, and publish the menu-bar app as a
+# GitHub Release so users can download and run it directly.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0). Leave empty to use CFBundleShortVersionString from Info.plist."
+        required: false
+        default: ""
+      prerelease:
+        description: "Mark this release as a pre-release"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Build and package the .app
+        run: ./scripts/package-macos.sh
+
+      - name: Resolve version and tag
+        id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          version="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" packaging/Info.plist)"
+          tag="${INPUT_TAG}"
+          if [ -z "$tag" ]; then
+            tag="v${version}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Publishing version ${version} as tag ${tag}"
+
+      - name: Zip the .app bundle
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/Never Sleep.app" "Never-Sleep-macos.zip"
+          cp target/release/never-sleep never-sleep-cli-macos
+          ls -lh Never-Sleep-macos.zip never-sleep-cli-macos
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          PRERELEASE: ${{ github.event.inputs.prerelease }}
+        run: |
+          notes=$(cat <<EOF
+          ## Never Sleep ${VERSION}
+
+          Menu-bar app that keeps a MacBook awake with the display off, so remote
+          clients (ChatGPT / Codex and similar) can connect any time.
+
+          ### Download and run
+          1. Download \`Never-Sleep-macos.zip\` and unzip it to get \`Never Sleep.app\`.
+          2. The build is unsigned, so on first launch remove the quarantine flag:
+             \`\`\`bash
+             xattr -dr com.apple.quarantine "Never Sleep.app"
+             open "Never Sleep.app"
+             \`\`\`
+             (Or right-click the app and choose **Open**, then confirm.)
+          3. \`never-sleep-cli-macos\` is the standalone CLI for SSH / Agent use; rename it to
+             \`never-sleep\` and put it on your \`PATH\`.
+
+          Requires macOS 12+.
+
+          ---
+
+          菜单栏 App：让 MacBook **熄屏但保持唤醒**，方便 ChatGPT / Codex 等远程客户端随时连接。
+
+          ### 下载与运行
+          1. 下载 \`Never-Sleep-macos.zip\` 并解压得到 \`Never Sleep.app\`。
+          2. 该构建未签名，首次启动请先移除隔离标记：
+             \`\`\`bash
+             xattr -dr com.apple.quarantine "Never Sleep.app"
+             open "Never Sleep.app"
+             \`\`\`
+             （或右键点击 App 选择「打开」并确认。）
+          3. \`never-sleep-cli-macos\` 是用于 SSH / Agent 场景的命令行版本，可重命名为
+             \`never-sleep\` 并放入 \`PATH\`。
+
+          需要 macOS 12 及以上。
+          EOF
+          )
+
+          prerelease_flag=""
+          if [ "${PRERELEASE}" = "true" ]; then
+            prerelease_flag="--prerelease"
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" \
+              "Never-Sleep-macos.zip" "never-sleep-cli-macos" --clobber
+          else
+            gh release create "${TAG}" \
+              "Never-Sleep-macos.zip" "never-sleep-cli-macos" \
+              --title "Never Sleep ${TAG}" \
+              --notes "${notes}" \
+              ${prerelease_flag}
+          fi
