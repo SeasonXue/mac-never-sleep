@@ -260,8 +260,7 @@ fn matching_service(class: &str) -> u32 {
     }
 }
 
-/// Current Mach task port. Bound locally so we do not use `libc::mach_task_self_`,
-/// which libc marks deprecated in favour of the `mach2` crate.
+// Bound locally so we do not use libc::mach_task_self_, which libc marks deprecated.
 extern "C" {
     static mach_task_self_: u32;
 }
