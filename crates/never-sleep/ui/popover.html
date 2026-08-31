@@ -587,7 +587,7 @@
           </footer>
         </section>
 
-        <section class="view settings-view" id="settingsView">
+        <section class="view settings-view" id="settingsView" inert aria-hidden="true">
           <div class="settings-head">
             <button class="icon-button" id="backButton" aria-label="Back" title="Back">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
@@ -617,7 +617,7 @@
           </div>
         </section>
 
-        <section class="view settings-view help-view" id="helpView">
+        <section class="view settings-view help-view" id="helpView" inert aria-hidden="true">
           <div class="settings-head">
             <button class="icon-button" id="helpBackButton" aria-label="Back" title="Back">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
@@ -667,7 +667,7 @@
                 <span class="help-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 19h8"/></svg>
                 </span>
-                <p id="helpNoteLid">Closed-lid stay-awake is best-effort. Lid open + display asleep is the reliable path.</p>
+                <p id="helpNoteLid">Closed-lid stay-awake is best-effort, more reliable on power. Lid open + display asleep is the reliable path.</p>
               </div>
               <div class="help-item note">
                 <span class="help-icon" aria-hidden="true">
@@ -705,16 +705,26 @@
     }
 
     function setView(name) {
+      const previous = currentView;
       currentView = name;
-      $('#mainView').classList.toggle('visible', name === 'main');
-      $('#settingsView').classList.toggle('visible', name === 'settings');
-      $('#helpView').classList.toggle('visible', name === 'help');
+      const views = { main: $('#mainView'), settings: $('#settingsView'), help: $('#helpView') };
+      Object.entries(views).forEach(([id, node]) => {
+        const visible = id === name;
+        node.classList.toggle('visible', visible);
+        node.toggleAttribute('inert', !visible);
+        node.setAttribute('aria-hidden', visible ? 'false' : 'true');
+      });
       document.querySelector('.panel').classList.toggle('on-help', name === 'help');
-      $('#gearButton').style.visibility = name === 'main' ? 'visible' : 'hidden';
+      const gear = $('#gearButton');
+      gear.style.visibility = name === 'main' ? 'visible' : 'hidden';
+      gear.toggleAttribute('inert', name !== 'main');
       if (name === 'help') {
         const body = $('#helpBody');
         if (body) body.scrollTop = 0;
       }
+      if (previous === name) return;
+      const focusTarget = name === 'help' ? $('#helpBackButton') : name === 'settings' ? $('#backButton') : gear;
+      if (focusTarget) focusTarget.focus();
     }
 
     function showHelp(from) {
@@ -834,7 +844,7 @@
         step3_after: zh ? '，或点菜单「结束待命」。' : 'or choose “End Standby” in the menu.',
         hotkey: '⌥⌘P',
         notes: zh ? '请留意' : 'Keep in mind',
-        note_lid: zh ? '合盖保活是尽力而为，插电更稳；最可靠仍是开盖熄屏。' : 'Closed-lid stay-awake is best-effort. Lid open + display asleep is the reliable path.',
+        note_lid: zh ? '合盖保活是尽力而为，插电更稳；最可靠仍是开盖熄屏。' : 'Closed-lid stay-awake is best-effort, more reliable on power. Lid open + display asleep is the reliable path.',
         note_battery: zh ? '电量过低会自动结束，避免把电池耗干。' : 'Standby ends automatically on low battery so the pack is not drained.',
         note_quit: zh ? '退出后立即恢复系统睡眠，不会改写节能设置。' : 'Quitting restores normal sleep. Energy Saver settings are never rewritten.'
       };
