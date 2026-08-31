@@ -236,6 +236,84 @@ fn required_static_assets_exist() {
     }
 }
 
+fn readme_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn css_rule<'a>(css: &'a str, selector: &str) -> &'a str {
+    let needle = format!("{selector} {{");
+    css.split(&needle)
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .unwrap_or_else(|| panic!("expected {selector} rule"))
+}
+
+#[test]
+fn hero_shots_top_align_when_captions_wrap() {
+    let css = read("assets/style.css");
+    let shots = css_rule(&css, ".shots");
+    assert!(
+        shots.contains("align-items: start"),
+        "hero shots must top-align the panels; wrapping figcaptions must not lift one card, got {shots:?}"
+    );
+    assert!(
+        !shots.contains("align-items: end"),
+        "align-items: end lines cards to the caption baseline and breaks when copy wraps, got {shots:?}"
+    );
+    let gallery = css_rule(&css, ".gallery");
+    assert!(
+        gallery.contains("align-items: start"),
+        "gallery tiles must top-align so wrapping captions cannot shift the screenshots, got {gallery:?}"
+    );
+}
+
+#[test]
+fn sun_coin_uses_idle_white_surface() {
+    let css = read("assets/style.css");
+    let sun = css_rule(&css, ".coin.sun");
+    assert!(
+        sun.contains("#ffffff") || sun.contains("#fff"),
+        "the idle sun coin must use the popover white surface, got {sun:?}"
+    );
+    for rel in ["index.html", "zh/index.html"] {
+        let html = read(rel);
+        assert!(
+            html.contains(r#"class="coin sun""#),
+            "{rel} must mark the left celestial coin as the white-backed sun"
+        );
+        assert!(
+            html.contains(r#"class="coin moon""#),
+            "{rel} must keep the moon on the dark active surface"
+        );
+    }
+}
+
+#[test]
+fn readme_screenshot_tables_keep_images_top_aligned() {
+    for name in ["README.md", "README.zh-CN.md"] {
+        let text = fs::read_to_string(readme_root().join(name))
+            .unwrap_or_else(|err| panic!("missing {name}: {err}"));
+        let table = text
+            .split("<table>")
+            .nth(1)
+            .and_then(|rest| rest.split("</table>").next())
+            .unwrap_or_else(|| panic!("{name} must keep the screenshot table"));
+        let tds = table.matches("<td").count();
+        let top = table.matches("valign=\"top\"").count();
+        assert_eq!(
+            tds, top,
+            "{name}: every screenshot cell must valign=top so wrapping captions cannot shift the images ({tds} td, {top} valign=top)"
+        );
+        for cell in table.split("<td").skip(1) {
+            let cell = cell.split("</td>").next().expect("td must close");
+            assert!(
+                !(cell.contains("<img") && cell.contains("<sub")),
+                "{name}: keep each screenshot and its caption in separate rows so wrapping cannot move the images"
+            );
+        }
+    }
+}
+
 #[test]
 fn download_cta_points_at_the_github_release() {
     let html = read("index.html");

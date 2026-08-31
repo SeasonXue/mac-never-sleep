@@ -12,23 +12,35 @@
 
 <table>
   <tr>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <img src="docs/screenshots/main-idle-zh.png" width="260" alt="熄屏待命·未开启，点太阳即可开始">
-      <br><sub><b>一点即开</b> —— 屏幕关掉，电脑不睡。</sub>
     </td>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <img src="docs/screenshots/main-active-zh.png" width="260" alt="熄屏待命中，屏幕已关、Mac 仍在线">
-      <br><sub><b>待命中</b> —— 屏幕已灭，ChatGPT / Codex 仍可连上。</sub>
     </td>
   </tr>
   <tr>
-    <td align="center" width="50%">
-      <img src="docs/screenshots/settings-zh.png" width="260" alt="熄屏待命设置，逐项开关与语言切换">
-      <br><sub><b>每项保护都是一个开关</b> —— 中英随心切换。</sub>
+    <td align="center" valign="top">
+      <sub><b>一点即开</b> —— 屏幕关掉，电脑不睡。</sub>
     </td>
-    <td align="center" width="50%">
+    <td align="center" valign="top">
+      <sub><b>待命中</b> —— 屏幕已灭，ChatGPT / Codex 仍可连上。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <img src="docs/screenshots/settings-zh.png" width="260" alt="熄屏待命设置，逐项开关与语言切换">
+    </td>
+    <td align="center" valign="top" width="50%">
       <img src="docs/screenshots/howto-zh.png" width="260" alt="熄屏待命内置使用说明">
-      <br><sub><b>内置使用说明</b> —— 怎么用，一点就懂。</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <sub><b>每项保护都是一个开关</b> —— 中英随心切换。</sub>
+    </td>
+    <td align="center" valign="top">
+      <sub><b>内置使用说明</b> —— 怎么用，一点就懂。</sub>
     </td>
   </tr>
 </table>
