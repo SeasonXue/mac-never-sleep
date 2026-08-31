@@ -10,14 +10,14 @@
       font-size: 13px;
       --popover-inset-x: 16px;
       --arrow-x: 190px;
-      --bg: rgba(255, 255, 255, .34);
+      --bg: #f5f5f7;
       --ink: rgba(0, 0, 0, .85);
       --muted: rgba(60, 60, 67, .64);
       --hairline: rgba(60, 60, 67, .16);
-      --stroke: rgba(255, 255, 255, .58);
+      --stroke: rgba(0, 0, 0, .12);
       --rim: rgba(0, 0, 0, .16);
-      --surface: rgba(255, 255, 255, .46);
-      --surface-solid: rgba(255, 255, 255, .78);
+      --surface: #ffffff;
+      --surface-solid: #ffffff;
       --surface-hover: rgba(0, 0, 0, .05);
       --fill: rgba(118, 118, 128, .12);
       --accent: #007aff;
@@ -25,7 +25,6 @@
       --switch-on: #34c759;
       --switch-off: #e5e5ea;
       --warning: #c93400;
-      --shine: rgba(255, 255, 255, .52);
     }
 
     * { box-sizing: border-box; }
@@ -67,12 +66,9 @@
       width: 14px;
       height: 14px;
       background: var(--bg);
-      -webkit-backdrop-filter: saturate(180%) blur(28px);
-      backdrop-filter: saturate(180%) blur(28px);
       border-left: 0.5px solid var(--stroke);
       border-top: 0.5px solid var(--stroke);
       border-top-left-radius: 3px;
-      box-shadow: inset 1px 1px 0 rgba(255, 255, 255, .45);
       transform: rotate(45deg);
       transition: background 420ms ease, border-color 420ms ease;
     }
@@ -83,38 +79,26 @@
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      isolation: isolate;
       color: var(--ink);
-      background:
-        radial-gradient(ellipse 90% 42% at 50% -8%, var(--shine), transparent 58%),
-        var(--bg);
-      -webkit-backdrop-filter: saturate(190%) blur(48px);
-      backdrop-filter: saturate(190%) blur(48px);
+      background: var(--bg);
       border: 0.5px solid var(--stroke);
       border-radius: 12px;
       box-shadow:
         0 0 0 0.5px var(--rim),
-        inset 0 0.5px 0 rgba(255, 255, 255, .78);
+        inset 0 0.5px 0 rgba(255, 255, 255, .88);
       transition: color 420ms ease, background 420ms ease, border-color 420ms ease, box-shadow 420ms ease;
-    }
-    html.native-glass .panel {
-      -webkit-backdrop-filter: saturate(170%) blur(22px);
-      backdrop-filter: saturate(170%) blur(22px);
-      background:
-        radial-gradient(ellipse 90% 42% at 50% -8%, rgba(255, 255, 255, .38), transparent 58%),
-        rgba(255, 255, 255, .16);
     }
 
     .float.active {
       color-scheme: dark;
-      --bg: rgba(18, 18, 20, .40);
+      --bg: #1c1c1e;
       --ink: rgba(255, 255, 255, .92);
       --muted: rgba(235, 235, 245, .62);
       --hairline: rgba(84, 84, 88, .55);
-      --stroke: rgba(255, 255, 255, .22);
+      --stroke: rgba(255, 255, 255, .12);
       --rim: rgba(0, 0, 0, .45);
-      --surface: rgba(44, 44, 46, .42);
-      --surface-solid: rgba(44, 44, 46, .72);
+      --surface: #2c2c2e;
+      --surface-solid: #3a3a3c;
       --surface-hover: rgba(255, 255, 255, .08);
       --fill: rgba(120, 120, 128, .32);
       --accent: #0a84ff;
@@ -122,17 +106,11 @@
       --switch-on: #30d158;
       --switch-off: rgba(120, 120, 128, .36);
       --warning: #ff9f0a;
-      --shine: rgba(170, 198, 224, .16);
     }
     .float.active .panel {
       box-shadow:
         0 0 0 0.5px var(--rim),
-        inset 0 0.5px 0 rgba(255, 255, 255, .14);
-    }
-    html.native-glass .float.active .panel {
-      background:
-        radial-gradient(ellipse 90% 42% at 50% -8%, rgba(170, 198, 224, .14), transparent 58%),
-        rgba(18, 18, 22, .18);
+        inset 0 0.5px 0 rgba(255, 255, 255, .10);
     }
 
     .header {
@@ -189,9 +167,7 @@
       padding: 0;
       border: 0;
       border-radius: 50%;
-      background:
-        radial-gradient(circle at 50% 42%, rgba(255, 255, 255, .92), rgba(255, 255, 255, .55) 58%, rgba(255, 255, 255, .0) 59%),
-        var(--surface);
+      background: var(--surface);
       box-shadow:
         inset 0 0 0 0.5px var(--hairline),
         0 10px 24px rgba(0, 0, 0, .06);
@@ -200,9 +176,7 @@
       transition: transform 130ms ease, box-shadow 420ms ease, background 420ms ease;
     }
     .float.active .hero {
-      background:
-        radial-gradient(circle at 50% 42%, rgba(255, 255, 255, .10), rgba(255, 255, 255, .03) 58%, transparent 59%),
-        rgba(255, 255, 255, .06);
+      background: var(--surface);
       box-shadow:
         inset 0 0 0 0.5px var(--hairline),
         0 12px 28px rgba(0, 0, 0, .28);
@@ -262,21 +236,18 @@
     .primary:active { transform: translateY(0.5px); filter: brightness(.96); }
     .primary[disabled] { cursor: default; opacity: .72; }
     .float.active .primary {
-      background: rgba(255, 255, 255, .14);
+      background: #3a3a3c;
       color: #f5f5f7;
     }
     .float.active .primary:hover { filter: brightness(1.12); }
 
     .card {
       overflow: hidden;
-      border: 0.5px solid rgba(255, 255, 255, .46);
+      border: 0.5px solid var(--hairline);
       border-radius: 10px;
       background: var(--surface);
-      -webkit-backdrop-filter: saturate(160%) blur(16px);
-      backdrop-filter: saturate(160%) blur(16px);
-      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, .45);
     }
-    .float.active .card { border-color: rgba(255, 255, 255, .12); }
+    .float.active .card { border-color: rgba(255, 255, 255, .08); }
     .row {
       position: relative;
       display: flex;
@@ -419,7 +390,7 @@
       font-weight: 600;
     }
     .float.active .language-row button.selected {
-      background: rgba(255, 255, 255, .18);
+      background: var(--surface-solid);
       box-shadow: 0 0.5px 1px rgba(0, 0, 0, .28);
     }
     .settings-actions { display: flex; justify-content: center; gap: 2px; margin-top: auto; padding-top: 10px; }
@@ -567,9 +538,7 @@
       <header class="header">
         <span></span>
         <div class="app-title" id="appTitle">Never Sleep</div>
-        <button class="icon-button" id="gearButton" aria-label="Settings" title="Settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15Z"/></svg>
-        </button>
+        <span></span>
       </header>
 
       <div class="view-stack">
@@ -772,17 +741,12 @@
       setLayerActive($('#settingsView'), name === 'settings');
       setLayerActive($('#helpView'), name === 'help');
       document.querySelector('.panel').classList.toggle('on-help', name === 'help');
-      const gear = $('#gearButton');
-      const gearOn = name === 'main';
-      gear.style.visibility = gearOn ? 'visible' : 'hidden';
-      gear.toggleAttribute('inert', !gearOn);
-      setSubtreeTabStops(gear, gearOn);
       if (name === 'help') {
         const body = $('#helpBody');
         if (body) body.scrollTop = 0;
       }
       if (previous === name) return;
-      const focusTarget = name === 'help' ? $('#helpBackButton') : name === 'settings' ? $('#backButton') : gear;
+      const focusTarget = name === 'help' ? $('#helpBackButton') : name === 'settings' ? $('#backButton') : $('#heroButton');
       if (focusTarget) focusTarget.focus();
     }
 
@@ -858,8 +822,6 @@
 
       const actionLabel = next.labels.primary_action;
       $('#heroButton').setAttribute('aria-label', actionLabel);
-      $('#gearButton').setAttribute('aria-label', next.labels.settings);
-      $('#gearButton').title = next.labels.settings;
       $('#backButton').setAttribute('aria-label', next.labels.back);
       $('#backButton').title = next.labels.back;
       $('#helpBackButton').setAttribute('aria-label', next.labels.back);
@@ -947,7 +909,6 @@
     window.NeverSleep = { update: render, showHelp: () => showHelp() };
     $('#heroButton').addEventListener('click', toggle);
     $('#primaryButton').addEventListener('click', toggle);
-    $('#gearButton').addEventListener('click', () => setView('settings'));
     $('#moreButton').addEventListener('click', () => setView('settings'));
     $('#backButton').addEventListener('click', () => setView('main'));
     $('#helpButton').addEventListener('click', () => showHelp('settings'));

@@ -31,6 +31,17 @@ scripts/                  package-macos.sh, icon generation
 
 On Linux CI the binary uses `StubPlatform` (prints, does not touch power). Menu bar / IOKit code is `#[cfg(target_os = "macos")]`.
 
+## Menu-bar popover hotspot
+
+`crates/never-sleep/ui/popover.html` holds CSS, markup, and JS in one file. Two open PRs that both touch it will conflict.
+
+Before editing `ui/` or popover wiring in `gui.rs`:
+
+1. `git fetch origin main` and start from (or merge) the **latest remote** `main`. Cloud snapshots are often behind; do not skip this for UI work.
+2. Do not run a second agent on the popover while another popover PR is still open. Land or rebase the first.
+3. Keep color tokens in `:root` / `.float.active`. Append new views below existing markup. Do not rewrite `setView` unless the task is navigation.
+4. After merging `main` into an in-flight UI PR, re-apply only the intended delta. Do not drop `helpView`, `moreButton`, or other views that already landed.
+
 ## Toolchain
 
 - Rust **1.88.0** (`rust-toolchain.toml`). Do not bump it casually; CI pins the same version.
