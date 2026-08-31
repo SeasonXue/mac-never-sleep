@@ -1,6 +1,6 @@
 # 熄屏待命（Never Sleep）
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md) · **[网站](https://seasonxue.github.io/mac-never-sleep/zh/)**
 
 让 MacBook **屏幕关掉、电脑不睡**，方便 ChatGPT / Codex 这类客户端随时连上并控制这台机器。菜单栏一点即可，也提供给 Agent 用的命令行。
 

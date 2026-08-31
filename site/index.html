@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Never Sleep — Display off, Mac stays awake</title>
+  <meta name="description" content="Never Sleep keeps a MacBook awake with the display off so ChatGPT, Codex, and other remote clients can connect. One click from the menu bar. No Energy Saver rewrite.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0b1f28">
+  <meta name="author" content="SeasonXue">
+  <link rel="canonical" href="https://seasonxue.github.io/mac-never-sleep/">
+  <link rel="alternate" hreflang="en" href="https://seasonxue.github.io/mac-never-sleep/">
+  <link rel="alternate" hreflang="zh-Hans" href="https://seasonxue.github.io/mac-never-sleep/zh/">
+  <link rel="alternate" hreflang="x-default" href="https://seasonxue.github.io/mac-never-sleep/">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Never Sleep">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="zh_CN">
+  <meta property="og:title" content="Never Sleep — Display off, Mac stays awake">
+  <meta property="og:description" content="Keep a MacBook awake with the display off so ChatGPT / Codex can connect. Menu bar one-click, Agent-friendly CLI.">
+  <meta property="og:url" content="https://seasonxue.github.io/mac-never-sleep/">
+  <meta property="og:image" content="https://seasonxue.github.io/mac-never-sleep/assets/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Never Sleep: engraved sun and moon beside the words Display off. Mac stays awake.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Never Sleep — Display off, Mac stays awake">
+  <meta name="twitter:description" content="Keep a MacBook awake with the display off so ChatGPT / Codex can connect.">
+  <meta name="twitter:image" content="https://seasonxue.github.io/mac-never-sleep/assets/og.png">
+  <link rel="stylesheet" href="assets/style.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "Never Sleep",
+        "alternateName": "熄屏待命",
+        "description": "Keep a MacBook awake with the display off so ChatGPT, Codex, and similar clients can connect.",
+        "url": "https://seasonxue.github.io/mac-never-sleep/",
+        "downloadUrl": "https://github.com/SeasonXue/mac-never-sleep/releases/latest",
+        "image": "https://seasonxue.github.io/mac-never-sleep/assets/og.png",
+        "screenshot": "https://seasonxue.github.io/mac-never-sleep/assets/screenshots/main-idle-en.png",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "macOS 12+",
+        "softwareVersion": "0.1.0",
+        "inLanguage": ["en", "zh-Hans"],
+        "license": "https://github.com/SeasonXue/mac-never-sleep/blob/main/LICENSE",
+        "author": {
+          "@type": "Person",
+          "name": "SeasonXue",
+          "url": "https://github.com/SeasonXue"
+        },
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      },
+      {
+        "@type": "WebSite",
+        "name": "Never Sleep",
+        "url": "https://seasonxue.github.io/mac-never-sleep/",
+        "inLanguage": "en",
+        "publisher": { "@type": "Person", "name": "SeasonXue" }
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What does Never Sleep do?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "It puts the MacBook display to sleep while keeping the machine awake so remote clients such as ChatGPT and Codex can still connect."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does it keep the display on like caffeinate?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. The default path is real display sleep, then it reasserts sleep if a remote agent wakes the panel while you are away."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does closed-lid stay-awake always work?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Closed-lid stay-awake is best effort. Lid open plus display asleep is the reliable path."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does Never Sleep change Energy Saver settings?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. It only takes in-process IOKit assertions. Quit, crash, or relaunch restores clamshell flags. Energy Saver is never rewritten."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I stop Screen-Off Standby?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Press Option-Command-P, click End Standby in the menu bar, or run never-sleep off."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="hero">
+    <div class="wrap">
+      <div class="nav">
+        <a class="brand" href="./">
+          <img src="assets/app-icon.png" width="32" height="32" alt="">
+          <span class="brand-name">Never Sleep</span>
+        </a>
+        <nav class="nav-links" aria-label="Page">
+          <a href="#features">Why</a>
+          <a href="#look">Look</a>
+          <a href="#how">How to</a>
+          <a href="#cli">CLI</a>
+          <a href="#compare">Compare</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+        <div class="nav-end">
+          <div class="language-row" role="navigation" aria-label="Language">
+            <a class="selected" href="./" aria-current="page">English</a>
+            <a href="zh/" lang="zh-Hans" hreflang="zh-Hans">简体中文</a>
+          </div>
+          <a class="btn btn-primary" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">Download</a>
+        </div>
+      </div>
+      <div class="hero-copy">
+        <p class="kicker">macOS menu bar · 熄屏待命</p>
+        <h1>Display off.<br>Mac stays awake.</h1>
+        <p class="lede">When you leave, the panel goes dark. The machine stays online so ChatGPT, Codex, and SSH can connect any time — without fighting you at the keyboard.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary btn-lg" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">Download for Mac</a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/SeasonXue/mac-never-sleep">View source</a>
+        </div>
+        <p class="fine">macOS 12+ · MIT · unsigned build: right-click Open, or remove the quarantine flag once.</p>
+      </div>
+      <div class="hero-stage">
+        <div class="shots">
+          <figure class="shot">
+            <img src="assets/screenshots/main-idle-en.png" width="320" height="480" alt="Never Sleep idle: tap the sun to start Screen-Off Standby">
+            <figcaption>Tap the sun to start. Display sleeps in about 1.5 seconds.</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="assets/screenshots/main-active-en.png" width="320" height="480" alt="Never Sleep active: moon face, screen-off standby, Mac still online">
+            <figcaption>Standby on — screen off while remote clients keep connecting.</figcaption>
+          </figure>
+        </div>
+        <div class="celestial" aria-hidden="true">
+          <div class="coin"><img src="assets/sun.png" alt=""></div>
+          <div class="coin"><img src="assets/moon.png" alt=""></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="section" id="why">
+      <div class="wrap">
+        <h2>One job. Not another Caffeine.</h2>
+        <p class="section-lead"><code>caffeinate</code>, KeepingYouAwake, and Amphetamine default to keeping the panel lit. This app collapses the scenario to a single sentence:</p>
+        <blockquote class="quote">When you leave, the display must go dark. The machine must stay awake.</blockquote>
+      </div>
+    </section>
+
+    <section class="section" id="features" style="padding-top:0">
+      <div class="wrap">
+        <h2>Hard rules, same as the app</h2>
+        <p class="section-lead">The menu-bar panel, the CLI, and this page all describe the same contract.</p>
+        <div class="grid">
+          <article class="card feature">
+            <span class="index">1</span>
+            <h3>One-click start</h3>
+            <p>Start Screen-Off Standby from the sun. The display sleeps after about 1.5 seconds; the system keeps running.</p>
+          </article>
+          <article class="card feature">
+            <span class="index">2</span>
+            <h3>Never fight the person at the keyboard</h3>
+            <p>HID idle plus lid state decide “user present”. While you type, it will not force-sleep the panel.</p>
+          </article>
+          <article class="card feature">
+            <span class="index">3</span>
+            <h3>Remote wake is fine</h3>
+            <p>If Codex lights the screen with synthetic events, Never Sleep reasserts display sleep while you are away.</p>
+          </article>
+          <article class="card feature">
+            <span class="index">4</span>
+            <h3>Always a way back</h3>
+            <p>Global hotkey <kbd>⌥⌘P</kbd> works with the display off, or click the moon in the menu.</p>
+          </article>
+          <article class="card feature">
+            <span class="index">5</span>
+            <h3>Do not rewrite Energy Saver</h3>
+            <p>Only in-process IOKit assertions. Quit, crash, or relaunch restores clamshell flags. No leftover power policy.</p>
+          </article>
+          <article class="card feature">
+            <span class="index">6</span>
+            <h3>Agent-friendly</h3>
+            <p><code>never-sleep status --json</code> stays English and stable. Codex can run <code>never-sleep on --for 8h</code>.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="look">
+      <div class="wrap">
+        <h2>A look at the app</h2>
+        <p class="section-lead">Everything lives in one small, native-feeling popover. English by default; Simplified Chinese when you choose it.</p>
+        <div class="gallery">
+          <figure>
+            <img src="assets/screenshots/main-idle-en.png" width="260" height="390" alt="Idle panel with the anthropomorphic sun and Start Screen-Off Standby">
+            <figcaption>One tap to start</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/screenshots/main-active-en.png" width="260" height="390" alt="Active dark panel with the moon and End Screen-Off Standby">
+            <figcaption>Standby on</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/screenshots/settings-en.png" width="260" height="390" alt="Settings with per-feature toggles and English / 简体中文 switch">
+            <figcaption>Every safeguard is a toggle</figcaption>
+          </figure>
+          <figure>
+            <img src="assets/screenshots/howto-en.png" width="260" height="390" alt="Built-in How to use guide inside the popover">
+            <figcaption>Built-in guide</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <div class="wrap">
+        <h2>How to use</h2>
+        <p class="section-lead">Display off · Mac online. Remote clients such as ChatGPT and Codex can keep connecting.</p>
+        <p class="help-section">Get started</p>
+        <div class="card steps">
+          <div class="help-item">
+            <span class="index">1</span>
+            <div>
+              <h3>Start standby</h3>
+              <p>Click “Start Screen-Off Standby”. The display sleeps after about 1.5 seconds.</p>
+            </div>
+          </div>
+          <div class="help-item">
+            <span class="index">2</span>
+            <div>
+              <h3>Stays out of your way</h3>
+              <p>It will not fight you for the screen while you type; it sleeps again after you leave.</p>
+            </div>
+          </div>
+          <div class="help-item">
+            <span class="index">3</span>
+            <div>
+              <h3>Come back any time</h3>
+              <p>Press <kbd>⌥⌘P</kbd> or choose “End Standby” in the menu.</p>
+            </div>
+          </div>
+        </div>
+        <p class="help-section">Keep in mind</p>
+        <div class="card steps">
+          <div class="help-item">
+            <span class="index" aria-hidden="true">i</span>
+            <div>
+              <h3>Closed lid is best effort</h3>
+              <p>Closed-lid stay-awake is best-effort, more reliable on power. Lid open + display asleep is the reliable path.</p>
+            </div>
+          </div>
+          <div class="help-item">
+            <span class="index" aria-hidden="true">i</span>
+            <div>
+              <h3>Battery floor</h3>
+              <p>Standby ends automatically on low battery so the pack is not drained.</p>
+            </div>
+          </div>
+          <div class="help-item">
+            <span class="index" aria-hidden="true">i</span>
+            <div>
+              <h3>Quit restores sleep</h3>
+              <p>Quitting restores normal sleep. Energy Saver settings are never rewritten.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section cli" id="cli">
+      <div class="wrap">
+        <h2>Talk to the same process</h2>
+        <p class="section-lead">While the menu bar is running, the CLI uses a Unix socket. Over SSH with no menu bar, <code>never-sleep on</code> occupies the foreground like <code>caffeinate</code>.</p>
+        <div class="terminal">
+          <pre><span class="cmt"># keep the Mac awake, display off, for eight hours</span>
+never-sleep on --for 8h
+never-sleep status --json
+never-sleep off
+never-sleep doctor      <span class="cmt"># assertions, battery, lid</span></pre>
+        </div>
+        <div class="copy-row">
+          <button class="btn btn-dark" type="button" data-copy="never-sleep on --for 8h">Copy <code>never-sleep on --for 8h</code></button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="compare">
+      <div class="wrap">
+        <h2>Compared with common tools</h2>
+        <p class="section-lead">Same table as the README — display-off by default is the product, not a buried option.</p>
+        <div class="table-wrap">
+          <table>
+            <caption>Never Sleep versus caffeinate, KeepingYouAwake, and Amphetamine</caption>
+            <thead>
+              <tr>
+                <th scope="col"></th>
+                <th scope="col">Never Sleep</th>
+                <th scope="col">caffeinate</th>
+                <th scope="col">KeepingYouAwake</th>
+                <th scope="col">Amphetamine</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Display off by default</th>
+                <td class="yes">Yes, and it reasserts</td>
+                <td>only with <code>-i</code></td>
+                <td class="no">No</td>
+                <td>Session option</td>
+              </tr>
+              <tr>
+                <th scope="row">Re-sleep after a remote wake</th>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <th scope="row">Does not steal the screen while you are there</th>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <th scope="row">Closed lid</th>
+                <td>Best effort</td>
+                <td><code>-s</code> on AC only</td>
+                <td>Explicitly unsupported</td>
+                <td>Stronger, often needs Enhancer</td>
+              </tr>
+              <tr>
+                <th scope="row">Rewrites system power policy</th>
+                <td class="yes">No</td>
+                <td class="yes">No</td>
+                <td class="yes">No</td>
+                <td>Some modes</td>
+              </tr>
+              <tr>
+                <th scope="row">JSON / Agent CLI</th>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="faq">
+      <div class="wrap">
+        <h2>FAQ</h2>
+        <p class="section-lead">Short answers matching the in-app guide.</p>
+        <div class="faq">
+          <details open>
+            <summary>What does Never Sleep do?</summary>
+            <p>It puts the MacBook display to sleep while keeping the machine awake so remote clients such as ChatGPT and Codex can still connect.</p>
+          </details>
+          <details>
+            <summary>Does it keep the display on like caffeinate?</summary>
+            <p>No. The default path is real display sleep, then it reasserts sleep if a remote agent wakes the panel while you are away.</p>
+          </details>
+          <details>
+            <summary>Does closed-lid stay-awake always work?</summary>
+            <p>Closed-lid stay-awake is best effort. Lid open plus display asleep is the reliable path.</p>
+          </details>
+          <details>
+            <summary>Does Never Sleep change Energy Saver settings?</summary>
+            <p>No. It only takes in-process IOKit assertions. Quit, crash, or relaunch restores clamshell flags. Energy Saver is never rewritten.</p>
+          </details>
+          <details>
+            <summary>How do I stop Screen-Off Standby?</summary>
+            <p>Press <kbd>⌥⌘P</kbd>, click End Standby in the menu bar, or run <code>never-sleep off</code>.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="section get" id="download">
+      <div class="wrap">
+        <div class="card-block">
+          <h2>Get Screen-Off Standby</h2>
+          <p class="section-lead">Grab the menu-bar app from GitHub Releases, or build it on a Mac.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary btn-lg" href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">Download Never Sleep</a>
+            <a class="btn btn-dark btn-lg" href="https://github.com/SeasonXue/mac-never-sleep">Star on GitHub</a>
+          </div>
+          <ol>
+            <li>Download <code>Never-Sleep-macos.zip</code> and unzip <code>Never Sleep.app</code>.</li>
+            <li>The build is unsigned. Right-click Open, or run <code>xattr -dr com.apple.quarantine "Never Sleep.app"</code>.</li>
+            <li>Left-click the sun in the menu bar, then tap the large sun to start.</li>
+          </ol>
+          <pre>cargo build -p never-sleep --release
+./scripts/package-macos.sh
+open "dist/Never Sleep.app"</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>Never Sleep · 熄屏待命 · MIT License · macOS 12+</p>
+      <p>
+        <a href="https://github.com/SeasonXue/mac-never-sleep">GitHub</a>
+        · <a href="https://github.com/SeasonXue/mac-never-sleep/releases/latest">Releases</a>
+        · <a href="./">English</a>
+        · <a href="zh/" lang="zh-Hans" hreflang="zh-Hans">简体中文</a>
+      </p>
+    </div>
+  </footer>
+  <script src="assets/site.js" defer></script>
+</body>
+</html>
