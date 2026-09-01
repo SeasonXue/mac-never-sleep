@@ -98,6 +98,28 @@ pub fn elapsed_secs(started_ms: u64, now_ms: u64) -> u64 {
     now_ms.saturating_sub(started_ms) / 1_000
 }
 
+/// Remaining milliseconds for the active duration kind.
+///
+/// `Hours` follows the monotonic clock so the UI does not skip seconds when
+/// `unix_secs` truncates. `UntilLocal` follows the wall clock, matching the stop
+/// condition for “until 08:00”.
+pub fn session_remaining_ms(
+    pref: DurationPref,
+    deadline_unix: i64,
+    started_unix: i64,
+    started_ms: u64,
+    now_ms: u64,
+    now_unix: i64,
+) -> u64 {
+    match pref {
+        DurationPref::Hours { .. } => remaining_ms(deadline_unix, started_unix, started_ms, now_ms),
+        DurationPref::UntilLocal { .. } => {
+            deadline_unix.saturating_sub(now_unix).max(0) as u64 * 1_000
+        }
+        DurationPref::Indefinite => 0,
+    }
+}
+
 fn format_duration_en(secs: u64) -> String {
     if secs < 60 {
         return format!("{secs} sec");
@@ -260,5 +282,32 @@ mod tests {
         assert_eq!(format_countdown(3_600), "1:00:00");
         assert_eq!(format_countdown(3_599), "0:59:59");
         assert_eq!(format_countdown(5), "0:00:05");
+    }
+
+    #[test]
+    fn until_local_remaining_follows_wall_clock() {
+        let started_unix = 1_700_000_000;
+        let deadline = started_unix + 3_600;
+        let rem = session_remaining_ms(
+            DurationPref::UntilLocal { hour: 8, minute: 0 },
+            deadline,
+            started_unix,
+            0,
+            5_000,
+            started_unix + 10,
+        );
+        assert_eq!(
+            rem, 3_590_000,
+            "UntilLocal remaining must drop with unix_secs, not monotonic ms"
+        );
+        let hours = session_remaining_ms(
+            DurationPref::Hours { hours: 1 },
+            deadline,
+            started_unix,
+            0,
+            5_000,
+            started_unix + 10,
+        );
+        assert_eq!(hours, 3_595_000);
     }
 }

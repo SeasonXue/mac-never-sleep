@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
 use crate::duration::{
     countdown_secs, deadline_unix_secs, elapsed_secs, format_duration, remaining_ms,
+    session_remaining_ms,
 };
 use crate::i18n::{Lang, Tr};
 use crate::status::{build_view_model, HostSnapshot, JsonStatus, ViewModel};
@@ -296,12 +297,15 @@ impl Engine {
         if let Some(deadline) = session.deadline_unix {
             match session.duration {
                 DurationPref::Hours { .. } => {
+                    // Instant does not advance while the Mac is asleep, so also
+                    // honour the wall deadline after closed-lid suspend.
                     if remaining_ms(
                         deadline,
                         session.started_unix,
                         session.started_ms,
                         host.monotonic_ms,
                     ) == 0
+                        || host.unix_secs >= deadline
                     {
                         return Some(StopReason::DurationElapsed);
                     }
@@ -356,17 +360,7 @@ impl Engine {
 
     pub fn view(&self, host: &HostSnapshot) -> ViewModel {
         let (started, remaining) = match &self.session {
-            Some(s) => (
-                Some(s.started_ms),
-                s.deadline_unix.map(|deadline| {
-                    countdown_secs(remaining_ms(
-                        deadline,
-                        s.started_unix,
-                        s.started_ms,
-                        host.monotonic_ms,
-                    ))
-                }),
-            ),
+            Some(s) => (Some(s.started_ms), self.remaining_secs(s, host)),
             None => (None, None),
         };
         let last_stop = self
@@ -387,29 +381,31 @@ impl Engine {
     pub fn session_times(&self, host: &HostSnapshot) -> Option<(u64, Option<u64>)> {
         let session = self.session.as_ref()?;
         let elapsed = host.monotonic_ms.saturating_sub(session.started_ms);
-        let remaining = session.deadline_unix.map(|deadline| {
-            remaining_ms(
+        Some((elapsed, self.remaining_ms(session, host)))
+    }
+
+    fn remaining_ms(&self, session: &Session, host: &HostSnapshot) -> Option<u64> {
+        session.deadline_unix.map(|deadline| {
+            session_remaining_ms(
+                session.duration,
                 deadline,
                 session.started_unix,
                 session.started_ms,
                 host.monotonic_ms,
+                host.unix_secs,
             )
-        });
-        Some((elapsed, remaining))
+        })
+    }
+
+    fn remaining_secs(&self, session: &Session, host: &HostSnapshot) -> Option<u64> {
+        self.remaining_ms(session, host).map(countdown_secs)
     }
 
     pub fn json_status(&self, host: &HostSnapshot) -> JsonStatus {
         let (elapsed, remaining) = match &self.session {
             Some(s) => (
                 Some(elapsed_secs(s.started_ms, host.monotonic_ms)),
-                s.deadline_unix.map(|d| {
-                    countdown_secs(remaining_ms(
-                        d,
-                        s.started_unix,
-                        s.started_ms,
-                        host.monotonic_ms,
-                    ))
-                }),
+                self.remaining_secs(s, host),
             ),
             None => (None, None),
         };
@@ -642,6 +638,41 @@ mod tests {
             has_release(&e),
             "Hours sessions end on elapsed monotonic time, not the wall clock"
         );
+    }
+
+    #[test]
+    fn duration_hours_stops_after_suspend_when_wall_clock_elapses() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(2_000);
+        h.unix_secs = h0.unix_secs + 3_600;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(
+            has_release(&e),
+            "Instant does not run during system sleep; the wall deadline must still end Hours"
+        );
+    }
+
+    #[test]
+    fn until_local_remaining_follows_unix_secs() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::UntilLocal { hour: 8, minute: 0 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let first = eng.json_status(&h0).remaining_secs.unwrap();
+        let mut later = host(5_000);
+        later.unix_secs = h0.unix_secs;
+        assert_eq!(
+            eng.json_status(&later).remaining_secs,
+            Some(first),
+            "UntilLocal remaining must not drop with monotonic time alone"
+        );
+        later.unix_secs = h0.unix_secs + 10;
+        assert_eq!(eng.json_status(&later).remaining_secs, Some(first - 10));
     }
 
     #[test]
