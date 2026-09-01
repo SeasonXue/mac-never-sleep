@@ -22,8 +22,7 @@ use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
-    panel_placement, panel_state, PanelPlacement, PanelState, SidebarItem, ToggleGate,
-    PANEL_HEIGHT, PANEL_WIDTH,
+    panel_placement, panel_state, PanelPlacement, PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH,
 };
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
@@ -44,7 +43,6 @@ pub(crate) enum UiCommand {
     SetDuration { value: String },
     SetOption { key: String, enabled: bool },
     SetLanguage { language: String },
-    SelectPane { index: isize },
     Help,
     More,
     Back,
@@ -729,11 +727,6 @@ fn handle_ui_command(
                 engine.config.language = Some(lang);
                 save_config(&engine.config);
                 apply_static_labels(handles, lang);
-            }
-        }
-        UiCommand::SelectPane { index } => {
-            if let (Some(panel), Some(item)) = (popover, SidebarItem::from_index(index)) {
-                panel.ui.show_pane(item);
             }
         }
         UiCommand::Help => {

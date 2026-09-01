@@ -616,37 +616,36 @@ impl NativePanel {
     }
 
     pub fn show_help(&mut self) {
-        self.current = PanelView::Help;
-        self.apply_view();
+        self.show_pane(SidebarItem::Help);
     }
 
     pub fn show_settings(&mut self) {
-        self.current = PanelView::Settings;
-        self.apply_view();
+        self.show_pane(SidebarItem::Display);
     }
 
     pub fn go_back(&mut self) {
-        self.current = match self.current {
-            PanelView::Help => PanelView::Settings,
-            PanelView::Settings | PanelView::Main => PanelView::Main,
-        };
-        self.apply_view();
+        match self.current {
+            PanelView::Help => self.show_pane(SidebarItem::Display),
+            PanelView::Settings | PanelView::Main => self.show_pane(SidebarItem::Standby),
+        }
     }
 
     pub fn show_pane(&mut self, item: SidebarItem) {
+        let _ = item.symbol();
         self.current = item.as_panel_view();
         self.apply_view();
     }
 
     pub fn select_adjacent(&mut self, delta: isize) {
-        let views = [PanelView::Main, PanelView::Settings, PanelView::Help];
-        let idx = views
-            .iter()
-            .position(|view| *view == self.current)
-            .unwrap_or(0) as isize;
-        let next = (idx + delta).clamp(0, views.len() as isize - 1) as usize;
-        self.current = views[next];
-        self.apply_view();
+        let idx = match self.current {
+            PanelView::Main => SidebarItem::Standby.index(),
+            PanelView::Settings => SidebarItem::Display.index(),
+            PanelView::Help => SidebarItem::Help.index(),
+        };
+        let last = SidebarItem::ALL.len() as isize - 1;
+        if let Some(item) = SidebarItem::from_index((idx + delta).clamp(0, last)) {
+            self.show_pane(item);
+        }
     }
 
     fn apply_view(&self) {

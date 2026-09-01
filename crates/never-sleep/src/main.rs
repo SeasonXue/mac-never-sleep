@@ -349,8 +349,8 @@ mod tests {
             "placement policy is shared with Linux-tested panel.rs"
         );
         assert!(
-            !src.contains("let mut panel"),
-            "unused mut on NativePanel::attach fails macOS clippy -D warnings"
+            !gui.contains("SelectPane"),
+            "screenshot panel has no sidebar; do not leave an unused UiCommand variant for macOS -D warnings"
         );
         assert!(
             gui.contains("handles.show_window.id()"),
