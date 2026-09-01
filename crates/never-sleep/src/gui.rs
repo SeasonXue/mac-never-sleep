@@ -418,11 +418,8 @@ pub fn run() {
                 if event.state == ElementState::Pressed {
                     if let Some(panel) = popover.as_mut() {
                         if panel.window.id() == window_id {
-                            match event.logical_key {
-                                Key::Escape => panel.hide(),
-                                Key::ArrowDown => panel.ui.select_adjacent(1),
-                                Key::ArrowUp => panel.ui.select_adjacent(-1),
-                                _ => {}
+                            if event.logical_key == Key::Escape {
+                                panel.hide();
                             }
                         }
                     }

@@ -73,6 +73,10 @@ pub struct ViewModel {
     pub lock_screen: bool,
     pub launch_at_login: bool,
     pub battery_floor_label: String,
+    /// True when IOKit reports the panel is already dark (not the user intent).
+    pub display_asleep: bool,
+    /// True when HID idle + lid say a person is at the keyboard.
+    pub user_present: bool,
 }
 
 pub fn build_view_model(
@@ -185,6 +189,8 @@ pub fn build_view_model(
         lock_screen: cfg.lock_screen,
         launch_at_login: cfg.launch_at_login,
         battery_floor_label: cfg.battery_floor_label(),
+        display_asleep,
+        user_present: host.user_present(cfg.user_idle_resleep_ms),
     }
 }
 
@@ -270,6 +276,21 @@ mod tests {
         assert!(!view.active);
         assert!(view.detail_line.contains("display") || view.detail_line.contains("屏幕"));
         assert_eq!(view.primary_action, cfg.tr().start_standby());
+        assert!(!view.display_asleep);
+        assert!(view.user_present);
+    }
+
+    #[test]
+    fn view_model_carries_display_asleep_and_user_present() {
+        let cfg = AppConfig::default();
+        let mut away = host();
+        away.hid_idle_ms = 80_000;
+        let view = build_view_model(&cfg, true, Some(1_000), None, &away, None, true);
+        assert!(view.display_asleep);
+        assert!(!view.user_present);
+        let present = build_view_model(&cfg, true, Some(1_000), None, &host(), None, false);
+        assert!(!present.display_asleep);
+        assert!(present.user_present);
     }
 
     #[test]

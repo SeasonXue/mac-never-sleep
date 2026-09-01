@@ -402,6 +402,10 @@ mod tests {
             "an 8pt gap is the only space between the last menu row and the chrome bar"
         );
         assert!(
+            src.contains("WARNING_SLOT") && src.contains("setDetachesHiddenViews(false)"),
+            "lid-on-battery warning keeps a two-line height slot so pin_fill cannot clip it"
+        );
+        assert!(
             include_str!("panel.rs").contains("panel_hug_height() + SHADOW_INSET"),
             "macOS window_height must call panel_hug_height or clippy -D warnings flags dead_code"
         );
@@ -484,6 +488,10 @@ mod tests {
         assert!(
             !gui.contains("SelectPane"),
             "screenshot panel has no sidebar; do not leave an unused UiCommand variant for macOS -D warnings"
+        );
+        assert!(
+            !gui.contains("select_adjacent") && !gui.contains("ArrowDown"),
+            "arrow keys must stay with NSPopUpButton; sidebar traversal steals duration Up/Down"
         );
         assert!(
             gui.contains("handles.show_window.id()"),

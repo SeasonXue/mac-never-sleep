@@ -2,14 +2,16 @@
 
 use std::time::{Duration, Instant};
 
-use never_sleep_core::{AppConfig, DurationPref, Lang, ViewModel, DEFAULT_HOTKEY_LABEL};
+use never_sleep_core::{AppConfig, DurationPref, Lang, Tr, ViewModel, DEFAULT_HOTKEY_LABEL};
 
 /// Ignore a second Start/End click that AppKit queued from the same press.
 pub const TOGGLE_COOLDOWN_MS: u64 = 400;
 
 /// Compact menu-bar popover. Height hugs the packed main column (not a 480pt void).
 pub const PANEL_WIDTH: f64 = 320.0;
-pub const PANEL_HEIGHT: f64 = 405.0;
+pub const PANEL_HEIGHT: f64 = 440.0;
+/// Two 12pt lid-on-battery lines plus the 3pt status-stack gap after the summary.
+pub const WARNING_SLOT: f64 = 35.0;
 pub const HERO_SIZE: f64 = 124.0;
 pub const HERO_IMAGE: f64 = 104.0;
 pub const CARD_RADIUS: f64 = 8.0;
@@ -76,6 +78,7 @@ pub fn panel_hug_height() -> f64 {
         + 22.0
         + 3.0
         + 16.0
+        + WARNING_SLOT
         + 14.0
         + PRIMARY_HEIGHT
         + 12.0
@@ -356,12 +359,7 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
             t.panel_idle_title()
         }
         .into(),
-        summary: if vm.active {
-            t.panel_summary_active()
-        } else {
-            t.panel_summary_idle()
-        }
-        .into(),
+        summary: panel_summary(vm, t),
         primary_action: vm.primary_action.clone(),
         duration_label: t.duration_menu().into(),
         duration_indefinite: t.indefinite().into(),
@@ -409,6 +407,25 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
         help_note_lid: t.help_note_lid().into(),
         help_note_battery: t.help_note_battery().into(),
         help_note_quit: t.help_note_quit().into(),
+    }
+}
+
+/// Panel subtitle follows display state, not merely `vm.active`.
+pub fn panel_summary(vm: &ViewModel, t: Tr) -> String {
+    if !vm.active {
+        if vm.screen_off {
+            t.panel_summary_idle().into()
+        } else {
+            t.will_keep_awake_only().into()
+        }
+    } else if vm.display_asleep {
+        t.panel_summary_active().into()
+    } else if vm.user_present {
+        t.user_controls_display().into()
+    } else if vm.screen_off {
+        t.display_pending().into()
+    } else {
+        t.will_keep_awake_only().into()
     }
 }
 
@@ -554,9 +571,49 @@ mod tests {
             "How-to / Keep-in-mind padding matches the HTML-era 9px, not 12px plus a separator gap"
         );
         assert_eq!(
+            WARNING_SLOT, 35.0,
+            "lid-on-battery warning is two 12pt lines plus status stack spacing"
+        );
+        assert_eq!(
             panel_hug_height(),
             PANEL_HEIGHT,
             "window height is the packed main column, not a 480pt canvas with a stretch void"
+        );
+    }
+
+    #[test]
+    fn panel_summary_follows_display_state() {
+        let t = Tr::new(Lang::En);
+        let mut cfg = AppConfig::default();
+        let idle = Engine::new(cfg.clone()).view(&host());
+        assert_eq!(
+            panel_summary(&idle, t),
+            t.panel_summary_idle(),
+            "idle + screen_off promises the display will go off"
+        );
+        cfg.screen_off = false;
+        let keep = Engine::new(cfg.clone()).view(&host());
+        assert_eq!(
+            panel_summary(&keep, t),
+            t.will_keep_awake_only(),
+            "idle without screen_off must not say the display is off"
+        );
+        let mut engine = Engine::new(AppConfig::default());
+        let _ = engine.handle(never_sleep_core::Input::Start, &host());
+        let present = engine.view(&host());
+        assert_eq!(
+            panel_summary(&present, t),
+            t.user_controls_display(),
+            "a present user keeps the panel; do not claim the display is already asleep"
+        );
+        let mut asleep = host();
+        asleep.display_asleep = Some(true);
+        asleep.hid_idle_ms = 80_000;
+        let sleeping = engine.view(&asleep);
+        assert_eq!(
+            panel_summary(&sleeping, t),
+            t.panel_summary_active(),
+            "only an asleep display uses the asleep summary"
         );
     }
 
@@ -695,9 +752,9 @@ mod tests {
         assert!(state.active);
         assert_eq!(state.lang, Lang::Zh);
         assert_eq!(state.status_title, t.panel_active_title());
-        assert_eq!(state.summary, t.panel_summary_active());
+        assert_eq!(state.summary, t.user_controls_display());
         assert_eq!(state.primary_action, t.end_standby());
-        assert_eq!(state.more_settings, "设置");
+        assert_eq!(state.more_settings, "更多设置");
         assert_eq!(state.section_session, "待命");
         assert_eq!(state.section_display, "屏幕");
         assert_eq!(state.section_lid, "合盖");
@@ -724,7 +781,7 @@ mod tests {
         assert_eq!(state.section_safeguards, "Safeguards");
         assert_eq!(state.section_general, "General");
         assert_eq!(state.language_label, "Language");
-        assert_eq!(state.more_settings, "Settings");
+        assert_eq!(state.more_settings, "More Settings");
         assert_eq!(state.sidebar_options, "Options");
         assert_eq!(state.sidebar_guide, "Guide");
         assert_eq!(state.pane_display_lead, t.pane_display_lead());

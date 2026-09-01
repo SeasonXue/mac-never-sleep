@@ -110,7 +110,7 @@ impl Tr {
     }
 
     pub fn more_settings(self) -> &'static str {
-        self.pick("Settings", "设置")
+        self.pick("More Settings", "更多设置")
     }
 
     pub fn settings_title(self) -> &'static str {
@@ -899,8 +899,13 @@ mod tests {
             "Display asleep, Mac stays online"
         );
         assert_eq!(zh.panel_summary_active(), "屏幕已休眠，Mac 仍在线");
-        assert_eq!(en.more_settings(), "Settings");
-        assert_eq!(zh.more_settings(), "设置");
+        assert_eq!(en.more_settings(), "More Settings");
+        assert_eq!(zh.more_settings(), "更多设置");
+        assert_ne!(
+            en.more_settings(),
+            en.settings_title(),
+            "footer is More Settings; the sheet heading stays Settings"
+        );
         assert_eq!(en.settings_title(), "Settings");
         assert_eq!(zh.settings_title(), "设置");
         assert_eq!(en.back(), "Back");

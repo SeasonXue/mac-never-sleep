@@ -34,7 +34,7 @@ use crate::panel::{
     CARD_SEPARATOR_GAP, CONTENT_INSET, FOOTER_GAP, FOOTER_HEIGHT, HELP_ROW_GAP, HELP_ROW_GLYPH,
     HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB,
     PANEL_COLOR_SECS, PANEL_CORNER, PRIMARY_HEIGHT, SHADOW_INSET, SHADOW_OFFSET_Y, SHADOW_OPACITY,
-    SHADOW_RADIUS,
+    SHADOW_RADIUS, WARNING_SLOT,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -379,9 +379,14 @@ impl NativePanel {
 
         let status = column(mtm, 3.0, 0.0);
         status.setAlignment(NSLayoutAttribute::CenterX);
+        status.setDetachesHiddenViews(false);
         arrange(&status, &status_title);
         arrange(&status, &summary);
         arrange(&status, &warning);
+        nv(&*warning)
+            .heightAnchor()
+            .constraintGreaterThanOrEqualToConstant(WARNING_SLOT - 3.0)
+            .setActive(true);
 
         let hero_wrap = column(mtm, 0.0, 0.0);
         hero_wrap.setAlignment(NSLayoutAttribute::CenterX);
@@ -710,18 +715,6 @@ impl NativePanel {
         let _ = item.symbol();
         self.current = item.as_panel_view();
         self.apply_view();
-    }
-
-    pub fn select_adjacent(&mut self, delta: isize) {
-        let idx = match self.current {
-            PanelView::Main => SidebarItem::Standby.index(),
-            PanelView::Settings => SidebarItem::Display.index(),
-            PanelView::Help => SidebarItem::Help.index(),
-        };
-        let last = SidebarItem::ALL.len() as isize - 1;
-        if let Some(item) = SidebarItem::from_index((idx + delta).clamp(0, last)) {
-            self.show_pane(item);
-        }
     }
 
     fn apply_view(&self) {
