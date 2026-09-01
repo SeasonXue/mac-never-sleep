@@ -1390,7 +1390,7 @@ fn transform_layer() -> Retained<CALayer> {
 fn face_layer(image: &NSImage) -> Retained<CALayer> {
     let layer: Retained<CALayer> = unsafe { msg_send![CALayer::class(), layer] };
     unsafe {
-        let _: () = msg_send![&*layer, setContents: &*image];
+        let _: () = msg_send![&*layer, setContents: image];
         let _: () = msg_send![&*layer, setContentsGravity: &*ns("resizeAspect")];
         let _: () = msg_send![&*layer, setContentsScale: 2.0];
     }

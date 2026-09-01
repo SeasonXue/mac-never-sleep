@@ -345,6 +345,10 @@ mod tests {
             "keep extra CALayer refs with Retained::clone; Message::retain is easy to leave out of scope on macOS"
         );
         assert!(
+            !src.contains("setContents: &*image"),
+            "image is already &NSImage; &*image trips clippy borrow_deref_ref on macOS"
+        );
+        assert!(
             !src.contains("transform.scale.x") && !src.contains("CATransition"),
             "scale.x squash is not a half-turn that reveals the back; fade is not a flip"
         );
