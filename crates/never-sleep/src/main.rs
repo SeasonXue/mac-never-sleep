@@ -376,6 +376,18 @@ mod tests {
             gui.contains("show_window"),
             "the status-item menu can reopen the utility panel"
         );
+        assert!(
+            !src.contains("let mut panel"),
+            "unused mut on NativePanel::attach fails macOS clippy -D warnings"
+        );
+        assert!(
+            gui.contains("handles.show_window.id()"),
+            "Show Window must take the panel by move, not reborrow a non-mut parameter"
+        );
+        assert!(
+            !gui.contains("popover.as_mut()\n            panel.show()"),
+            "handle_menu_event must not as_mut a by-value Option<&mut Popover>"
+        );
     }
 
     #[test]

@@ -604,11 +604,11 @@ fn handle_menu_event(
         stop_for_quit(engine, platform);
         *control_flow = ControlFlow::Exit;
     } else if id == handles.show_window.id() {
-        if let Some(panel) = popover.as_mut() {
+        if let Some(panel) = popover {
             panel.show();
         }
     } else if id == handles.settings.id() {
-        if let Some(panel) = popover.as_mut() {
+        if let Some(panel) = popover {
             panel.show();
             panel.ui.show_settings();
         }

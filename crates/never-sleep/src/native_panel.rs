@@ -419,7 +419,7 @@ impl NativePanel {
         arrange(&help_stack, &scroll);
         fill(&pane_help, nv(&*help_stack));
 
-        let mut panel = Self {
+        let panel = Self {
             _target: target,
             sidebar_buttons,
             group_standby,
