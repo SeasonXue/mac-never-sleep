@@ -6,13 +6,13 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, ClassType, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAutoresizingMaskOptions,
-    NSBezelStyle, NSBorderType, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSGlassEffectView,
-    NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
-    NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView, NSSegmentSwitchTracking,
-    NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment,
-    NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSBox, NSBoxType, NSButton,
+    NSCellImagePosition, NSColor, NSControlStateValueOff, NSControlStateValueOn, NSFont,
+    NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView,
+    NSLayoutAttribute, NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView,
+    NSSegmentSwitchTracking, NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch,
+    NSTextAlignment, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
     NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
     NSWindow,
 };
@@ -22,7 +22,7 @@ use objc2_foundation::{
     NSValue,
 };
 use objc2_quartz_core::{
-    CABasicAnimation, CALayer, CAMediaTimingFunction, CATransaction, CATransform3D,
+    CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, CATransaction, CATransform3D,
     CATransform3DMakeRotation, NSValueCATransform3DAdditions,
 };
 use tao::event_loop::EventLoopProxy;

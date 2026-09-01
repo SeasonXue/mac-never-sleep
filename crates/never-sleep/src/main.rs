@@ -402,8 +402,8 @@ mod tests {
             "labels use NSTextAlignment for left/center copy"
         );
         assert!(
-            cargo.contains("\"NSText\""),
-            "NSTextAlignment and setAlignment need the objc2-app-kit NSText feature"
+            src.contains("NSAppearanceCustomization"),
+            "idle/active appearance switch uses the AppKit customization trait"
         );
     }
 
