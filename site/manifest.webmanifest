@@ -3,19 +3,19 @@
   "short_name": "Never Sleep",
   "description": "Keep a MacBook awake with the display off for downloads, a mini server, remote sessions, and a darker desk.",
   "lang": "en",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "/never-sleep/",
+  "scope": "/never-sleep/",
   "display": "browser",
   "background_color": "#0b1f28",
   "theme_color": "#0b1f28",
   "icons": [
     {
-      "src": "/assets/app-icon.png",
+      "src": "/never-sleep/assets/app-icon.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/assets/apple-touch-icon.png",
+      "src": "/never-sleep/assets/apple-touch-icon.png",
       "sizes": "180x180",
       "type": "image/png"
     }

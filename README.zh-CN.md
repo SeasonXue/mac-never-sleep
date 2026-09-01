@@ -1,6 +1,6 @@
 # Never Sleep
 
-[English](README.md) | [简体中文](README.zh-CN.md) · **[网站](https://never-sleep.xyz-ai.app/zh/)**
+[English](README.md) | [简体中文](README.zh-CN.md) · **[网站](https://xyz-ai.app/never-sleep/zh/)**
 
 让 MacBook **屏幕关掉、电脑不睡**。挂机下载、当成迷你服务器、远程会话，或只是护屏省电——菜单栏一点即可，也提供给 Agent 用的命令行。
 

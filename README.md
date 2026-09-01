@@ -1,6 +1,6 @@
 # Never Sleep
 
-[English](README.md) | [简体中文](README.zh-CN.md) · **[Website](https://never-sleep.xyz-ai.app/)**
+[English](README.md) | [简体中文](README.zh-CN.md) · **[Website](https://xyz-ai.app/never-sleep/)**
 
 Keep a MacBook **awake with the display off**. Overnight downloads, a Mac mini-style server, remote sessions, or just a darker, lower-power desk — one click from the menu bar, plus an Agent-friendly CLI.
 
