@@ -251,130 +251,102 @@ mod tests {
             "Settings stays reachable from the main view"
         );
         assert!(
+            src.contains("more_settings"),
+            "More Settings is driven by Tr"
+        );
+        assert!(
             panel.contains("more_settings"),
             "Settings label is driven by Tr"
         );
         assert!(
-            src.contains("section_session"),
-            "the sidebar labels Session from PanelState"
+            src.contains("quit_main"),
+            "Quit stays on the root of the panel"
         );
         assert!(
-            src.contains("section_display"),
-            "Display stays a sidebar destination"
+            src.contains("help_button"),
+            "How to use is reachable from Settings"
         );
         assert!(
-            src.contains("hotkey_hint"),
-            "main view must show that the hotkey works with the display off"
-        );
-        assert!(
-            src.contains("SidebarItem::Help"),
-            "How to use is a sidebar item, not a footer link"
+            src.contains("SidebarItem"),
+            "sidebar destinations still map onto Main/Settings/Help"
         );
     }
 
     #[test]
-    fn native_panel_follows_utility_sidebar_detail() {
+    fn native_panel_matches_app_screenshots() {
         let src = include_str!("native_panel.rs");
         let gui = include_str!("gui.rs");
         assert!(
-            src.contains("constraintEqualToConstant(28.0)"),
-            "the sun/moon is a compact status glyph, not a hero coin"
+            src.contains("HERO_SIZE"),
+            "the sun/moon is the 124pt screenshot coin"
         );
         assert!(
-            !src.contains("constraintEqualToConstant(88.0)"),
-            "the 88pt hero coin is not a utility panel"
+            src.contains("constraintEqualToConstant(124.0)") || src.contains("HERO_SIZE"),
+            "hero coin matches docs/screenshots"
         );
         assert!(
-            src.contains("pin_split"),
-            "the panel is a sidebar plus detail split"
+            src.contains("grouped_card"),
+            "session and settings sit in inset grouped cards"
         );
         assert!(
-            src.contains("SIDEBAR_WIDTH"),
-            "sidebar width is the shared token"
+            src.contains("NSBoxType::Separator") || src.contains("separator("),
+            "cards use hairline separators between rows"
         );
         assert!(
-            src.contains("pin_detail_content"),
-            "detail copy is leading-pinned, not trailing-hugging"
+            src.contains("NSTextAlignment::Center"),
+            "status copy is centered like the screenshots"
         );
         assert!(
-            src.contains("imageWithSystemSymbolName"),
-            "sidebar uses SF Symbols"
+            src.contains("NSBezelStyle::Push"),
+            "the primary action is a standard push button"
         );
         assert!(
-            src.contains("NSVisualEffectMaterial::Sidebar"),
-            "older macOS uses Sidebar vibrancy, not a card wall"
-        );
-        assert!(
-            src.contains("section_header"),
-            "sidebar groups use small caps-style headers"
-        );
-        assert!(
-            !src.contains("grouped_card") && !src.contains("settings_card"),
-            "do not rebuild the iOS settings card wall"
-        );
-        assert!(
-            src.contains("windowBackgroundColor"),
-            "the detail column is opaque so copy stays readable"
-        );
-        assert!(
-            !src.contains("quit_main"),
-            "Quit lives in the status-item menu, not the panel chrome"
-        );
-        assert!(
-            !src.contains("quit_settings"),
-            "nested Settings must not repeat Quit (HIG)"
-        );
-        assert!(
-            src.contains("show_help"),
-            "How to use stays reachable from the panel"
+            src.contains("setKeyEquivalent"),
+            "idle Start uses the default accent button; End Standby does not"
         );
         assert!(
             !src.contains("set_toggle_armed"),
             "End Standby must stay enabled; do not gray out the primary button"
         );
         assert!(
-            src.contains("NSBezelStyle::Push"),
-            "the primary action is a standard push button, not Glass (which looks disabled)"
-        );
-        assert!(
             !src.contains("setFillColor(Some("),
             "NSBox::setFillColor takes &NSColor, not Option"
         );
         assert!(
-            gui.contains("UTILITY_WIDTH"),
-            "the utility panel uses the shared 640pt token"
+            src.contains("pin_fill"),
+            "pages pin leading and trailing so cards do not hug the right edge"
         );
         assert!(
-            gui.contains("with_resizable(true)"),
-            "the utility panel allows limited resize"
+            src.contains("index_badge"),
+            "How to use keeps numbered steps"
         );
         assert!(
-            gui.contains("with_decorations(true)"),
-            "the panel is a normal titled window"
+            src.contains("laptopcomputer"),
+            "Keep in mind uses the laptop SF Symbol from the screenshot"
+        );
+        assert!(
+            gui.contains("PANEL_WIDTH"),
+            "the panel is the 320pt screenshot width"
+        );
+        assert!(
+            gui.contains("with_decorations(false)"),
+            "screenshots are a rounded panel, not a titled Settings window"
         );
         assert!(
             !gui.contains("with_always_on_top(true)"),
-            "a normal window is not pinned to the menu bar"
+            "the panel is not pinned above other apps"
         );
         assert!(
             !gui.contains("toggle_at"),
-            "do not anchor the window to the status item"
+            "do not glue the window to the status item"
         );
         assert!(
             !gui.contains("Focused(false)"),
-            "losing key status must not dismiss a real window"
+            "losing key status must not dismiss the panel"
         );
         assert!(
             gui.contains("panel_placement"),
             "placement policy is shared with Linux-tested panel.rs"
-        );
-        assert!(
-            gui.contains("SelectPane"),
-            "sidebar clicks select a pane through UiCommand"
-        );
-        assert!(
-            gui.contains("show_window"),
-            "the status-item menu can reopen the utility panel"
         );
         assert!(
             !src.contains("let mut panel"),
@@ -502,9 +474,8 @@ mod tests {
     fn settings_rows_fill_width_and_wrap_long_captions() {
         let src = include_str!("native_panel.rs");
         assert!(
-            src.contains("NSLayoutAttribute::Width")
-                || src.contains("constraintEqualToConstant(DETAIL_MAX_WIDTH"),
-            "detail rows size to the Notes-like content column"
+            src.contains("NSLayoutAttribute::Width") || src.contains("fill_width"),
+            "rows size to the panel inner width"
         );
         assert!(
             src.contains("row_caption"),

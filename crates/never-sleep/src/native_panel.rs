@@ -1,5 +1,4 @@
-//! Native AppKit utility panel. Sidebar uses Liquid Glass / Sidebar vibrancy;
-//! the detail column is opaque so copy stays readable (Notes-like).
+//! Native AppKit panel matching `docs/screenshots`: coin, grouped card, three sheets.
 
 use std::ops::Deref;
 
@@ -7,13 +6,14 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSButton, NSCellImagePosition, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSGlassEffectView,
-    NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
-    NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView, NSSegmentSwitchTracking,
-    NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment,
-    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSBox, NSBoxType, NSButton,
+    NSCellImagePosition, NSColor, NSControlStateValueOff, NSControlStateValueOn, NSFont,
+    NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView,
+    NSLayoutAttribute, NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView,
+    NSSegmentSwitchTracking, NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch,
+    NSTextAlignment, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
+    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
+    NSWindow,
 };
 use objc2_foundation::{
     MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString,
@@ -24,8 +24,8 @@ use tao::window::Window;
 
 use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
-    preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem, DETAIL_INSET,
-    DETAIL_MAX_WIDTH, SIDEBAR_WIDTH,
+    preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem, CARD_RADIUS,
+    CONTENT_INSET, HERO_IMAGE, HERO_SIZE,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -52,13 +52,6 @@ define_class!(
         #[unsafe(method(toggle:))]
         fn toggle(&self, _sender: Option<&AnyObject>) {
             self.emit(UiCommand::Toggle);
-        }
-
-        #[unsafe(method(selectPane:))]
-        fn select_pane(&self, sender: Option<&AnyObject>) {
-            let Some(sender) = sender else { return };
-            let tag: isize = unsafe { msg_send![sender, tag] };
-            self.emit(UiCommand::SelectPane { index: tag });
         }
 
         #[unsafe(method(more:))]
@@ -137,16 +130,9 @@ impl PanelTarget {
 
 pub struct NativePanel {
     _target: Retained<PanelTarget>,
-    sidebar_buttons: Vec<Retained<NSButton>>,
-    group_standby: Retained<NSTextField>,
-    group_options: Retained<NSTextField>,
-    group_guide: Retained<NSTextField>,
-    pane_standby: Retained<NSView>,
-    pane_display: Retained<NSView>,
-    pane_lid: Retained<NSView>,
-    pane_safeguards: Retained<NSView>,
-    pane_general: Retained<NSView>,
-    pane_help: Retained<NSView>,
+    main_view: Retained<NSView>,
+    settings_view: Retained<NSView>,
+    help_view: Retained<NSView>,
     glyph: Retained<NSImageView>,
     sun: Retained<NSImage>,
     moon: Retained<NSImage>,
@@ -156,29 +142,30 @@ pub struct NativePanel {
     primary: Retained<NSButton>,
     duration: Retained<NSPopUpButton>,
     duration_label: Retained<NSTextField>,
-    hotkey_hint: Retained<NSTextField>,
-    display_title: Retained<NSTextField>,
-    display_lead: Retained<NSTextField>,
-    screen_off_label: Retained<NSTextField>,
-    screen_off: Retained<NSSwitch>,
     resleep_label: Retained<NSTextField>,
     resleep: Retained<NSSwitch>,
-    lid_title: Retained<NSTextField>,
-    lid_lead: Retained<NSTextField>,
-    lid_label: Retained<NSTextField>,
-    lid: Retained<NSSwitch>,
-    safeguards_title: Retained<NSTextField>,
-    safeguards_lead: Retained<NSTextField>,
-    lock_label: Retained<NSTextField>,
-    lock: Retained<NSSwitch>,
     battery_label: Retained<NSTextField>,
     battery: Retained<NSSwitch>,
-    general_title: Retained<NSTextField>,
-    general_lead: Retained<NSTextField>,
+    more: Retained<NSButton>,
+    quit_main: Retained<NSButton>,
+    back: Retained<NSButton>,
+    settings_title: Retained<NSTextField>,
+    screen_off_label: Retained<NSTextField>,
+    screen_off: Retained<NSSwitch>,
+    lid_label: Retained<NSTextField>,
+    lid: Retained<NSSwitch>,
+    resleep_settings_label: Retained<NSTextField>,
+    resleep_settings: Retained<NSSwitch>,
+    lock_label: Retained<NSTextField>,
+    lock: Retained<NSSwitch>,
+    battery_settings_label: Retained<NSTextField>,
+    battery_settings: Retained<NSSwitch>,
     login_label: Retained<NSTextField>,
     login: Retained<NSSwitch>,
-    language_label: Retained<NSTextField>,
     language: Retained<NSSegmentedControl>,
+    help_button: Retained<NSButton>,
+    quit_settings: Retained<NSButton>,
+    help_back: Retained<NSButton>,
     help_title: Retained<NSTextField>,
     help_kicker: Retained<NSTextField>,
     help_lead: Retained<NSTextField>,
@@ -188,165 +175,190 @@ pub struct NativePanel {
     help_step2_title: Retained<NSTextField>,
     help_step2_detail: Retained<NSTextField>,
     help_step3_title: Retained<NSTextField>,
-    help_step3: Retained<NSTextField>,
+    help_step3_before: Retained<NSTextField>,
+    help_hotkey: Retained<NSTextField>,
+    help_step3_after: Retained<NSTextField>,
     help_notes: Retained<NSTextField>,
     help_note_lid: Retained<NSTextField>,
     help_note_battery: Retained<NSTextField>,
     help_note_quit: Retained<NSTextField>,
-    current: SidebarItem,
+    current: PanelView,
 }
 
 impl NativePanel {
     pub fn attach(window: &Window, proxy: EventLoopProxy<UserEvent>) -> Result<Self, String> {
         let mtm = MainThreadMarker::new().ok_or("native panel: not on the main thread")?;
         let target = PanelTarget::new(mtm, proxy);
-        let sun =
-            sf_symbol("sun.max", 28.0).unwrap_or(load_png(include_bytes!("../ui/assets/sun.png"))?);
-        let moon = sf_symbol("moon.zzz", 28.0)
-            .unwrap_or(load_png(include_bytes!("../ui/assets/moon.png"))?);
+        let sun = load_png(include_bytes!("../ui/assets/sun.png"))?;
+        let moon = load_png(include_bytes!("../ui/assets/moon.png"))?;
+        sun.setSize(objc2_foundation::NSSize::new(HERO_IMAGE, HERO_IMAGE));
+        moon.setSize(objc2_foundation::NSSize::new(HERO_IMAGE, HERO_IMAGE));
 
         let ns_window = unsafe { &*window.ns_window().cast::<NSWindow>() };
-        ns_window.setOpaque(true);
-        ns_window.setBackgroundColor(Some(&NSColor::windowBackgroundColor()));
+        ns_window.setOpaque(false);
+        ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
 
         let host = unsafe { &*window.ns_view().cast::<NSView>() };
         host.setWantsLayer(true);
 
         let glass_ok = AnyClass::get(c"NSGlassEffectView").is_some();
         let kind = preferred_glass(glass_ok);
+        let root = panel_chrome(host, mtm, kind);
 
-        let (sidebar_root, sidebar_body) = sidebar_chrome(mtm, kind);
-        let detail = NSView::new(mtm);
-        pin_split(host, nv(&*sidebar_root), &detail);
+        let main_view = NSView::new(mtm);
+        let settings_view = NSView::new(mtm);
+        let help_view = NSView::new(mtm);
+        pin_fill(&root, &main_view);
+        pin_fill(&root, &settings_view);
+        pin_fill(&root, &help_view);
 
-        let group_standby = section_header(mtm);
-        let group_options = section_header(mtm);
-        let group_guide = section_header(mtm);
-        let mut sidebar_buttons = Vec::new();
-        let nav = column(mtm, 2.0, 12.0);
-        nav.setAlignment(NSLayoutAttribute::Leading);
-        arrange(&nav, &group_standby);
-        for item in [
-            SidebarItem::Standby,
-            SidebarItem::Display,
-            SidebarItem::Lid,
-            SidebarItem::Safeguards,
-            SidebarItem::General,
-            SidebarItem::Help,
-        ] {
-            if item == SidebarItem::Display {
-                arrange(&nav, &group_options);
-            }
-            if item == SidebarItem::Help {
-                arrange(&nav, &group_guide);
-            }
-            let button = sidebar_button(&target, item, mtm);
-            arrange(&nav, &button);
-            sidebar_buttons.push(button);
-        }
-        fill(&sidebar_body, nv(&*nav));
-
-        let pane_standby = NSView::new(mtm);
-        let pane_display = NSView::new(mtm);
-        let pane_lid = NSView::new(mtm);
-        let pane_safeguards = NSView::new(mtm);
-        let pane_general = NSView::new(mtm);
-        let pane_help = NSView::new(mtm);
-        for pane in [
-            &pane_standby,
-            &pane_display,
-            &pane_lid,
-            &pane_safeguards,
-            &pane_general,
-            &pane_help,
-        ] {
-            fill(&detail, pane);
-        }
+        let coin = NSBox::new(mtm);
+        coin.setBoxType(NSBoxType::Custom);
+        coin.setTitlePosition(NSTitlePosition::NoTitle);
+        coin.setCornerRadius(HERO_SIZE / 2.0);
+        coin.setBorderWidth(0.5);
+        coin.setBorderColor(&NSColor::separatorColor());
+        coin.setFillColor(&NSColor::controlBackgroundColor());
+        nv(&*coin)
+            .widthAnchor()
+            .constraintEqualToConstant(HERO_SIZE)
+            .setActive(true);
+        nv(&*coin)
+            .heightAnchor()
+            .constraintEqualToConstant(HERO_SIZE)
+            .setActive(true);
 
         let glyph = NSImageView::new(mtm);
         glyph.setImage(Some(&sun));
         glyph.setEditable(false);
         glyph.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
         nv(&*glyph)
+            .widthAnchor()
+            .constraintEqualToConstant(HERO_IMAGE)
+            .setActive(true);
+        nv(&*glyph)
+            .heightAnchor()
+            .constraintEqualToConstant(HERO_IMAGE)
+            .setActive(true);
+        let coin_body = NSStackView::new(mtm);
+        coin_body.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+        coin_body.setAlignment(NSLayoutAttribute::CenterX);
+        coin_body.setEdgeInsets(NSEdgeInsets {
+            top: (HERO_SIZE - HERO_IMAGE) / 2.0,
+            left: 0.0,
+            bottom: (HERO_SIZE - HERO_IMAGE) / 2.0,
+            right: 0.0,
+        });
+        arrange(&coin_body, &glyph);
+        coin.setContentView(Some(nv(&*coin_body)));
+
+        let hero = unsafe {
+            NSButton::buttonWithTitle_target_action(
+                &ns(""),
+                Some(as_any(&target)),
+                Some(sel!(toggle:)),
+                mtm,
+            )
+        };
+        hero.setBordered(false);
+        hero.setImagePosition(NSCellImagePosition::ImageOnly);
+        nv(&*hero)
+            .widthAnchor()
+            .constraintEqualToConstant(HERO_SIZE)
+            .setActive(true);
+        nv(&*hero)
+            .heightAnchor()
+            .constraintEqualToConstant(HERO_SIZE)
+            .setActive(true);
+        pin_fill(nv(&*hero), nv(&*coin));
+
+        let status_title = heading(mtm, 17.0);
+        status_title.setAlignment(NSTextAlignment::Center);
+        let summary = wrap(mtm, 12.0);
+        summary.setAlignment(NSTextAlignment::Center);
+        let warning = wrap(mtm, 12.0);
+        warning.setAlignment(NSTextAlignment::Center);
+        warning.setTextColor(Some(&NSColor::systemOrangeColor()));
+
+        let primary = push_button(&target, sel!(toggle:), NSBezelStyle::Push, mtm);
+        nv(&*primary)
             .heightAnchor()
             .constraintEqualToConstant(28.0)
             .setActive(true);
-        nv(&*glyph)
-            .widthAnchor()
-            .constraintEqualToConstant(28.0)
-            .setActive(true);
+        fill_width(nv(&*primary));
 
-        let status_title = heading(mtm, 22.0);
-        let summary = wrap(mtm);
-        let warning = wrap(mtm);
-        warning.setTextColor(Some(&NSColor::systemOrangeColor()));
-        let primary = push_button(&target, sel!(toggle:), NSBezelStyle::Push, mtm);
-        let duration_label = label(mtm);
+        let duration_label = row_caption(mtm);
         let duration = NSPopUpButton::new(mtm);
         unsafe {
             duration.setTarget(Some(as_any(&target)));
             duration.setAction(Some(sel!(durationChanged:)));
         }
-        let hotkey_hint = footnote(mtm);
-
-        let identity = column(mtm, 2.0, 0.0);
-        identity.setAlignment(NSLayoutAttribute::Leading);
-        arrange(&identity, &status_title);
-        arrange(&identity, &summary);
-        let header = NSStackView::new(mtm);
-        header.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-        header.setAlignment(NSLayoutAttribute::CenterY);
-        header.setSpacing(12.0);
-        arrange(&header, &glyph);
-        arrange(&header, &identity);
-
-        let standby_stack = detail_column(mtm);
-        arrange(&standby_stack, &header);
-        arrange(&standby_stack, &warning);
-        arrange(&standby_stack, &primary);
-        arrange(
-            &standby_stack,
-            &duration_row(&duration_label, duration.as_ref(), mtm),
+        duration.setBordered(false);
+        let (resleep_label, resleep, resleep_row) = labeled_switch(&target, TAG_RESLEEP, mtm);
+        let (battery_label, battery, battery_row) = labeled_switch(&target, TAG_BATTERY, mtm);
+        let session_card = grouped_card(
+            mtm,
+            &[
+                duration_row(&duration_label, duration.as_ref(), mtm),
+                resleep_row,
+                battery_row,
+            ],
         );
-        arrange(&standby_stack, &hotkey_hint);
-        pin_detail_content(&pane_standby, nv(&*standby_stack));
 
-        let display_title = heading(mtm, 22.0);
-        let display_lead = wrap(mtm);
+        let more = text_button(&target, sel!(more:), mtm);
+        let quit_main = text_button(&target, sel!(quit:), mtm);
+
+        let status = column(mtm, 3.0, 0.0);
+        status.setAlignment(NSLayoutAttribute::Width);
+        arrange(&status, &status_title);
+        arrange(&status, &summary);
+        fill_width(nv(&*status));
+
+        let hero_wrap = column(mtm, 0.0, 0.0);
+        hero_wrap.setAlignment(NSLayoutAttribute::CenterX);
+        arrange(&hero_wrap, &hero);
+        fill_width(nv(&*hero_wrap));
+
+        let main_stack = column(mtm, 0.0, CONTENT_INSET);
+        main_stack.setAlignment(NSLayoutAttribute::Width);
+        arrange(&main_stack, &hero_wrap);
+        spacer(&main_stack, 12.0, mtm);
+        arrange(&main_stack, &status);
+        spacer(&main_stack, 6.0, mtm);
+        arrange(&main_stack, &warning);
+        spacer(&main_stack, 14.0, mtm);
+        arrange(&main_stack, &primary);
+        spacer(&main_stack, 12.0, mtm);
+        arrange(&main_stack, &session_card);
+        let footer_space = NSView::new(mtm);
+        stretch(&footer_space);
+        arrange(&main_stack, &footer_space);
+        arrange(&main_stack, &chrome_bar(&more, None, Some(&quit_main), mtm));
+        pin_fill(&main_view, nv(&*main_stack));
+
+        let back = icon_button(&target, sel!(back:), "chevron.left", mtm);
+        let settings_title = heading(mtm, 13.0);
+        settings_title.setAlignment(NSTextAlignment::Center);
         let (screen_off_label, screen_off, screen_off_row) =
             labeled_switch(&target, TAG_SCREEN_OFF, mtm);
-        let (resleep_label, resleep, resleep_row) = labeled_switch(&target, TAG_RESLEEP, mtm);
-        let display_stack = detail_column(mtm);
-        arrange(&display_stack, &display_title);
-        arrange(&display_stack, &display_lead);
-        arrange(&display_stack, &screen_off_row);
-        arrange(&display_stack, &resleep_row);
-        pin_detail_content(&pane_display, nv(&*display_stack));
-
-        let lid_title = heading(mtm, 22.0);
-        let lid_lead = wrap(mtm);
         let (lid_label, lid, lid_row) = labeled_switch(&target, TAG_LID, mtm);
-        let lid_stack = detail_column(mtm);
-        arrange(&lid_stack, &lid_title);
-        arrange(&lid_stack, &lid_lead);
-        arrange(&lid_stack, &lid_row);
-        pin_detail_content(&pane_lid, nv(&*lid_stack));
-
-        let safeguards_title = heading(mtm, 22.0);
-        let safeguards_lead = wrap(mtm);
+        let (resleep_settings_label, resleep_settings, resleep_settings_row) =
+            labeled_switch(&target, TAG_RESLEEP, mtm);
         let (lock_label, lock, lock_row) = labeled_switch(&target, TAG_LOCK, mtm);
-        let (battery_label, battery, battery_row) = labeled_switch(&target, TAG_BATTERY, mtm);
-        let safeguards_stack = detail_column(mtm);
-        arrange(&safeguards_stack, &safeguards_title);
-        arrange(&safeguards_stack, &safeguards_lead);
-        arrange(&safeguards_stack, &lock_row);
-        arrange(&safeguards_stack, &battery_row);
-        pin_detail_content(&pane_safeguards, nv(&*safeguards_stack));
-
-        let general_title = heading(mtm, 22.0);
-        let general_lead = wrap(mtm);
+        let (battery_settings_label, battery_settings, battery_settings_row) =
+            labeled_switch(&target, TAG_BATTERY, mtm);
         let (login_label, login, login_row) = labeled_switch(&target, TAG_LOGIN, mtm);
-        let language_label = label(mtm);
+        let settings_card = grouped_card(
+            mtm,
+            &[
+                screen_off_row,
+                lid_row,
+                resleep_settings_row,
+                lock_row,
+                battery_settings_row,
+                login_row,
+            ],
+        );
         let language = NSSegmentedControl::new(mtm);
         language.setSegmentCount(2);
         language.setTrackingMode(NSSegmentSwitchTracking::SelectOne);
@@ -356,81 +368,119 @@ impl NativePanel {
             language.setTarget(Some(as_any(&target)));
             language.setAction(Some(sel!(languageChanged:)));
         }
-        nv(&*language).setContentHuggingPriority_forOrientation(
-            750.0_f32,
-            NSLayoutConstraintOrientation::Horizontal,
-        );
-        let general_stack = detail_column(mtm);
-        arrange(&general_stack, &general_title);
-        arrange(&general_stack, &general_lead);
-        arrange(&general_stack, &login_row);
-        arrange(
-            &general_stack,
-            &trailing_control_row(&language_label, nv(&*language), mtm),
-        );
-        pin_detail_content(&pane_general, nv(&*general_stack));
+        fill_width(nv(&*language));
+        nv(&*language)
+            .heightAnchor()
+            .constraintEqualToConstant(24.0)
+            .setActive(true);
+        let help_button = text_button(&target, sel!(help:), mtm);
+        let quit_settings = text_button(&target, sel!(quit:), mtm);
 
-        let help_title = heading(mtm, 22.0);
-        let help_kicker = heading(mtm, 13.0);
-        let help_lead = wrap(mtm);
-        let help_how = heading(mtm, 13.0);
+        let settings_stack = column(mtm, 0.0, CONTENT_INSET);
+        settings_stack.setAlignment(NSLayoutAttribute::Width);
+        arrange(&settings_stack, &sheet_head(&back, &settings_title, mtm));
+        spacer(&settings_stack, 8.0, mtm);
+        arrange(&settings_stack, &settings_card);
+        spacer(&settings_stack, 12.0, mtm);
+        arrange(&settings_stack, &language);
+        let settings_space = NSView::new(mtm);
+        stretch(&settings_space);
+        arrange(&settings_stack, &settings_space);
+        arrange(
+            &settings_stack,
+            &chrome_bar(&help_button, None, Some(&quit_settings), mtm),
+        );
+        pin_fill(&settings_view, nv(&*settings_stack));
+
+        let help_back = icon_button(&target, sel!(back:), "chevron.left", mtm);
+        let help_title = heading(mtm, 13.0);
+        help_title.setAlignment(NSTextAlignment::Center);
+        let help_kicker = heading(mtm, 12.0);
+        help_kicker.setTextColor(Some(&NSColor::controlAccentColor()));
+        let help_lead = wrap(mtm, 14.0);
+        help_lead.setFont(Some(&NSFont::boldSystemFontOfSize(14.0)));
+        help_lead.setTextColor(Some(&NSColor::labelColor()));
+        let help_how = section_header(mtm);
         let help_step1_title = heading(mtm, 13.0);
-        let help_step1_detail = wrap(mtm);
+        let help_step1_detail = wrap(mtm, 12.0);
         let help_step2_title = heading(mtm, 13.0);
-        let help_step2_detail = wrap(mtm);
+        let help_step2_detail = wrap(mtm, 12.0);
         let help_step3_title = heading(mtm, 13.0);
-        let help_step3 = wrap(mtm);
-        let help_notes = heading(mtm, 13.0);
-        let help_note_lid = wrap(mtm);
-        let help_note_battery = wrap(mtm);
-        let help_note_quit = wrap(mtm);
-        let help_body = detail_column(mtm);
+        let help_step3_before = wrap(mtm, 12.0);
+        let help_hotkey = kbd_label(mtm);
+        let help_step3_after = wrap(mtm, 12.0);
+        let help_notes = section_header(mtm);
+        let help_note_lid = wrap(mtm, 13.0);
+        help_note_lid.setTextColor(Some(&NSColor::labelColor()));
+        let help_note_battery = wrap(mtm, 13.0);
+        help_note_battery.setTextColor(Some(&NSColor::labelColor()));
+        let help_note_quit = wrap(mtm, 13.0);
+        help_note_quit.setTextColor(Some(&NSColor::labelColor()));
+
+        let how_card = grouped_card(
+            mtm,
+            &[
+                help_step(&help_step1_title, &help_step1_detail, "1", mtm),
+                help_step(&help_step2_title, &help_step2_detail, "2", mtm),
+                help_hotkey_step(
+                    &help_step3_title,
+                    &help_step3_before,
+                    &help_hotkey,
+                    &help_step3_after,
+                    mtm,
+                ),
+            ],
+        );
+        let notes_card = grouped_card(
+            mtm,
+            &[
+                help_note(&help_note_lid, "laptopcomputer", mtm),
+                help_note(&help_note_battery, "battery.100", mtm),
+                help_note(&help_note_quit, "moon.zzz", mtm),
+            ],
+        );
+
+        let help_body = column(mtm, 0.0, 0.0);
+        help_body.setAlignment(NSLayoutAttribute::Width);
         help_body.setEdgeInsets(NSEdgeInsets {
             top: 0.0,
             left: 0.0,
-            bottom: 24.0,
+            bottom: 12.0,
             right: 0.0,
         });
-        arrange(&help_body, &help_title);
         arrange(&help_body, &help_kicker);
+        spacer(&help_body, 5.0, mtm);
         arrange(&help_body, &help_lead);
+        spacer(&help_body, 12.0, mtm);
         arrange(&help_body, &help_how);
-        arrange(&help_body, &help_step1_title);
-        arrange(&help_body, &help_step1_detail);
-        arrange(&help_body, &help_step2_title);
-        arrange(&help_body, &help_step2_detail);
-        arrange(&help_body, &help_step3_title);
-        arrange(&help_body, &help_step3);
+        spacer(&help_body, 6.0, mtm);
+        arrange(&help_body, &how_card);
+        spacer(&help_body, 14.0, mtm);
         arrange(&help_body, &help_notes);
-        arrange(&help_body, &help_note_lid);
-        arrange(&help_body, &help_note_battery);
-        arrange(&help_body, &help_note_quit);
+        spacer(&help_body, 6.0, mtm);
+        arrange(&help_body, &notes_card);
 
         let scroll = NSScrollView::new(mtm);
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
         scroll.setDrawsBackground(false);
         scroll.setBorderType(NSBorderType::NoBorder);
-        scroll.setDocumentView(Some(&help_body));
+        scroll.setDocumentView(Some(nv(&*help_body)));
         pin_document_width(&scroll, nv(&*help_body));
         stretch(nv(&*scroll));
-        let help_stack = column(mtm, 0.0, DETAIL_INSET);
+
+        let help_stack = column(mtm, 0.0, CONTENT_INSET);
         help_stack.setAlignment(NSLayoutAttribute::Width);
+        arrange(&help_stack, &sheet_head(&help_back, &help_title, mtm));
+        spacer(&help_stack, 8.0, mtm);
         arrange(&help_stack, &scroll);
-        fill(&pane_help, nv(&*help_stack));
+        pin_fill(&help_view, nv(&*help_stack));
 
         let panel = Self {
             _target: target,
-            sidebar_buttons,
-            group_standby,
-            group_options,
-            group_guide,
-            pane_standby,
-            pane_display,
-            pane_lid,
-            pane_safeguards,
-            pane_general,
-            pane_help,
+            main_view,
+            settings_view,
+            help_view,
             glyph,
             sun,
             moon,
@@ -440,29 +490,30 @@ impl NativePanel {
             primary,
             duration,
             duration_label,
-            hotkey_hint,
-            display_title,
-            display_lead,
-            screen_off_label,
-            screen_off,
             resleep_label,
             resleep,
-            lid_title,
-            lid_lead,
-            lid_label,
-            lid,
-            safeguards_title,
-            safeguards_lead,
-            lock_label,
-            lock,
             battery_label,
             battery,
-            general_title,
-            general_lead,
+            more,
+            quit_main,
+            back,
+            settings_title,
+            screen_off_label,
+            screen_off,
+            lid_label,
+            lid,
+            resleep_settings_label,
+            resleep_settings,
+            lock_label,
+            lock,
+            battery_settings_label,
+            battery_settings,
             login_label,
             login,
-            language_label,
             language,
+            help_button,
+            quit_settings,
+            help_back,
             help_title,
             help_kicker,
             help_lead,
@@ -472,12 +523,14 @@ impl NativePanel {
             help_step2_title,
             help_step2_detail,
             help_step3_title,
-            help_step3,
+            help_step3_before,
+            help_hotkey,
+            help_step3_after,
             help_notes,
             help_note_lid,
             help_note_battery,
             help_note_quit,
-            current: SidebarItem::Standby,
+            current: PanelView::Main,
         };
         panel.apply_view();
         Ok(panel)
@@ -491,6 +544,8 @@ impl NativePanel {
         set_text(&self.warning, &state.warning);
         self.warning.setHidden(state.warning.is_empty());
         self.primary.setTitle(&ns(&state.primary_action));
+        self.primary
+            .setKeyEquivalent(&ns(if state.active { "" } else { "\r" }));
         set_text(&self.duration_label, &state.duration_label);
         self.duration.removeAllItems();
         self.duration
@@ -500,65 +555,60 @@ impl NativePanel {
         self.duration.addItemWithTitle(&ns(&state.duration_8h));
         self.duration.addItemWithTitle(&ns(&state.duration_until));
         self.duration.selectItemAtIndex(state.duration.index());
-        set_text(&self.hotkey_hint, &state.hotkey_hint);
-
-        set_text(&self.group_standby, &state.section_session);
-        set_text(&self.group_options, &state.sidebar_options);
-        set_text(&self.group_guide, &state.sidebar_guide);
-        let titles = [
-            &state.section_session,
-            &state.section_display,
-            &state.section_lid,
-            &state.section_safeguards,
-            &state.section_general,
-            &state.help,
-        ];
-        for (button, title) in self.sidebar_buttons.iter().zip(titles) {
-            button.setTitle(&ns(title));
-        }
-
-        set_text(&self.display_title, &state.section_display);
-        set_text(&self.display_lead, &state.pane_display_lead);
-        set_text(&self.screen_off_label, &state.screen_off_label);
-        set_switch(&self.screen_off, state.screen_off);
         set_text(&self.resleep_label, &state.resleep);
         set_switch(&self.resleep, state.resleep_display);
-
-        set_text(&self.lid_title, &state.section_lid);
-        set_text(&self.lid_lead, &state.pane_lid_lead);
-        set_text(&self.lid_label, &state.lid_awake_label);
-        set_switch(&self.lid, state.lid_awake);
-
-        set_text(&self.safeguards_title, &state.section_safeguards);
-        set_text(&self.safeguards_lead, &state.pane_safeguards_lead);
-        set_text(&self.lock_label, &state.lock_screen_label);
-        set_switch(&self.lock, state.lock_screen);
         set_text(&self.battery_label, &state.battery);
         set_switch(&self.battery, state.battery_floor);
+        self.more.setTitle(&ns(&state.more_settings));
+        self.quit_main.setTitle(&ns(&state.quit));
 
-        set_text(&self.general_title, &state.section_general);
-        set_text(&self.general_lead, &state.pane_general_lead);
+        self.back.setToolTip(Some(&ns(&state.back)));
+        set_text(&self.settings_title, &state.settings);
+        set_text(&self.screen_off_label, &state.screen_off_label);
+        set_switch(&self.screen_off, state.screen_off);
+        set_text(&self.lid_label, &state.lid_awake_label);
+        set_switch(&self.lid, state.lid_awake);
+        set_text(&self.resleep_settings_label, &state.resleep);
+        set_switch(&self.resleep_settings, state.resleep_display);
+        set_text(&self.lock_label, &state.lock_screen_label);
+        set_switch(&self.lock, state.lock_screen);
+        set_text(&self.battery_settings_label, &state.battery);
+        set_switch(&self.battery_settings, state.battery_floor);
         set_text(&self.login_label, &state.launch_at_login_label);
         set_switch(&self.login, state.launch_at_login);
-        set_text(&self.language_label, &state.language_label);
         self.language
             .setSelectedSegment(if state.lang == never_sleep_core::Lang::Zh {
                 1
             } else {
                 0
             });
+        self.help_button.setTitle(&ns(&state.help));
+        self.quit_settings.setTitle(&ns(&state.quit));
 
+        self.help_back.setToolTip(Some(&ns(&state.back)));
         set_text(&self.help_title, &state.help);
         set_text(&self.help_kicker, &state.help_kicker);
         set_text(&self.help_lead, &state.help_lead);
-        set_text(&self.help_how, &state.help_how);
+        let how = if state.lang == never_sleep_core::Lang::En {
+            state.help_how.to_uppercase()
+        } else {
+            state.help_how.clone()
+        };
+        set_text(&self.help_how, &how);
         set_text(&self.help_step1_title, &state.help_step1_title);
         set_text(&self.help_step1_detail, &state.help_step1_detail);
         set_text(&self.help_step2_title, &state.help_step2_title);
         set_text(&self.help_step2_detail, &state.help_step2_detail);
         set_text(&self.help_step3_title, &state.help_step3_title);
-        set_text(&self.help_step3, &state.help_step3);
-        set_text(&self.help_notes, &state.help_notes);
+        set_text(&self.help_step3_before, &state.help_step3_before);
+        set_text(&self.help_hotkey, &state.help_hotkey);
+        set_text(&self.help_step3_after, &state.help_step3_after);
+        let notes = if state.lang == never_sleep_core::Lang::En {
+            state.help_notes.to_uppercase()
+        } else {
+            state.help_notes.clone()
+        };
+        set_text(&self.help_notes, &notes);
         set_text(&self.help_note_lid, &state.help_note_lid);
         set_text(&self.help_note_battery, &state.help_note_battery);
         set_text(&self.help_note_quit, &state.help_note_quit);
@@ -566,48 +616,44 @@ impl NativePanel {
     }
 
     pub fn show_help(&mut self) {
-        self.show_pane(SidebarItem::Help);
+        self.current = PanelView::Help;
+        self.apply_view();
     }
 
     pub fn show_settings(&mut self) {
-        self.show_pane(SidebarItem::Display);
+        self.current = PanelView::Settings;
+        self.apply_view();
     }
 
     pub fn go_back(&mut self) {
-        self.show_pane(SidebarItem::Standby);
+        self.current = match self.current {
+            PanelView::Help => PanelView::Settings,
+            PanelView::Settings | PanelView::Main => PanelView::Main,
+        };
+        self.apply_view();
     }
 
     pub fn show_pane(&mut self, item: SidebarItem) {
-        self.current = item;
-        match item.as_panel_view() {
-            PanelView::Main | PanelView::Settings | PanelView::Help => {}
-        }
+        self.current = item.as_panel_view();
         self.apply_view();
     }
 
     pub fn select_adjacent(&mut self, delta: isize) {
-        let last = SidebarItem::ALL.len() as isize - 1;
-        let next = (self.current.index() + delta).clamp(0, last);
-        if let Some(item) = SidebarItem::from_index(next) {
-            self.show_pane(item);
-        }
+        let views = [PanelView::Main, PanelView::Settings, PanelView::Help];
+        let idx = views
+            .iter()
+            .position(|view| *view == self.current)
+            .unwrap_or(0) as isize;
+        let next = (idx + delta).clamp(0, views.len() as isize - 1) as usize;
+        self.current = views[next];
+        self.apply_view();
     }
 
     fn apply_view(&self) {
-        self.pane_standby
-            .setHidden(self.current != SidebarItem::Standby);
-        self.pane_display
-            .setHidden(self.current != SidebarItem::Display);
-        self.pane_lid.setHidden(self.current != SidebarItem::Lid);
-        self.pane_safeguards
-            .setHidden(self.current != SidebarItem::Safeguards);
-        self.pane_general
-            .setHidden(self.current != SidebarItem::General);
-        self.pane_help.setHidden(self.current != SidebarItem::Help);
-        for (index, button) in self.sidebar_buttons.iter().enumerate() {
-            let on = self.current.index() == index as isize;
-            button.setBordered(on);
-        }
+        self.main_view.setHidden(self.current != PanelView::Main);
+        self.settings_view
+            .setHidden(self.current != PanelView::Settings);
+        self.help_view.setHidden(self.current != PanelView::Help);
     }
 }
 
@@ -625,13 +671,6 @@ fn load_png(bytes: &[u8]) -> Result<Retained<NSImage>, String> {
     NSImage::initWithData(NSImage::alloc(), &data).ok_or_else(|| "panel image".into())
 }
 
-fn sf_symbol(name: &str, point: f64) -> Option<Retained<NSImage>> {
-    let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&ns(name), None)?;
-    image.setSize(objc2_foundation::NSSize::new(point, point));
-    image.setTemplate(true);
-    Some(image)
-}
-
 fn nv<T: AsRef<NSView>>(obj: &T) -> &NSView {
     obj.as_ref()
 }
@@ -644,16 +683,44 @@ where
     stack.addArrangedSubview(child.deref().as_ref());
 }
 
-fn fill(parent: &NSView, child: &NSView) {
-    child.setFrame(parent.bounds());
-    child.setAutoresizingMask(
-        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
-    );
+fn pin_fill(parent: &NSView, child: &NSView) {
+    child.setTranslatesAutoresizingMaskIntoConstraints(false);
     parent.addSubview(child);
+    child
+        .leadingAnchor()
+        .constraintEqualToAnchor(&parent.leadingAnchor())
+        .setActive(true);
+    child
+        .trailingAnchor()
+        .constraintEqualToAnchor(&parent.trailingAnchor())
+        .setActive(true);
+    child
+        .topAnchor()
+        .constraintEqualToAnchor(&parent.topAnchor())
+        .setActive(true);
+    child
+        .bottomAnchor()
+        .constraintEqualToAnchor(&parent.bottomAnchor())
+        .setActive(true);
+}
+
+fn fill_width(view: &NSView) {
+    view.setContentHuggingPriority_forOrientation(
+        1.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
 }
 
 fn stretch(view: &NSView) {
     view.setContentHuggingPriority_forOrientation(1.0_f32, NSLayoutConstraintOrientation::Vertical);
+}
+
+fn spacer(stack: &NSStackView, height: f64, mtm: MainThreadMarker) {
+    let gap = NSView::new(mtm);
+    gap.heightAnchor()
+        .constraintEqualToConstant(height)
+        .setActive(true);
+    arrange(stack, &gap);
 }
 
 fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
@@ -673,128 +740,68 @@ fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
         .setActive(true);
 }
 
-fn pin_detail_content(pane: &NSView, content: &NSView) {
-    content.setTranslatesAutoresizingMaskIntoConstraints(false);
-    pane.addSubview(content);
-    content
-        .leadingAnchor()
-        .constraintEqualToAnchor(&pane.leadingAnchor())
-        .setActive(true);
-    content
-        .topAnchor()
-        .constraintEqualToAnchor(&pane.topAnchor())
-        .setActive(true);
-    content
-        .trailingAnchor()
-        .constraintLessThanOrEqualToAnchor(&pane.trailingAnchor())
-        .setActive(true);
-    content
-        .bottomAnchor()
-        .constraintLessThanOrEqualToAnchor(&pane.bottomAnchor())
-        .setActive(true);
-}
-
-fn pin_split(host: &NSView, sidebar: &NSView, detail: &NSView) {
-    sidebar.setTranslatesAutoresizingMaskIntoConstraints(false);
-    detail.setTranslatesAutoresizingMaskIntoConstraints(false);
-    host.addSubview(sidebar);
-    host.addSubview(detail);
-    sidebar
-        .leadingAnchor()
-        .constraintEqualToAnchor(&host.leadingAnchor())
-        .setActive(true);
-    sidebar
-        .topAnchor()
-        .constraintEqualToAnchor(&host.topAnchor())
-        .setActive(true);
-    sidebar
-        .bottomAnchor()
-        .constraintEqualToAnchor(&host.bottomAnchor())
-        .setActive(true);
-    sidebar
-        .widthAnchor()
-        .constraintEqualToConstant(SIDEBAR_WIDTH)
-        .setActive(true);
-    detail
-        .leadingAnchor()
-        .constraintEqualToAnchor(&sidebar.trailingAnchor())
-        .setActive(true);
-    detail
-        .topAnchor()
-        .constraintEqualToAnchor(&host.topAnchor())
-        .setActive(true);
-    detail
-        .bottomAnchor()
-        .constraintEqualToAnchor(&host.bottomAnchor())
-        .setActive(true);
-    detail
-        .trailingAnchor()
-        .constraintEqualToAnchor(&host.trailingAnchor())
-        .setActive(true);
-}
-
-fn sidebar_chrome(mtm: MainThreadMarker, kind: GlassKind) -> (Retained<NSView>, Retained<NSView>) {
+fn panel_chrome(host: &NSView, mtm: MainThreadMarker, kind: GlassKind) -> Retained<NSView> {
     match kind {
         GlassKind::LiquidGlass => {
             let glass = NSGlassEffectView::new(mtm);
             glass.setStyle(NSGlassEffectViewStyle::Regular);
-            glass.setCornerRadius(0.0);
+            glass.setCornerRadius(10.0);
             let content = NSView::new(mtm);
             content.setAutoresizingMask(
                 NSAutoresizingMaskOptions::ViewWidthSizable
                     | NSAutoresizingMaskOptions::ViewHeightSizable,
             );
             glass.setContentView(Some(&content));
-            (Retained::into_super(glass), content)
+            fill_host(host, nv(&*glass));
+            content
         }
         GlassKind::Vibrancy => {
             let visual = NSVisualEffectView::new(mtm);
-            visual.setMaterial(NSVisualEffectMaterial::Sidebar);
+            visual.setMaterial(NSVisualEffectMaterial::Popover);
             visual.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
             visual.setState(NSVisualEffectState::Active);
+            visual.setWantsLayer(true);
+            fill_host(host, nv(&*visual));
             let content = NSView::new(mtm);
-            fill(nv(&*visual), &content);
-            (Retained::into_super(visual), content)
+            pin_fill(nv(&*visual), &content);
+            content
         }
     }
 }
 
-fn sidebar_button(
-    target: &PanelTarget,
-    item: SidebarItem,
-    mtm: MainThreadMarker,
-) -> Retained<NSButton> {
-    let button = unsafe {
-        NSButton::buttonWithTitle_target_action(
-            &ns(""),
-            Some(as_any(target)),
-            Some(sel!(selectPane:)),
-            mtm,
-        )
-    };
-    button.setBezelStyle(NSBezelStyle::AccessoryBarAction);
-    button.setBordered(false);
-    button.setAlignment(NSTextAlignment::Left);
-    button.setImagePosition(NSCellImagePosition::ImageLeading);
-    if let Some(symbol) = sf_symbol(item.symbol(), 14.0) {
-        button.setImage(Some(&symbol));
-    }
-    button.setTag(item.index());
-    button.setContentHuggingPriority_forOrientation(
-        1.0_f32,
-        NSLayoutConstraintOrientation::Horizontal,
+fn fill_host(host: &NSView, child: &NSView) {
+    child.setFrame(host.bounds());
+    child.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
     );
-    button
+    host.addSubview(child);
 }
 
-fn detail_column(mtm: MainThreadMarker) -> Retained<NSStackView> {
-    let stack = column(mtm, 14.0, DETAIL_INSET);
-    stack.setAlignment(NSLayoutAttribute::Leading);
-    nv(&*stack)
-        .widthAnchor()
-        .constraintLessThanOrEqualToConstant(DETAIL_MAX_WIDTH)
-        .setActive(true);
-    stack
+fn grouped_card(mtm: MainThreadMarker, rows: &[Retained<NSStackView>]) -> Retained<NSView> {
+    let body = column(mtm, 0.0, 0.0);
+    body.setAlignment(NSLayoutAttribute::Width);
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 {
+            arrange(&body, &separator(mtm));
+        }
+        arrange(&body, row);
+    }
+    let card = NSBox::new(mtm);
+    card.setBoxType(NSBoxType::Custom);
+    card.setTitlePosition(NSTitlePosition::NoTitle);
+    card.setCornerRadius(CARD_RADIUS);
+    card.setBorderWidth(0.5);
+    card.setBorderColor(&NSColor::separatorColor());
+    card.setFillColor(&NSColor::controlBackgroundColor());
+    card.setContentView(Some(nv(&*body)));
+    fill_width(nv(&*card));
+    Retained::into_super(card)
+}
+
+fn separator(mtm: MainThreadMarker) -> Retained<NSBox> {
+    let line = NSBox::new(mtm);
+    line.setBoxType(NSBoxType::Separator);
+    line
 }
 
 fn column(mtm: MainThreadMarker, spacing: f64, inset: f64) -> Retained<NSStackView> {
@@ -808,13 +815,6 @@ fn column(mtm: MainThreadMarker, spacing: f64, inset: f64) -> Retained<NSStackVi
         right: inset,
     });
     stack
-}
-
-fn label(mtm: MainThreadMarker) -> Retained<NSTextField> {
-    let field = NSTextField::labelWithString(&ns(""), mtm);
-    field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
-    field.setTextColor(Some(&NSColor::labelColor()));
-    field
 }
 
 fn heading(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
@@ -833,23 +833,13 @@ fn section_header(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field
 }
 
-fn wrap(mtm: MainThreadMarker) -> Retained<NSTextField> {
+fn wrap(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
     let field = NSTextField::wrappingLabelWithString(&ns(""), mtm);
     field.setSelectable(false);
-    field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+    field.setFont(Some(&NSFont::systemFontOfSize(size)));
     field.setTextColor(Some(&NSColor::secondaryLabelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(DETAIL_MAX_WIDTH - DETAIL_INSET);
-    field
-}
-
-fn footnote(mtm: MainThreadMarker) -> Retained<NSTextField> {
-    let field = NSTextField::wrappingLabelWithString(&ns(""), mtm);
-    field.setSelectable(false);
-    field.setFont(Some(&NSFont::systemFontOfSize(11.0)));
-    field.setTextColor(Some(&NSColor::tertiaryLabelColor()));
-    field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(DETAIL_MAX_WIDTH - DETAIL_INSET);
+    field.setPreferredMaxLayoutWidth(320.0 - CONTENT_INSET * 2.0);
     field
 }
 
@@ -859,7 +849,7 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::labelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(DETAIL_MAX_WIDTH - 80.0);
+    field.setPreferredMaxLayoutWidth(220.0);
     field.setContentHuggingPriority_forOrientation(
         1.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
@@ -868,6 +858,17 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
         250.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
     );
+    field
+}
+
+fn kbd_label(mtm: MainThreadMarker) -> Retained<NSTextField> {
+    let field = NSTextField::labelWithString(&ns(""), mtm);
+    field.setFont(Some(&NSFont::boldSystemFontOfSize(11.0)));
+    field.setTextColor(Some(&NSColor::labelColor()));
+    field.setBackgroundColor(Some(&NSColor::quaternaryLabelColor()));
+    field.setDrawsBackground(true);
+    field.setBezeled(false);
+    field.setBordered(false);
     field
 }
 
@@ -904,6 +905,40 @@ fn push_button(
     button
 }
 
+fn text_button(target: &PanelTarget, action: Sel, mtm: MainThreadMarker) -> Retained<NSButton> {
+    let button = push_button(target, action, NSBezelStyle::AccessoryBarAction, mtm);
+    button.setBordered(false);
+    button.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+    button.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
+    button
+}
+
+fn icon_button(
+    target: &PanelTarget,
+    action: Sel,
+    symbol: &str,
+    mtm: MainThreadMarker,
+) -> Retained<NSButton> {
+    let button = push_button(target, action, NSBezelStyle::AccessoryBarAction, mtm);
+    button.setBordered(false);
+    if let Some(image) =
+        NSImage::imageWithSystemSymbolName_accessibilityDescription(&ns(symbol), None)
+    {
+        image.setTemplate(true);
+        button.setImage(Some(&image));
+        button.setImagePosition(NSCellImagePosition::ImageOnly);
+    }
+    nv(&*button)
+        .widthAnchor()
+        .constraintEqualToConstant(28.0)
+        .setActive(true);
+    nv(&*button)
+        .heightAnchor()
+        .constraintEqualToConstant(28.0)
+        .setActive(true);
+    button
+}
+
 fn labeled_switch(
     target: &PanelTarget,
     tag: isize,
@@ -920,22 +955,7 @@ fn labeled_switch(
         750.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
     );
-    nv(&*toggle).setContentCompressionResistancePriority_forOrientation(
-        1000.0_f32,
-        NSLayoutConstraintOrientation::Horizontal,
-    );
-    let row = NSStackView::new(mtm);
-    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    row.setDistribution(NSStackViewDistribution::Fill);
-    row.setAlignment(NSLayoutAttribute::CenterY);
-    row.setSpacing(8.0);
-    arrange(&row, &caption);
-    arrange(&row, &toggle);
-    nv(&*row)
-        .widthAnchor()
-        .constraintEqualToConstant(DETAIL_MAX_WIDTH - DETAIL_INSET)
-        .setActive(true);
-    (caption, toggle, row)
+    (caption, toggle, control_row(&caption, nv(&*toggle), mtm))
 }
 
 fn duration_row(
@@ -943,10 +963,10 @@ fn duration_row(
     popup: &NSPopUpButton,
     mtm: MainThreadMarker,
 ) -> Retained<NSStackView> {
-    trailing_control_row(caption, nv(popup), mtm)
+    control_row(caption, nv(popup), mtm)
 }
 
-fn trailing_control_row(
+fn control_row(
     caption: &NSTextField,
     control: &NSView,
     mtm: MainThreadMarker,
@@ -960,12 +980,209 @@ fn trailing_control_row(
     row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
     row.setDistribution(NSStackViewDistribution::Fill);
     row.setAlignment(NSLayoutAttribute::CenterY);
-    row.setSpacing(8.0);
+    row.setSpacing(10.0);
+    row.setEdgeInsets(NSEdgeInsets {
+        top: 5.0,
+        left: 11.0,
+        bottom: 5.0,
+        right: 11.0,
+    });
     arrange(&row, caption);
     row.addArrangedSubview(control);
     nv(&*row)
-        .widthAnchor()
-        .constraintEqualToConstant(DETAIL_MAX_WIDTH - DETAIL_INSET)
+        .heightAnchor()
+        .constraintGreaterThanOrEqualToConstant(32.0)
         .setActive(true);
+    fill_width(nv(&*row));
+    row
+}
+
+fn sheet_head(
+    back: &NSButton,
+    title: &NSTextField,
+    mtm: MainThreadMarker,
+) -> Retained<NSStackView> {
+    let tail = NSView::new(mtm);
+    nv(&*tail)
+        .widthAnchor()
+        .constraintEqualToConstant(28.0)
+        .setActive(true);
+    let row = NSStackView::new(mtm);
+    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    row.setAlignment(NSLayoutAttribute::CenterY);
+    row.setDistribution(NSStackViewDistribution::Fill);
+    row.setSpacing(0.0);
+    arrange(&row, back);
+    arrange(&row, title);
+    arrange(&row, &tail);
+    nv(&*row)
+        .heightAnchor()
+        .constraintEqualToConstant(36.0)
+        .setActive(true);
+    fill_width(nv(&*row));
+    row
+}
+
+fn chrome_bar(
+    leading: &NSButton,
+    middle: Option<&NSButton>,
+    trailing: Option<&NSButton>,
+    mtm: MainThreadMarker,
+) -> Retained<NSStackView> {
+    let row = NSStackView::new(mtm);
+    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    row.setAlignment(NSLayoutAttribute::CenterY);
+    row.setSpacing(2.0);
+    let wrap = column(mtm, 0.0, 0.0);
+    wrap.setAlignment(NSLayoutAttribute::CenterX);
+    arrange(&row, leading);
+    if let Some(middle) = middle {
+        arrange(&row, &hairline(mtm));
+        arrange(&row, middle);
+    }
+    if let Some(trailing) = trailing {
+        arrange(&row, &hairline(mtm));
+        arrange(&row, trailing);
+    }
+    arrange(&wrap, &row);
+    fill_width(nv(&*wrap));
+    nv(&*wrap)
+        .heightAnchor()
+        .constraintEqualToConstant(36.0)
+        .setActive(true);
+    wrap
+}
+
+fn hairline(mtm: MainThreadMarker) -> Retained<NSBox> {
+    let line = NSBox::new(mtm);
+    line.setBoxType(NSBoxType::Separator);
+    nv(&*line)
+        .widthAnchor()
+        .constraintEqualToConstant(1.0)
+        .setActive(true);
+    nv(&*line)
+        .heightAnchor()
+        .constraintEqualToConstant(12.0)
+        .setActive(true);
+    line
+}
+
+fn index_badge(index: &str, mtm: MainThreadMarker) -> Retained<NSBox> {
+    let badge = NSBox::new(mtm);
+    badge.setBoxType(NSBoxType::Custom);
+    badge.setTitlePosition(NSTitlePosition::NoTitle);
+    badge.setCornerRadius(11.0);
+    badge.setBorderWidth(0.0);
+    badge.setFillColor(&NSColor::controlAccentColor());
+    nv(&*badge)
+        .widthAnchor()
+        .constraintEqualToConstant(22.0)
+        .setActive(true);
+    nv(&*badge)
+        .heightAnchor()
+        .constraintEqualToConstant(22.0)
+        .setActive(true);
+    let label = NSTextField::labelWithString(&ns(index), mtm);
+    label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
+    label.setTextColor(Some(&NSColor::whiteColor()));
+    label.setAlignment(NSTextAlignment::Center);
+    badge.setContentView(Some(nv(&*label)));
+    badge
+}
+
+fn help_step(
+    title: &NSTextField,
+    detail: &NSTextField,
+    index: &str,
+    mtm: MainThreadMarker,
+) -> Retained<NSStackView> {
+    let copy = column(mtm, 2.0, 0.0);
+    copy.setAlignment(NSLayoutAttribute::Leading);
+    arrange(&copy, title);
+    arrange(&copy, detail);
+    fill_width(nv(&*copy));
+    let row = NSStackView::new(mtm);
+    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    row.setAlignment(NSLayoutAttribute::Top);
+    row.setSpacing(10.0);
+    row.setEdgeInsets(NSEdgeInsets {
+        top: 9.0,
+        left: 12.0,
+        bottom: 9.0,
+        right: 12.0,
+    });
+    arrange(&row, &index_badge(index, mtm));
+    arrange(&row, &copy);
+    fill_width(nv(&*row));
+    row
+}
+
+fn help_hotkey_step(
+    title: &NSTextField,
+    before: &NSTextField,
+    hotkey: &NSTextField,
+    after: &NSTextField,
+    mtm: MainThreadMarker,
+) -> Retained<NSStackView> {
+    let keys = NSStackView::new(mtm);
+    keys.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    keys.setAlignment(NSLayoutAttribute::CenterY);
+    keys.setSpacing(4.0);
+    arrange(&keys, before);
+    arrange(&keys, hotkey);
+    arrange(&keys, after);
+    fill_width(nv(&*keys));
+    let copy = column(mtm, 2.0, 0.0);
+    copy.setAlignment(NSLayoutAttribute::Leading);
+    arrange(&copy, title);
+    arrange(&copy, &keys);
+    fill_width(nv(&*copy));
+    let row = NSStackView::new(mtm);
+    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    row.setAlignment(NSLayoutAttribute::Top);
+    row.setSpacing(10.0);
+    row.setEdgeInsets(NSEdgeInsets {
+        top: 9.0,
+        left: 12.0,
+        bottom: 9.0,
+        right: 12.0,
+    });
+    arrange(&row, &index_badge("3", mtm));
+    arrange(&row, &copy);
+    fill_width(nv(&*row));
+    row
+}
+
+fn help_note(copy: &NSTextField, symbol: &str, mtm: MainThreadMarker) -> Retained<NSStackView> {
+    let icon = NSImageView::new(mtm);
+    if let Some(image) =
+        NSImage::imageWithSystemSymbolName_accessibilityDescription(&ns(symbol), None)
+    {
+        image.setTemplate(true);
+        icon.setImage(Some(&image));
+    }
+    icon.setContentTintColor(Some(&NSColor::controlAccentColor()));
+    icon.setEditable(false);
+    nv(&*icon)
+        .widthAnchor()
+        .constraintEqualToConstant(22.0)
+        .setActive(true);
+    nv(&*icon)
+        .heightAnchor()
+        .constraintEqualToConstant(22.0)
+        .setActive(true);
+    let row = NSStackView::new(mtm);
+    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    row.setAlignment(NSLayoutAttribute::Top);
+    row.setSpacing(10.0);
+    row.setEdgeInsets(NSEdgeInsets {
+        top: 9.0,
+        left: 12.0,
+        bottom: 9.0,
+        right: 12.0,
+    });
+    arrange(&row, &icon);
+    arrange(&row, copy);
+    fill_width(nv(&*row));
     row
 }

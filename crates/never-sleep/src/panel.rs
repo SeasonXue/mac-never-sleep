@@ -7,14 +7,13 @@ use never_sleep_core::{AppConfig, DurationPref, Lang, ViewModel, DEFAULT_HOTKEY_
 /// Ignore a second Start/End click that AppKit queued from the same press.
 pub const TOGGLE_COOLDOWN_MS: u64 = 400;
 
-/// Compact utility panel; not glued to the status item.
-pub const UTILITY_WIDTH: f64 = 640.0;
-pub const UTILITY_HEIGHT: f64 = 420.0;
-pub const UTILITY_MIN_WIDTH: f64 = 560.0;
-pub const UTILITY_MIN_HEIGHT: f64 = 360.0;
-pub const SIDEBAR_WIDTH: f64 = 172.0;
-pub const DETAIL_INSET: f64 = 28.0;
-pub const DETAIL_MAX_WIDTH: f64 = 400.0;
+/// Compact menu-bar panel matching `docs/screenshots` (not glued to the icon).
+pub const PANEL_WIDTH: f64 = 320.0;
+pub const PANEL_HEIGHT: f64 = 480.0;
+pub const HERO_SIZE: f64 = 124.0;
+pub const HERO_IMAGE: f64 = 104.0;
+pub const CARD_RADIUS: f64 = 8.0;
+pub const CONTENT_INSET: f64 = 16.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelPlacement {
@@ -211,6 +210,9 @@ pub struct PanelState {
     pub help_step2_title: String,
     pub help_step2_detail: String,
     pub help_step3_title: String,
+    pub help_step3_before: String,
+    pub help_hotkey: String,
+    pub help_step3_after: String,
     pub help_step3: String,
     pub help_notes: String,
     pub help_note_lid: String,
@@ -288,6 +290,9 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
         help_step2_title: t.help_step2_title().into(),
         help_step2_detail: t.help_step2_detail().into(),
         help_step3_title: t.help_step3_title().into(),
+        help_step3_before: t.help_step3_before().into(),
+        help_hotkey: DEFAULT_HOTKEY_LABEL.into(),
+        help_step3_after: t.help_step3_after().into(),
         help_step3,
         help_notes: t.help_notes().into(),
         help_note_lid: t.help_note_lid().into(),
@@ -368,14 +373,13 @@ mod tests {
     }
 
     #[test]
-    fn utility_panel_tokens_match_the_design_spec() {
-        assert_eq!(UTILITY_WIDTH, 640.0);
-        assert_eq!(UTILITY_HEIGHT, 420.0);
-        assert_eq!(UTILITY_MIN_WIDTH, 560.0);
-        assert_eq!(UTILITY_MIN_HEIGHT, 360.0);
-        assert_eq!(SIDEBAR_WIDTH, 172.0);
-        assert_eq!(DETAIL_INSET, 28.0);
-        assert_eq!(DETAIL_MAX_WIDTH, 400.0);
+    fn screenshot_panel_tokens_match_docs_shots() {
+        assert_eq!(PANEL_WIDTH, 320.0);
+        assert_eq!(PANEL_HEIGHT, 480.0);
+        assert_eq!(HERO_SIZE, 124.0);
+        assert_eq!(HERO_IMAGE, 104.0);
+        assert_eq!(CARD_RADIUS, 8.0);
+        assert_eq!(CONTENT_INSET, 16.0);
     }
 
     #[test]
@@ -451,6 +455,8 @@ mod tests {
         assert!(state.lid_awake_label.contains("best effort"));
         assert!(state.help_note_lid.contains("power"));
         assert!(state.help_step3.contains(DEFAULT_HOTKEY_LABEL));
+        assert_eq!(state.help_hotkey, DEFAULT_HOTKEY_LABEL);
+        assert_eq!(state.help_step3_before, t.help_step3_before());
         assert_eq!(state.battery, t.battery_floor_on(DEFAULT_BATTERY_FLOOR));
         assert!(!state.active);
         assert_eq!(state.status_title, t.panel_idle_title());

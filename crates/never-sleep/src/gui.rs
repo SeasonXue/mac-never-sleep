@@ -23,7 +23,7 @@ use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
     panel_placement, panel_state, PanelPlacement, PanelState, SidebarItem, ToggleGate,
-    UTILITY_HEIGHT, UTILITY_MIN_HEIGHT, UTILITY_MIN_WIDTH, UTILITY_WIDTH,
+    PANEL_HEIGHT, PANEL_WIDTH,
 };
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
@@ -66,15 +66,14 @@ impl Popover {
     ) -> Result<Self, String> {
         let window = WindowBuilder::new()
             .with_title("Never Sleep")
-            .with_inner_size(LogicalSize::new(UTILITY_WIDTH, UTILITY_HEIGHT))
-            .with_min_inner_size(LogicalSize::new(UTILITY_MIN_WIDTH, UTILITY_MIN_HEIGHT))
-            .with_resizable(true)
-            .with_decorations(true)
-            .with_transparent(false)
+            .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
+            .with_resizable(false)
+            .with_decorations(false)
+            .with_transparent(true)
             .with_visible(false)
             .with_always_on_top(false)
             .with_has_shadow(true)
-            .with_movable_by_window_background(false)
+            .with_movable_by_window_background(true)
             .build(event_loop)
             .map_err(|e| format!("panel window: {e}"))?;
 
@@ -116,8 +115,8 @@ impl Popover {
             return;
         };
         let scale = self.window.scale_factor();
-        let width = UTILITY_WIDTH * scale;
-        let height = UTILITY_HEIGHT * scale;
+        let width = PANEL_WIDTH * scale;
+        let height = PANEL_HEIGHT * scale;
         let origin = monitor.position();
         let size = monitor.size();
         let x = f64::from(origin.x) + (f64::from(size.width) - width) / 2.0;

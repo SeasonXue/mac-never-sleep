@@ -8,7 +8,7 @@ The UI is **English by default**, with Simplified Chinese when the system langua
 
 ## A look at the app
 
-One left-click on the menu-bar sun opens a compact **utility panel** (sidebar + detail, not a popover stuck to the icon). The Standby pane has **Start Screen-Off Standby** — the glyph flips to a moon and the display goes dark about 1.5 seconds later. Close the window or click the icon again to hide it; **End Standby** stays clickable while a session is running. Display, lid, safeguards, and language live in their own sidebar panes.
+One left-click on the menu-bar sun opens a compact panel (the same layout as the screenshots: coin, status, Start / End, grouped card). Press **Start Screen-Off Standby** — the coin flips to a moon and the display goes dark about 1.5 seconds later. Close the panel or click the icon again to hide it; **End Standby** stays clickable while a session is running. More Settings opens the rest of the toggles.
 
 <table>
   <tr>
@@ -85,7 +85,7 @@ cargo build -p never-sleep --release
 open "dist/Never Sleep.app"
 ```
 
-An anthropomorphic sun appears in the menu bar. Left-click it to open the utility panel, then press **Start Screen-Off Standby**. The status glyph flips to a moon before the display turns off about 1.5 seconds later; press **End Standby** to stop. Close the window (or click the icon again) to hide it — that does not end standby. Right-click keeps the native fallback menu (including Show Window and Settings).
+An anthropomorphic sun appears in the menu bar. Left-click it to open the panel, then press **Start Screen-Off Standby**. The coin flips to a moon before the display turns off about 1.5 seconds later; press **End Standby** to stop. Hide the panel (or click the icon again) — that does not end standby. Right-click keeps the native fallback menu.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
