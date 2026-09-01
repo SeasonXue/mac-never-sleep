@@ -7,9 +7,9 @@ use never_sleep_core::{AppConfig, DurationPref, Lang, ViewModel, DEFAULT_HOTKEY_
 /// Ignore a second Start/End click that AppKit queued from the same press.
 pub const TOGGLE_COOLDOWN_MS: u64 = 400;
 
-/// Compact menu-bar popover matching `docs/screenshots`.
+/// Compact menu-bar popover. Height hugs the packed main column (not a 480pt void).
 pub const PANEL_WIDTH: f64 = 320.0;
-pub const PANEL_HEIGHT: f64 = 480.0;
+pub const PANEL_HEIGHT: f64 = 405.0;
 pub const HERO_SIZE: f64 = 124.0;
 pub const HERO_IMAGE: f64 = 104.0;
 pub const CARD_RADIUS: f64 = 8.0;
@@ -17,6 +17,12 @@ pub const CONTENT_INSET: f64 = 16.0;
 /// Screenshot `.row`: 32pt cell, 11pt left/right. Vertical padding lives inside the 32pt.
 pub const CARD_ROW_HEIGHT: f64 = 32.0;
 pub const CARD_ROW_INSET_X: f64 = 11.0;
+/// Hairline between grouped-card rows. NSBox separators must be this tall, not the default 11pt.
+pub const CARD_HAIRLINE: f64 = 1.0;
+/// Space between the last menu block and 更多设置 / 退出. Not a stretch void.
+pub const FOOTER_GAP: f64 = 8.0;
+pub const PRIMARY_HEIGHT: f64 = 28.0;
+pub const FOOTER_HEIGHT: f64 = 36.0;
 /// Rounded panel chrome; matches the HTML-era `.panel` radius.
 pub const PANEL_CORNER: f64 = 10.0;
 /// Transparent window padding so the layer shadow can fade out around the card.
@@ -60,6 +66,23 @@ pub fn window_width() -> f64 {
 
 pub fn window_height() -> f64 {
     PANEL_HEIGHT + SHADOW_INSET * 2.0
+}
+
+/// Packed main column: coin, status, button, 3-row card, chrome. No stretch void.
+pub fn panel_hug_height() -> f64 {
+    CONTENT_INSET * 2.0
+        + HERO_SIZE
+        + 12.0
+        + 22.0
+        + 3.0
+        + 16.0
+        + 14.0
+        + PRIMARY_HEIGHT
+        + 12.0
+        + CARD_ROW_HEIGHT * 3.0
+        + CARD_HAIRLINE * 2.0
+        + FOOTER_GAP
+        + FOOTER_HEIGHT
 }
 
 pub fn panel_fill_rgb(active: bool) -> [u8; 3] {
@@ -463,7 +486,11 @@ mod tests {
     #[test]
     fn screenshot_panel_tokens_match_docs_shots() {
         assert_eq!(PANEL_WIDTH, 320.0);
-        assert_eq!(PANEL_HEIGHT, 480.0);
+        assert_eq!(
+            PANEL_HEIGHT,
+            panel_hug_height(),
+            "the popover hugs the main column; 480pt left a void between the card and 更多设置"
+        );
         assert_eq!(HERO_SIZE, 124.0);
         assert_eq!(HERO_IMAGE, 104.0);
         assert_eq!(CARD_RADIUS, 8.0);
@@ -516,6 +543,8 @@ mod tests {
     fn grouped_menu_rows_hug_the_hairline() {
         assert_eq!(CARD_ROW_HEIGHT, 32.0);
         assert_eq!(CARD_ROW_INSET_X, 11.0);
+        assert_eq!(CARD_HAIRLINE, 1.0);
+        assert_eq!(FOOTER_GAP, 8.0);
         assert_eq!(
             CARD_SEPARATOR_GAP, 0.0,
             "screenshot rows sit on the 0.5pt hairline; extra stack gap doubles the menu spacing"
@@ -523,6 +552,11 @@ mod tests {
         assert_eq!(
             HELP_ROW_PAD_Y, 9.0,
             "How-to / Keep-in-mind padding matches the HTML-era 9px, not 12px plus a separator gap"
+        );
+        assert_eq!(
+            panel_hug_height(),
+            PANEL_HEIGHT,
+            "window height is the packed main column, not a 480pt canvas with a stretch void"
         );
     }
 

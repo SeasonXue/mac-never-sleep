@@ -384,6 +384,23 @@ mod tests {
                 && grouped.contains("CARD_SEPARATOR_GAP > 0.0"),
             "grouped NSBox must not add default margins; hairlines get no extra stack gap"
         );
+        let sep = rust_fn_src(src, "separator");
+        assert!(
+            sep.contains("setContentViewMargins") && sep.contains("CARD_HAIRLINE"),
+            "NSBox separators include 5pt default margins unless zeroed; that gap is the loose menu"
+        );
+        assert!(
+            !src.contains("stretch(&footer_space)") && !src.contains("stretch(&settings_space)"),
+            "do not push 更多设置 / 退出 to the bottom of a tall window"
+        );
+        assert!(
+            src.contains("stretch(nv(&*scroll))"),
+            "How to use still fills leftover height with a pointer-scroll body"
+        );
+        assert!(
+            src.contains("FOOTER_GAP"),
+            "an 8pt gap is the only space between the last menu row and the chrome bar"
+        );
         assert!(
             src.contains("help_step(&help_step3_title") && src.contains("state.help_step3"),
             "step 3 is one wrapping sentence, not a forced break after the hotkey chip"

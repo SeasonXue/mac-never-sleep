@@ -30,10 +30,11 @@ use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
     grouped_copy_max_width, hero_flip_radians, hero_flips, hero_shows_moon, motion_duration_secs,
     panel_fill_rgb, panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState,
-    PanelView, SidebarItem, CARD_RADIUS, CARD_ROW_HEIGHT, CARD_ROW_INSET_X, CARD_SEPARATOR_GAP,
-    CONTENT_INSET, HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS,
-    HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB, PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET,
-    SHADOW_OFFSET_Y, SHADOW_OPACITY, SHADOW_RADIUS,
+    PanelView, SidebarItem, CARD_HAIRLINE, CARD_RADIUS, CARD_ROW_HEIGHT, CARD_ROW_INSET_X,
+    CARD_SEPARATOR_GAP, CONTENT_INSET, FOOTER_GAP, FOOTER_HEIGHT, HELP_ROW_GAP, HELP_ROW_GLYPH,
+    HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB,
+    PANEL_COLOR_SECS, PANEL_CORNER, PRIMARY_HEIGHT, SHADOW_INSET, SHADOW_OFFSET_Y, SHADOW_OPACITY,
+    SHADOW_RADIUS,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -351,7 +352,7 @@ impl NativePanel {
         let primary = push_button(&target, sel!(toggle:), NSBezelStyle::Push, mtm);
         nv(&*primary)
             .heightAnchor()
-            .constraintEqualToConstant(28.0)
+            .constraintEqualToConstant(PRIMARY_HEIGHT)
             .setActive(true);
         fill_width(nv(&*primary));
 
@@ -380,6 +381,7 @@ impl NativePanel {
         status.setAlignment(NSLayoutAttribute::CenterX);
         arrange(&status, &status_title);
         arrange(&status, &summary);
+        arrange(&status, &warning);
 
         let hero_wrap = column(mtm, 0.0, 0.0);
         hero_wrap.setAlignment(NSLayoutAttribute::CenterX);
@@ -391,20 +393,15 @@ impl NativePanel {
         arrange(&main_stack, &hero_wrap);
         spacer(&main_stack, 12.0, mtm);
         arrange(&main_stack, &status);
-        spacer(&main_stack, 6.0, mtm);
-        arrange(&main_stack, &warning);
         spacer(&main_stack, 14.0, mtm);
         arrange(&main_stack, &primary);
         spacer(&main_stack, 12.0, mtm);
         arrange(&main_stack, &session_card);
-        let footer_space = NSView::new(mtm);
-        stretch(&footer_space);
-        arrange(&main_stack, &footer_space);
+        spacer(&main_stack, FOOTER_GAP, mtm);
         arrange(&main_stack, &footer);
         pin_fill(&main_view, nv(&*main_stack));
         span_stack(&main_stack, nv(&*hero_wrap));
         span_stack(&main_stack, nv(&*status));
-        span_stack(&main_stack, nv(&*warning));
         span_stack(&main_stack, nv(&*primary));
         span_stack(&main_stack, nv(&*session_card));
         span_stack(&main_stack, nv(&*footer));
@@ -458,9 +455,7 @@ impl NativePanel {
         arrange(&settings_stack, &settings_card);
         spacer(&settings_stack, 12.0, mtm);
         arrange(&settings_stack, &language);
-        let settings_space = NSView::new(mtm);
-        stretch(&settings_space);
-        arrange(&settings_stack, &settings_space);
+        spacer(&settings_stack, FOOTER_GAP, mtm);
         arrange(&settings_stack, &settings_footer);
         pin_fill(&settings_view, nv(&*settings_stack));
         span_stack(&settings_stack, nv(&*settings_head));
@@ -973,6 +968,11 @@ fn grouped_card(mtm: MainThreadMarker, rows: &[Retained<NSStackView>]) -> Retain
 fn separator(mtm: MainThreadMarker) -> Retained<NSBox> {
     let line = NSBox::new(mtm);
     line.setBoxType(NSBoxType::Separator);
+    line.setContentViewMargins(objc2_foundation::NSSize::new(0.0, 0.0));
+    nv(&*line)
+        .heightAnchor()
+        .constraintEqualToConstant(CARD_HAIRLINE)
+        .setActive(true);
     line
 }
 
@@ -1222,7 +1222,7 @@ fn chrome_bar(
     fill_width(nv(&*wrap));
     nv(&*wrap)
         .heightAnchor()
-        .constraintEqualToConstant(36.0)
+        .constraintEqualToConstant(FOOTER_HEIGHT)
         .setActive(true);
     wrap
 }
