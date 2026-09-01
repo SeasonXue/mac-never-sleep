@@ -2,6 +2,7 @@
 
 use std::ops::Deref;
 
+use objc2::encode::{Encode, Encoding};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, ClassType, DefinedClass, MainThreadOnly};
@@ -21,10 +22,7 @@ use objc2_foundation::{
     MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString, NSUserDefaults,
     NSValue,
 };
-use objc2_quartz_core::{
-    CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, CATransaction, CATransform3D,
-    CATransform3DMakeRotation, NSValueCATransform3DAdditions,
-};
+use objc2_quartz_core::{CABasicAnimation, CALayer, CAMediaTimingFunction, CATransaction};
 use tao::event_loop::EventLoopProxy;
 use tao::platform::macos::WindowExtMacOS;
 use tao::window::Window;
@@ -690,10 +688,12 @@ impl NativePanel {
         set_fill_color(&self.wash, panel_fill_rgb(active), color_secs);
         set_coin_flip(&self.coin, active, flip_secs);
         if let Some(window) = self.wash.window() {
-            let name = if active {
-                NSAppearanceNameDarkAqua
-            } else {
-                NSAppearanceNameAqua
+            let name = unsafe {
+                if active {
+                    NSAppearanceNameDarkAqua
+                } else {
+                    NSAppearanceNameAqua
+                }
             };
             if let Some(appearance) = NSAppearance::appearanceNamed(name) {
                 window.setAppearance(Some(&appearance));
@@ -820,7 +820,7 @@ fn panel_shell(
     clip.setWantsLayer(true);
     pin_fill(&card, &clip);
     if let Some(layer) = backing_layer(&clip) {
-        layer.setCornerRadius(PANEL_CORNER);
+        layer_set_corner_radius(&layer, PANEL_CORNER);
         layer.setMasksToBounds(true);
     }
 
@@ -1290,19 +1290,17 @@ fn coin_flip(sun: &NSImage, moon: &NSImage, mtm: MainThreadMarker) -> Retained<N
     if let Some(layer) = backing_layer(&coin) {
         let mut perspective = identity_transform();
         perspective.m34 = -1.0 / 760.0;
-        layer.setSublayerTransform(perspective);
+        layer_set_sublayer_transform(&layer, perspective);
     }
     if let Some(layer) = backing_layer(nv(&*sun_face)) {
         layer.setDoubleSided(false);
     }
     if let Some(layer) = backing_layer(nv(&*moon_face)) {
         layer.setDoubleSided(false);
-        layer.setTransform(CATransform3DMakeRotation(
-            std::f64::consts::PI,
-            0.0,
-            1.0,
-            0.0,
-        ));
+        layer_set_transform(
+            &layer,
+            CATransform3DMakeRotation(std::f64::consts::PI, 0.0, 1.0, 0.0),
+        );
     }
     coin
 }
@@ -1320,11 +1318,11 @@ fn decorate_card_shadow(card: &NSView) {
     let Some(layer) = backing_layer(card) else {
         return;
     };
-    layer.setCornerRadius(PANEL_CORNER);
+    layer_set_corner_radius(&layer, PANEL_CORNER);
     layer.setMasksToBounds(false);
     layer.setShadowOpacity(SHADOW_OPACITY);
-    layer.setShadowRadius(SHADOW_RADIUS);
-    layer.setShadowOffset(objc2_foundation::NSSize::new(0.0, -8.0));
+    layer_set_shadow_radius(&layer, SHADOW_RADIUS);
+    layer_set_shadow_offset(&layer, 0.0, -8.0);
     layer.setShadowColor(Some(&cg_color(&NSColor::blackColor())));
 }
 
@@ -1357,9 +1355,9 @@ fn set_coin_flip(coin: &NSView, active: bool, duration: f64) {
         let anim: Retained<CABasicAnimation> = unsafe {
             msg_send![CABasicAnimation::class(), animationWithKeyPath: &*ns("transform")]
         };
-        anim.setDuration(duration);
-        let from_val = unsafe { NSValue::valueWithCATransform3D(from) };
-        let to_val = unsafe { NSValue::valueWithCATransform3D(to) };
+        anim_set_duration(&anim, duration);
+        let from_val = value_with_transform(from);
+        let to_val = value_with_transform(to);
         unsafe {
             anim.setFromValue(Some(value_obj(&from_val)));
             anim.setToValue(Some(value_obj(&to_val)));
@@ -1376,7 +1374,7 @@ fn set_coin_flip(coin: &NSView, active: bool, duration: f64) {
         anim.setTimingFunction(Some(&timing));
         layer.addAnimation_forKey(&anim, Some(&ns("flip")));
     }
-    layer.setTransform(to);
+    layer_set_transform(&layer, to);
 }
 
 fn value_obj(value: &NSValue) -> &AnyObject {
@@ -1400,8 +1398,8 @@ fn reduce_motion() -> bool {
     NSUserDefaults::standardUserDefaults().boolForKey(&ns("AppleReduceMotion"))
 }
 
-fn identity_transform() -> CATransform3D {
-    CATransform3D {
+fn identity_transform() -> Transform3D {
+    Transform3D {
         m11: 1.0,
         m12: 0.0,
         m13: 0.0,
@@ -1419,4 +1417,95 @@ fn identity_transform() -> CATransform3D {
         m43: 0.0,
         m44: 1.0,
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Transform3D {
+    m11: f64,
+    m12: f64,
+    m13: f64,
+    m14: f64,
+    m21: f64,
+    m22: f64,
+    m23: f64,
+    m24: f64,
+    m31: f64,
+    m32: f64,
+    m33: f64,
+    m34: f64,
+    m41: f64,
+    m42: f64,
+    m43: f64,
+    m44: f64,
+}
+
+unsafe impl Encode for Transform3D {
+    const ENCODING: Encoding = Encoding::Struct(
+        "CATransform3D",
+        &[
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+            f64::ENCODING,
+        ],
+    );
+}
+
+#[link(name = "QuartzCore", kind = "framework")]
+unsafe extern "C" {
+    fn CATransform3DMakeRotation(angle: f64, x: f64, y: f64, z: f64) -> Transform3D;
+}
+
+fn layer_set_transform(layer: &CALayer, transform: Transform3D) {
+    unsafe {
+        let _: () = msg_send![layer, setTransform: transform];
+    }
+}
+
+fn layer_set_sublayer_transform(layer: &CALayer, transform: Transform3D) {
+    unsafe {
+        let _: () = msg_send![layer, setSublayerTransform: transform];
+    }
+}
+
+fn layer_set_corner_radius(layer: &CALayer, radius: f64) {
+    unsafe {
+        let _: () = msg_send![layer, setCornerRadius: radius];
+    }
+}
+
+fn layer_set_shadow_radius(layer: &CALayer, radius: f64) {
+    unsafe {
+        let _: () = msg_send![layer, setShadowRadius: radius];
+    }
+}
+
+fn layer_set_shadow_offset(layer: &CALayer, width: f64, height: f64) {
+    let size = objc2_foundation::NSSize::new(width, height);
+    unsafe {
+        let _: () = msg_send![layer, setShadowOffset: size];
+    }
+}
+
+fn anim_set_duration(anim: &CABasicAnimation, duration: f64) {
+    unsafe {
+        let _: () = msg_send![anim, setDuration: duration];
+    }
+}
+
+fn value_with_transform(transform: Transform3D) -> Retained<NSValue> {
+    unsafe { msg_send![NSValue::class(), valueWithCATransform3D: transform] }
 }

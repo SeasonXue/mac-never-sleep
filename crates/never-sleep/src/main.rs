@@ -402,6 +402,14 @@ mod tests {
             "labels use NSTextAlignment for left/center copy"
         );
         assert!(
+            cargo.contains("\"NSText\""),
+            "NSTextAlignment and setAlignment need the objc2-app-kit NSText feature"
+        );
+        assert!(
+            cargo.contains("\"CATransform3D\"") || src.contains("CATransform3DMakeRotation"),
+            "coin flip uses a Core Animation rotateY transform"
+        );
+        assert!(
             src.contains("NSAppearanceCustomization"),
             "idle/active appearance switch uses the AppKit customization trait"
         );
