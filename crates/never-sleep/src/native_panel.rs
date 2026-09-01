@@ -1297,10 +1297,7 @@ fn coin_flip(sun: &NSImage, moon: &NSImage, mtm: MainThreadMarker) -> Retained<N
     }
     if let Some(layer) = backing_layer(nv(&*moon_face)) {
         layer.setDoubleSided(false);
-        layer_set_transform(
-            &layer,
-            CATransform3DMakeRotation(std::f64::consts::PI, 0.0, 1.0, 0.0),
-        );
+        layer_set_transform(&layer, rotate_y(std::f64::consts::PI));
     }
     coin
 }
@@ -1349,9 +1346,9 @@ fn set_coin_flip(coin: &NSView, active: bool, duration: f64) {
     let Some(layer) = backing_layer(coin) else {
         return;
     };
-    let to = CATransform3DMakeRotation(hero_flip_radians(active), 0.0, 1.0, 0.0);
+    let to = rotate_y(hero_flip_radians(active));
     if duration > 0.0 {
-        let from = CATransform3DMakeRotation(hero_flip_radians(!active), 0.0, 1.0, 0.0);
+        let from = rotate_y(hero_flip_radians(!active));
         let anim: Retained<CABasicAnimation> = unsafe {
             msg_send![CABasicAnimation::class(), animationWithKeyPath: &*ns("transform")]
         };
@@ -1467,6 +1464,10 @@ unsafe impl Encode for Transform3D {
 #[link(name = "QuartzCore", kind = "framework")]
 unsafe extern "C" {
     fn CATransform3DMakeRotation(angle: f64, x: f64, y: f64, z: f64) -> Transform3D;
+}
+
+fn rotate_y(radians: f64) -> Transform3D {
+    unsafe { CATransform3DMakeRotation(radians, 0.0, 1.0, 0.0) }
 }
 
 fn layer_set_transform(layer: &CALayer, transform: Transform3D) {
