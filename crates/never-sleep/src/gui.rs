@@ -647,7 +647,7 @@ fn handle_ui_command(
     engine: &mut Engine,
     platform: &mut dyn Platform,
     handles: &MenuHandles,
-    mut popover: Option<&mut Popover>,
+    popover: Option<&mut Popover>,
     toggle_gate: &mut ToggleGate,
     control_flow: &mut ControlFlow,
 ) {

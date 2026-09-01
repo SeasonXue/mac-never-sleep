@@ -320,6 +320,10 @@ mod tests {
             "the primary action is a standard push button, not Glass (which looks disabled)"
         );
         assert!(
+            !src.contains("setFillColor(Some("),
+            "NSBox::setFillColor takes &NSColor, not Option"
+        );
+        assert!(
             gui.contains("const PANEL_WIDTH: f64 = 480.0"),
             "Settings-style content needs ~480pt, not a menu-extra popover"
         );

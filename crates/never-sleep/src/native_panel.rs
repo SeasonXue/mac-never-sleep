@@ -689,7 +689,7 @@ fn grouped_card(
             card.setTitlePosition(NSTitlePosition::NoTitle);
             card.setCornerRadius(10.0);
             card.setBorderWidth(0.0);
-            card.setFillColor(Some(&NSColor::controlBackgroundColor()));
+            card.setFillColor(&NSColor::controlBackgroundColor());
             card.setContentView(Some(nv(&*visual)));
             Retained::into_super(card)
         }
