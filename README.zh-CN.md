@@ -8,12 +8,12 @@
 
 ## 界面一览
 
-左键点一下菜单栏的太阳即可打开原生 AppKit 面板。点中央的大太阳开始——它会翻面成月亮，约 1.5 秒后屏幕关闭。面板使用系统液态玻璃（旧系统上则是 Vibrancy）。
+左键点一下菜单栏的太阳即可打开原生 AppKit 面板。点 **开始关屏待命** —— 状态图标翻成月亮，约 1.5 秒后屏幕关闭。面板按 macOS 菜单附加项来排（液态玻璃；旧系统上则是 Vibrancy）。
 
 <table>
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-idle-zh.png" width="260" alt="Never Sleep 未开启，点太阳即可开始">
+            <img src="docs/screenshots/main-idle-zh.png" width="260" alt="Never Sleep 未开启，点开始关屏待命">
     </td>
     <td align="center" valign="top" width="50%">
       <img src="docs/screenshots/main-active-zh.png" width="260" alt="Never Sleep 关屏待命中，屏幕已关、Mac 仍在线">
@@ -85,7 +85,7 @@ cargo build -p never-sleep --release
 open "dist/Never Sleep.app"
 ```
 
-菜单栏默认显示拟人化太阳图标。左键打开控制面板，点击中央太阳即可开始；太阳会翻面变成月亮，约 1.5 秒后屏幕关闭。再次点击月亮即可结束待命。右键图标仍可打开原生备用菜单。Finder 显示 **Never Sleep**。
+菜单栏默认显示拟人化太阳图标。左键打开控制面板，再点 **开始关屏待命**。状态图标会翻成月亮，约 1.5 秒后屏幕关闭。点 **结束待命**（或月亮图标）即可停止。右键图标仍可打开原生备用菜单。Finder 显示 **Never Sleep**。
 
 | 选项 | 默认 | 含义 |
 | --- | --- | --- |

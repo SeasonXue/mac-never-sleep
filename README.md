@@ -8,12 +8,12 @@ The UI is **English by default**, with Simplified Chinese when the system langua
 
 ## A look at the app
 
-One left-click on the menu-bar sun opens a native AppKit panel. Tap the large sun to start — it flips to a moon and the display goes dark about 1.5 seconds later. The panel uses system Liquid Glass (with vibrancy on older macOS).
+One left-click on the menu-bar sun opens a native AppKit panel. Press **Start Screen-Off Standby** — the glyph flips to a moon and the display goes dark about 1.5 seconds later. The panel follows macOS menu-extra layout (Liquid Glass, with vibrancy on older macOS).
 
 <table>
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-idle-en.png" width="260" alt="Never Sleep idle — tap the sun to start screen-off standby">
+      <img src="docs/screenshots/main-idle-en.png" width="260" alt="Never Sleep idle — press Start Screen-Off Standby">
     </td>
     <td align="center" valign="top" width="50%">
       <img src="docs/screenshots/main-active-en.png" width="260" alt="Never Sleep active — screen off, Mac stays online">
@@ -85,7 +85,7 @@ cargo build -p never-sleep --release
 open "dist/Never Sleep.app"
 ```
 
-An anthropomorphic sun appears in the menu bar. Left-click it to open the control panel, then click the large sun to start. It flips into the moon before the display turns off about 1.5 seconds later; click the moon again to end standby. Right-click keeps the native fallback menu available.
+An anthropomorphic sun appears in the menu bar. Left-click it to open the control panel, then press **Start Screen-Off Standby**. The status glyph flips to a moon before the display turns off about 1.5 seconds later; press **End Standby** (or the glyph) to stop. Right-click keeps the native fallback menu available.
 
 | Option | Default | Meaning |
 | --- | --- | --- |

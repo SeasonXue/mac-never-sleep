@@ -102,6 +102,13 @@ pub struct PanelState {
     pub resleep: String,
     pub battery: String,
     pub more_settings: String,
+    pub section_session: String,
+    pub section_display: String,
+    pub section_lid: String,
+    pub section_safeguards: String,
+    pub section_general: String,
+    pub language_label: String,
+    pub hotkey_hint: String,
     pub settings: String,
     pub back: String,
     pub screen_off_label: String,
@@ -166,6 +173,13 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
         resleep: t.resleep_display().into(),
         battery: vm.battery_floor_label.clone(),
         more_settings: t.more_settings().into(),
+        section_session: t.panel_section_session().into(),
+        section_display: t.panel_section_display().into(),
+        section_lid: t.panel_section_lid().into(),
+        section_safeguards: t.panel_section_safeguards().into(),
+        section_general: t.panel_section_general().into(),
+        language_label: t.language_menu().into(),
+        hotkey_hint: t.panel_hotkey_hint(),
         settings: t.settings_title().into(),
         back: t.back().into(),
         screen_off_label: t.screen_off_now().into(),
@@ -299,6 +313,9 @@ mod tests {
         let t = Tr::new(Lang::En);
         assert_eq!(state.more_settings, t.more_settings());
         assert_eq!(state.settings, t.settings_title());
+        assert_eq!(state.section_session, t.panel_section_session());
+        assert_eq!(state.language_label, t.language_menu());
+        assert!(state.hotkey_hint.contains(DEFAULT_HOTKEY_LABEL));
         assert_eq!(state.help, t.help_title());
         assert_eq!(state.back, t.back());
         assert_eq!(state.help_how, t.help_how());
@@ -328,7 +345,31 @@ mod tests {
         assert_eq!(state.status_title, t.panel_active_title());
         assert_eq!(state.summary, t.panel_summary_active());
         assert_eq!(state.primary_action, t.end_standby());
-        assert_eq!(state.more_settings, "更多设置");
+        assert_eq!(state.more_settings, "设置");
+        assert_eq!(state.section_session, "待命");
+        assert_eq!(state.section_display, "屏幕");
+        assert_eq!(state.section_lid, "合盖");
+        assert_eq!(state.section_safeguards, "保护");
+        assert_eq!(state.section_general, "通用");
+        assert_eq!(state.language_label, "语言");
         assert!(!state.help_note_lid.contains("熄屏待命"));
+    }
+
+    #[test]
+    fn panel_state_uses_grouped_macos_sections() {
+        let cfg = AppConfig::default();
+        let engine = Engine::new(cfg.clone());
+        let state = panel_state(&cfg, &engine.view(&host()));
+        let t = Tr::new(Lang::En);
+        assert_eq!(state.section_session, "Session");
+        assert_eq!(state.section_display, "Display");
+        assert_eq!(state.section_lid, "Lid");
+        assert_eq!(state.section_safeguards, "Safeguards");
+        assert_eq!(state.section_general, "General");
+        assert_eq!(state.language_label, "Language");
+        assert_eq!(state.more_settings, "Settings");
+        assert_eq!(state.hotkey_hint, t.panel_hotkey_hint());
+        assert_eq!(state.primary_action, t.start_standby());
+        assert!(state.hotkey_hint.contains("display off"));
     }
 }

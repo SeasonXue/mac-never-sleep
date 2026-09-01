@@ -110,7 +110,7 @@ impl Tr {
     }
 
     pub fn more_settings(self) -> &'static str {
-        self.pick("More Settings", "更多设置")
+        self.pick("Settings", "设置")
     }
 
     pub fn settings_title(self) -> &'static str {
@@ -119,6 +119,33 @@ impl Tr {
 
     pub fn back(self) -> &'static str {
         self.pick("Back", "返回")
+    }
+
+    pub fn panel_section_session(self) -> &'static str {
+        self.pick("Session", "待命")
+    }
+
+    pub fn panel_section_display(self) -> &'static str {
+        self.pick("Display", "屏幕")
+    }
+
+    pub fn panel_section_lid(self) -> &'static str {
+        self.pick("Lid", "合盖")
+    }
+
+    pub fn panel_section_safeguards(self) -> &'static str {
+        self.pick("Safeguards", "保护")
+    }
+
+    pub fn panel_section_general(self) -> &'static str {
+        self.pick("General", "通用")
+    }
+
+    pub fn panel_hotkey_hint(self) -> String {
+        match self.lang {
+            Lang::En => format!("{DEFAULT_HOTKEY_LABEL} works with the display off"),
+            Lang::Zh => format!("屏幕关掉时也可按 {DEFAULT_HOTKEY_LABEL}"),
+        }
     }
 
     pub fn onboarding(self) -> &'static str {
@@ -842,12 +869,26 @@ mod tests {
             "Display asleep, Mac stays online"
         );
         assert_eq!(zh.panel_summary_active(), "屏幕已休眠，Mac 仍在线");
-        assert_eq!(en.more_settings(), "More Settings");
-        assert_eq!(zh.more_settings(), "更多设置");
+        assert_eq!(en.more_settings(), "Settings");
+        assert_eq!(zh.more_settings(), "设置");
         assert_eq!(en.settings_title(), "Settings");
         assert_eq!(zh.settings_title(), "设置");
         assert_eq!(en.back(), "Back");
         assert_eq!(zh.back(), "返回");
+        assert_eq!(en.panel_section_session(), "Session");
+        assert_eq!(zh.panel_section_session(), "待命");
+        assert_eq!(en.panel_section_display(), "Display");
+        assert_eq!(zh.panel_section_display(), "屏幕");
+        assert_eq!(en.panel_section_lid(), "Lid");
+        assert_eq!(zh.panel_section_lid(), "合盖");
+        assert_eq!(en.panel_section_safeguards(), "Safeguards");
+        assert_eq!(zh.panel_section_safeguards(), "保护");
+        assert_eq!(en.panel_section_general(), "General");
+        assert_eq!(zh.panel_section_general(), "通用");
+        assert!(en.panel_hotkey_hint().contains(DEFAULT_HOTKEY_LABEL));
+        assert!(zh.panel_hotkey_hint().contains(DEFAULT_HOTKEY_LABEL));
+        assert!(en.panel_hotkey_hint().contains("display off"));
+        assert!(zh.panel_hotkey_hint().contains("屏幕"));
     }
 
     #[test]

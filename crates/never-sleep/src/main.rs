@@ -247,11 +247,65 @@ mod tests {
         );
         assert!(
             src.contains("show_settings"),
-            "More Settings stays reachable from the main view"
+            "Settings stays reachable from the main view"
         );
         assert!(
             src.contains("more_settings"),
-            "More Settings label is driven by Tr"
+            "Settings label is driven by Tr"
+        );
+        assert!(
+            src.contains("section_session"),
+            "main view groups session controls under a section header"
+        );
+        assert!(
+            src.contains("section_display"),
+            "settings groups display toggles"
+        );
+        assert!(
+            src.contains("hotkey_hint"),
+            "main view must show that the hotkey works with the display off"
+        );
+    }
+
+    #[test]
+    fn native_panel_follows_macos_menu_extra_layout() {
+        let src = include_str!("native_panel.rs");
+        let gui = include_str!("gui.rs");
+        assert!(
+            src.contains("constraintEqualToConstant(32.0)"),
+            "the sun/moon is a 32pt status glyph, not a giant centered CTA"
+        );
+        assert!(
+            !src.contains("constraintEqualToConstant(88.0)"),
+            "the 88pt hero coin is not macOS menu-extra practice"
+        );
+        assert!(
+            !src.contains("NSLayoutAttribute::CenterX"),
+            "menu extras lead-align; do not center the main stack"
+        );
+        assert!(
+            src.contains("section_header"),
+            "grouped System Settings-style section headers"
+        );
+        assert!(
+            src.contains("quit_main"),
+            "Quit stays on the root of the menu extra"
+        );
+        assert!(
+            !src.contains("quit_settings"),
+            "nested Settings must not repeat Quit (HIG)"
+        );
+        assert!(
+            src.contains("help_main"),
+            "How to use is reachable from the main chrome, not only Settings"
+        );
+        assert!(
+            gui.contains("const POPOVER_WIDTH: f64 = 300.0"),
+            "menu extras are compact (~300pt), not a 320pt iOS card"
+        );
+        assert!(
+            gui.contains("const POPOVER_HEIGHT: f64 = 400.0"),
+            "the shorter panel matches Control Center density"
         );
     }
 
@@ -347,7 +401,7 @@ mod tests {
         let src = include_str!("native_panel.rs");
         assert!(
             src.contains("NSScrollView"),
-            "help copy is longer than the panel; native AppKit must keep a scroll view"
+            "help and settings copy can exceed the panel; native AppKit must keep a scroll view"
         );
         assert!(
             src.contains("setHasVerticalScroller(true)"),

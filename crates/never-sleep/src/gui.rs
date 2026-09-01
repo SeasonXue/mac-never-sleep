@@ -47,8 +47,8 @@ pub(crate) enum UiCommand {
     Quit,
 }
 
-const POPOVER_WIDTH: f64 = 320.0;
-const POPOVER_HEIGHT: f64 = 480.0;
+const POPOVER_WIDTH: f64 = 300.0;
+const POPOVER_HEIGHT: f64 = 400.0;
 
 struct Popover {
     window: Window,

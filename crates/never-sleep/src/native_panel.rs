@@ -139,31 +139,38 @@ pub struct NativePanel {
     summary: Retained<NSTextField>,
     warning: Retained<NSTextField>,
     primary: Retained<NSButton>,
+    session_header: Retained<NSTextField>,
     duration: Retained<NSPopUpButton>,
     duration_label: Retained<NSTextField>,
     resleep_label: Retained<NSTextField>,
     resleep: Retained<NSSwitch>,
     battery_label: Retained<NSTextField>,
     battery: Retained<NSSwitch>,
+    hotkey_hint: Retained<NSTextField>,
     more: Retained<NSButton>,
+    help_main: Retained<NSButton>,
     quit_main: Retained<NSButton>,
     settings_title: Retained<NSTextField>,
     back: Retained<NSButton>,
+    display_header: Retained<NSTextField>,
     screen_off_label: Retained<NSTextField>,
     screen_off: Retained<NSSwitch>,
+    lid_header: Retained<NSTextField>,
     lid_label: Retained<NSTextField>,
     lid: Retained<NSSwitch>,
     resleep_settings_label: Retained<NSTextField>,
     resleep_settings: Retained<NSSwitch>,
+    safeguards_header: Retained<NSTextField>,
     lock_label: Retained<NSTextField>,
     lock: Retained<NSSwitch>,
     battery_settings_label: Retained<NSTextField>,
     battery_settings: Retained<NSSwitch>,
+    general_header: Retained<NSTextField>,
     login_label: Retained<NSTextField>,
     login: Retained<NSSwitch>,
+    language_label: Retained<NSTextField>,
     language: Retained<NSSegmentedControl>,
     help_btn: Retained<NSButton>,
-    quit_settings: Retained<NSButton>,
     help_title: Retained<NSTextField>,
     help_back: Retained<NSButton>,
     help_kicker: Retained<NSTextField>,
@@ -189,8 +196,8 @@ impl NativePanel {
         let target = PanelTarget::new(mtm, proxy);
         let sun = load_png(include_bytes!("../ui/assets/sun.png"))?;
         let moon = load_png(include_bytes!("../ui/assets/moon.png"))?;
-        sun.setSize(objc2_foundation::NSSize::new(88.0, 88.0));
-        moon.setSize(objc2_foundation::NSSize::new(88.0, 88.0));
+        sun.setSize(objc2_foundation::NSSize::new(32.0, 32.0));
+        moon.setSize(objc2_foundation::NSSize::new(32.0, 32.0));
 
         let ns_window = unsafe { &*window.ns_window().cast::<NSWindow>() };
         ns_window.setOpaque(false);
@@ -252,15 +259,19 @@ impl NativePanel {
         hero.setBordered(false);
         hero.setImagePosition(NSCellImagePosition::ImageOnly);
         hero.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
-        hero.setFrameSize(objc2_foundation::NSSize::new(88.0, 88.0));
+        hero.setFrameSize(objc2_foundation::NSSize::new(32.0, 32.0));
         hero.heightAnchor()
-            .constraintEqualToConstant(88.0)
+            .constraintEqualToConstant(32.0)
             .setActive(true);
         hero.widthAnchor()
-            .constraintEqualToConstant(88.0)
+            .constraintEqualToConstant(32.0)
             .setActive(true);
+        nv(&*hero).setContentHuggingPriority_forOrientation(
+            1000.0_f32,
+            NSLayoutConstraintOrientation::Horizontal,
+        );
 
-        let status_title = heading(mtm, 17.0);
+        let status_title = heading(mtm, 15.0);
         let summary = wrap(mtm);
         let warning = wrap(mtm);
         warning.setTextColor(Some(&NSColor::systemOrangeColor()));
@@ -271,6 +282,8 @@ impl NativePanel {
             NSBezelStyle::Push
         };
         let primary = push_button(&target, sel!(toggle:), primary_style, mtm);
+        fill_width(nv(&*primary));
+        let session_header = section_header(mtm);
         let duration_label = label(mtm);
         let duration = NSPopUpButton::new(mtm);
         unsafe {
@@ -279,40 +292,59 @@ impl NativePanel {
         }
         let (resleep_label, resleep, resleep_row) = labeled_switch(&target, TAG_RESLEEP, mtm);
         let (battery_label, battery, battery_row) = labeled_switch(&target, TAG_BATTERY, mtm);
+        let hotkey_hint = footnote(mtm);
         let more = text_button(&target, sel!(more:), mtm);
+        let help_main = text_button(&target, sel!(help:), mtm);
         let quit_main = text_button(&target, sel!(quit:), mtm);
 
-        let main_stack = column(mtm, 12.0, 16.0);
-        main_stack.setAlignment(NSLayoutAttribute::CenterX);
-        arrange(&main_stack, &hero);
-        arrange(&main_stack, &status_title);
-        arrange(&main_stack, &summary);
+        let identity = column(mtm, 2.0, 0.0);
+        identity.setAlignment(NSLayoutAttribute::Width);
+        arrange(&identity, &status_title);
+        arrange(&identity, &summary);
+        fill_width(nv(&*identity));
+
+        let header = NSStackView::new(mtm);
+        header.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+        header.setAlignment(NSLayoutAttribute::CenterY);
+        header.setSpacing(10.0);
+        arrange(&header, &hero);
+        arrange(&header, &identity);
+
+        let main_stack = column(mtm, 10.0, 16.0);
+        main_stack.setAlignment(NSLayoutAttribute::Width);
+        arrange(&main_stack, &header);
         arrange(&main_stack, &warning);
         arrange(&main_stack, &primary);
-        let card = column(mtm, 8.0, 0.0);
-        card.setAlignment(NSLayoutAttribute::Width);
+        arrange(&main_stack, &session_header);
         arrange(
-            &card,
+            &main_stack,
             &duration_row(&duration_label, duration.as_ref(), mtm),
         );
-        arrange(&card, &resleep_row);
-        arrange(&card, &battery_row);
-        stretch(nv(&*card));
-        arrange(&main_stack, &card);
-        arrange(&main_stack, &footer(&more, &quit_main, mtm));
+        arrange(&main_stack, &resleep_row);
+        arrange(&main_stack, &battery_row);
+        arrange(&main_stack, &hotkey_hint);
+        arrange(
+            &main_stack,
+            &chrome_bar(&more, Some(&help_main), Some(&quit_main), mtm),
+        );
         fill(&main_view, &main_stack);
 
         let back = text_button(&target, sel!(back:), mtm);
-        let settings_title = heading(mtm, 15.0);
+        let settings_title = heading(mtm, 13.0);
+        let display_header = section_header(mtm);
         let (screen_off_label, screen_off, screen_off_row) =
             labeled_switch(&target, TAG_SCREEN_OFF, mtm);
-        let (lid_label, lid, lid_row) = labeled_switch(&target, TAG_LID, mtm);
         let (resleep_settings_label, resleep_settings, resleep_settings_row) =
             labeled_switch(&target, TAG_RESLEEP, mtm);
+        let lid_header = section_header(mtm);
+        let (lid_label, lid, lid_row) = labeled_switch(&target, TAG_LID, mtm);
+        let safeguards_header = section_header(mtm);
         let (lock_label, lock, lock_row) = labeled_switch(&target, TAG_LOCK, mtm);
         let (battery_settings_label, battery_settings, battery_settings_row) =
             labeled_switch(&target, TAG_BATTERY, mtm);
+        let general_header = section_header(mtm);
         let (login_label, login, login_row) = labeled_switch(&target, TAG_LOGIN, mtm);
+        let language_label = label(mtm);
         let language = NSSegmentedControl::new(mtm);
         language.setSegmentCount(2);
         language.setTrackingMode(NSSegmentSwitchTracking::SelectOne);
@@ -322,25 +354,51 @@ impl NativePanel {
             language.setTarget(Some(as_any(&target)));
             language.setAction(Some(sel!(languageChanged:)));
         }
-        stretch(nv(&*language));
+        nv(&*language).setContentHuggingPriority_forOrientation(
+            750.0_f32,
+            NSLayoutConstraintOrientation::Horizontal,
+        );
         let help_btn = text_button(&target, sel!(help:), mtm);
-        let quit_settings = text_button(&target, sel!(quit:), mtm);
+
+        let settings_body = column(mtm, 8.0, 0.0);
+        settings_body.setAlignment(NSLayoutAttribute::Width);
+        arrange(&settings_body, &display_header);
+        arrange(&settings_body, &screen_off_row);
+        arrange(&settings_body, &resleep_settings_row);
+        arrange(&settings_body, &lid_header);
+        arrange(&settings_body, &lid_row);
+        arrange(&settings_body, &safeguards_header);
+        arrange(&settings_body, &lock_row);
+        arrange(&settings_body, &battery_settings_row);
+        arrange(&settings_body, &general_header);
+        arrange(&settings_body, &login_row);
+        arrange(
+            &settings_body,
+            &trailing_control_row(&language_label, nv(&*language), mtm),
+        );
+
+        let settings_scroll = NSScrollView::new(mtm);
+        settings_scroll.setHasVerticalScroller(true);
+        settings_scroll.setAutohidesScrollers(true);
+        settings_scroll.setDrawsBackground(false);
+        settings_scroll.setBorderType(NSBorderType::NoBorder);
+        settings_scroll.setDocumentView(Some(&settings_body));
+        pin_document_width(&settings_scroll, nv(&*settings_body));
+        stretch(nv(&*settings_scroll));
+        nv(&*settings_scroll).setContentCompressionResistancePriority_forOrientation(
+            1.0_f32,
+            NSLayoutConstraintOrientation::Vertical,
+        );
 
         let settings_stack = column(mtm, 10.0, 16.0);
         settings_stack.setAlignment(NSLayoutAttribute::Width);
         arrange(&settings_stack, &header_row(&back, &settings_title, mtm));
-        arrange(&settings_stack, &screen_off_row);
-        arrange(&settings_stack, &lid_row);
-        arrange(&settings_stack, &resleep_settings_row);
-        arrange(&settings_stack, &lock_row);
-        arrange(&settings_stack, &battery_settings_row);
-        arrange(&settings_stack, &login_row);
-        arrange(&settings_stack, &language);
-        arrange(&settings_stack, &footer(&help_btn, &quit_settings, mtm));
+        arrange(&settings_stack, &settings_scroll);
+        arrange(&settings_stack, &chrome_bar(&help_btn, None, None, mtm));
         fill(&settings_view, &settings_stack);
 
         let help_back = text_button(&target, sel!(back:), mtm);
-        let help_title = heading(mtm, 15.0);
+        let help_title = heading(mtm, 13.0);
         let help_kicker = heading(mtm, 12.0);
         let help_lead = wrap(mtm);
         let help_how = heading(mtm, 12.0);
@@ -404,31 +462,38 @@ impl NativePanel {
             summary,
             warning,
             primary,
+            session_header,
             duration,
             duration_label,
             resleep_label,
             resleep,
             battery_label,
             battery,
+            hotkey_hint,
             more,
+            help_main,
             quit_main,
             settings_title,
             back,
+            display_header,
             screen_off_label,
             screen_off,
+            lid_header,
             lid_label,
             lid,
             resleep_settings_label,
             resleep_settings,
+            safeguards_header,
             lock_label,
             lock,
             battery_settings_label,
             battery_settings,
+            general_header,
             login_label,
             login,
+            language_label,
             language,
             help_btn,
-            quit_settings,
             help_title,
             help_back,
             help_kicker,
@@ -458,6 +523,7 @@ impl NativePanel {
         set_text(&self.warning, &state.warning);
         self.warning.setHidden(state.warning.is_empty());
         self.primary.setTitle(&ns(&state.primary_action));
+        set_text(&self.session_header, &state.section_session);
         set_text(&self.duration_label, &state.duration_label);
         self.duration.removeAllItems();
         self.duration
@@ -471,24 +537,31 @@ impl NativePanel {
         set_switch(&self.resleep, state.resleep_display);
         set_text(&self.battery_label, &state.battery);
         set_switch(&self.battery, state.battery_floor);
+        set_text(&self.hotkey_hint, &state.hotkey_hint);
         self.more.setTitle(&ns(&state.more_settings));
+        self.help_main.setTitle(&ns(&state.help));
         self.quit_main.setTitle(&ns(&state.quit));
 
         set_text(&self.settings_title, &state.settings);
         self.back.setTitle(&ns(&state.back));
         self.back.setToolTip(Some(&ns(&state.back)));
+        set_text(&self.display_header, &state.section_display);
         set_text(&self.screen_off_label, &state.screen_off_label);
         set_switch(&self.screen_off, state.screen_off);
+        set_text(&self.lid_header, &state.section_lid);
         set_text(&self.lid_label, &state.lid_awake_label);
         set_switch(&self.lid, state.lid_awake);
         set_text(&self.resleep_settings_label, &state.resleep);
         set_switch(&self.resleep_settings, state.resleep_display);
+        set_text(&self.safeguards_header, &state.section_safeguards);
         set_text(&self.lock_label, &state.lock_screen_label);
         set_switch(&self.lock, state.lock_screen);
         set_text(&self.battery_settings_label, &state.battery);
         set_switch(&self.battery_settings, state.battery_floor);
+        set_text(&self.general_header, &state.section_general);
         set_text(&self.login_label, &state.launch_at_login_label);
         set_switch(&self.login, state.launch_at_login);
+        set_text(&self.language_label, &state.language_label);
         self.language
             .setSelectedSegment(if state.lang == never_sleep_core::Lang::Zh {
                 1
@@ -496,7 +569,6 @@ impl NativePanel {
                 0
             });
         self.help_btn.setTitle(&ns(&state.help));
-        self.quit_settings.setTitle(&ns(&state.quit));
 
         set_text(&self.help_title, &state.help);
         self.help_back.setTitle(&ns(&state.back));
@@ -607,6 +679,13 @@ fn stretch(view: &NSView) {
     view.setContentHuggingPriority_forOrientation(1.0_f32, NSLayoutConstraintOrientation::Vertical);
 }
 
+fn fill_width(view: &NSView) {
+    view.setContentHuggingPriority_forOrientation(
+        1.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+}
+
 fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
     document.setTranslatesAutoresizingMaskIntoConstraints(false);
     let clip = scroll.contentView();
@@ -648,7 +727,15 @@ fn heading(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
     let field = NSTextField::labelWithString(&ns(""), mtm);
     field.setFont(Some(&NSFont::boldSystemFontOfSize(size)));
     field.setTextColor(Some(&NSColor::labelColor()));
-    field.setAlignment(NSTextAlignment::Center);
+    field.setAlignment(NSTextAlignment::Left);
+    field
+}
+
+fn section_header(mtm: MainThreadMarker) -> Retained<NSTextField> {
+    let field = NSTextField::labelWithString(&ns(""), mtm);
+    field.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+    field.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    field.setAlignment(NSTextAlignment::Left);
     field
 }
 
@@ -657,7 +744,16 @@ fn wrap(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setSelectable(false);
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::secondaryLabelColor()));
-    field.setAlignment(NSTextAlignment::Center);
+    field.setAlignment(NSTextAlignment::Left);
+    field
+}
+
+fn footnote(mtm: MainThreadMarker) -> Retained<NSTextField> {
+    let field = NSTextField::wrappingLabelWithString(&ns(""), mtm);
+    field.setSelectable(false);
+    field.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+    field.setTextColor(Some(&NSColor::tertiaryLabelColor()));
+    field.setAlignment(NSTextAlignment::Left);
     field
 }
 
@@ -667,7 +763,7 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::labelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(220.0);
+    field.setPreferredMaxLayoutWidth(200.0);
     field.setContentHuggingPriority_forOrientation(
         1.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
@@ -756,14 +852,26 @@ fn duration_row(
     popup: &NSPopUpButton,
     mtm: MainThreadMarker,
 ) -> Retained<NSStackView> {
+    trailing_control_row(caption, nv(popup), mtm)
+}
+
+fn trailing_control_row(
+    caption: &NSTextField,
+    control: &NSView,
+    mtm: MainThreadMarker,
+) -> Retained<NSStackView> {
     caption.setAlignment(NSTextAlignment::Left);
+    control.setContentHuggingPriority_forOrientation(
+        750.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     let row = NSStackView::new(mtm);
     row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
     row.setDistribution(NSStackViewDistribution::Fill);
     row.setAlignment(NSLayoutAttribute::CenterY);
     row.setSpacing(8.0);
     arrange(&row, caption);
-    arrange(&row, popup);
+    row.addArrangedSubview(control);
     row
 }
 
@@ -781,12 +889,25 @@ fn header_row(
     row
 }
 
-fn footer(left: &NSButton, right: &NSButton, mtm: MainThreadMarker) -> Retained<NSStackView> {
+fn chrome_bar(
+    left: &NSButton,
+    mid: Option<&NSButton>,
+    right: Option<&NSButton>,
+    mtm: MainThreadMarker,
+) -> Retained<NSStackView> {
     let row = NSStackView::new(mtm);
     row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
     row.setAlignment(NSLayoutAttribute::CenterY);
     row.setSpacing(12.0);
     arrange(&row, left);
-    arrange(&row, right);
+    if let Some(mid) = mid {
+        arrange(&row, mid);
+    }
+    if let Some(right) = right {
+        let spacer = NSView::new(mtm);
+        fill_width(&spacer);
+        row.addArrangedSubview(&spacer);
+        arrange(&row, right);
+    }
     row
 }
