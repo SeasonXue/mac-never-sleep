@@ -220,6 +220,24 @@ pub fn menu_help_origin() -> PanelView {
     PanelView::Main
 }
 
+/// Origin stored after Help is opened.
+///
+/// In-panel How to use keeps the first origin while Help is already showing.
+/// Status-item Help always records Main, including when the panel was dismissed
+/// with How to use still current.
+pub fn help_from_after_open(
+    current: PanelView,
+    previous: PanelView,
+    origin: PanelView,
+    from_menu: bool,
+) -> PanelView {
+    if from_menu || current != PanelView::Help {
+        origin
+    } else {
+        previous
+    }
+}
+
 /// True when a tray mouse-up should not reopen a panel that just hid from that same click.
 pub fn suppress_tray_reopen(ms_since_focus_loss_hide: u64) -> bool {
     ms_since_focus_loss_hide < TRAY_REOPEN_GUARD_MS
@@ -524,6 +542,25 @@ mod tests {
             help_back_target(menu_help_origin()),
             PanelView::Main,
             "status-item Help must not inherit a leftover Settings pane"
+        );
+    }
+
+    #[test]
+    fn menu_help_resets_origin_when_reopening_help() {
+        let leftover = PanelView::Settings;
+        assert_eq!(
+            help_from_after_open(PanelView::Help, leftover, menu_help_origin(), true),
+            PanelView::Main,
+            "status-item Help after dismissing How to use must Back to Main, not leftover Settings"
+        );
+        assert_eq!(
+            help_from_after_open(PanelView::Help, leftover, PanelView::Settings, false),
+            PanelView::Settings,
+            "in-panel How to use while already on Help keeps Settings as Back"
+        );
+        assert_eq!(
+            help_from_after_open(PanelView::Settings, leftover, menu_help_origin(), true),
+            PanelView::Main
         );
     }
 

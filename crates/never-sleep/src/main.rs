@@ -340,7 +340,8 @@ mod tests {
             src.contains("help_back_target")
                 && src.contains("help_from")
                 && src.contains("show_help_from_menu")
-                && src.contains("menu_help_origin"),
+                && src.contains("menu_help_origin")
+                && src.contains("help_from_after_open"),
             "Help Back returns to Main when opened from Main, Settings when opened from Settings"
         );
         assert!(
