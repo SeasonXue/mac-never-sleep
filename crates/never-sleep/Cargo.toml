@@ -22,10 +22,74 @@ chrono = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 tray-icon = "0.19"
 tao = "0.30.8"
-wry = { version = "0.56.1", default-features = false }
 global-hotkey = "0.6"
 libc = "0.2"
 core-foundation = "0.10"
+objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "NSString",
+  "NSObject",
+  "NSData",
+  "NSArray",
+  "NSGeometry",
+  "NSThread",
+  "NSValue",
+  "NSCoder",
+  "NSAttributedString",
+  "NSNotification",
+  "NSUserDefaults",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CGColor",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-core-graphics",
+  "objc2-core-foundation",
+  "CALayer",
+  "CATransaction",
+  "CATransform3D",
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-core-foundation",
+  "objc2-core-graphics",
+  "objc2-quartz-core",
+  "NSResponder",
+  "NSView",
+  "NSWindow",
+  "NSControl",
+  "NSButton",
+  "NSButtonCell",
+  "NSCell",
+  "NSActionCell",
+  "NSTextField",
+  "NSTextFieldCell",
+  "NSText",
+  "NSStackView",
+  "NSSwitch",
+  "NSPopUpButton",
+  "NSMenu",
+  "NSMenuItem",
+  "NSImage",
+  "NSColor",
+  "NSFont",
+  "NSGraphics",
+  "NSVisualEffectView",
+  "NSGlassEffectView",
+  "NSScrollView",
+  "NSClipView",
+  "NSSegmentedControl",
+  "NSLayoutConstraint",
+  "NSLayoutAnchor",
+  "NSUserInterfaceLayout",
+  "NSBox",
+  "NSImageView",
+  "NSApplication",
+  "NSAppearance",
+] }
 
 [dev-dependencies]
 never-sleep-core = { workspace = true }

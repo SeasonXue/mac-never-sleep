@@ -101,6 +101,83 @@ impl Tr {
         self.pick("Screen-Off Standby", "关屏待命中")
     }
 
+    pub fn panel_summary_idle(self) -> &'static str {
+        self.pick("Display off, Mac stays online", "屏幕将关闭，Mac 保持在线")
+    }
+
+    pub fn panel_summary_active(self) -> &'static str {
+        self.pick("Display asleep, Mac stays online", "屏幕已休眠，Mac 仍在线")
+    }
+
+    pub fn more_settings(self) -> &'static str {
+        self.pick("More Settings", "更多设置")
+    }
+
+    pub fn settings_title(self) -> &'static str {
+        self.pick("Settings", "设置")
+    }
+
+    pub fn back(self) -> &'static str {
+        self.pick("Back", "返回")
+    }
+
+    pub fn panel_section_session(self) -> &'static str {
+        self.pick("Session", "待命")
+    }
+
+    pub fn panel_section_display(self) -> &'static str {
+        self.pick("Display", "屏幕")
+    }
+
+    pub fn panel_section_lid(self) -> &'static str {
+        self.pick("Lid", "合盖")
+    }
+
+    pub fn panel_section_safeguards(self) -> &'static str {
+        self.pick("Safeguards", "保护")
+    }
+
+    pub fn panel_section_general(self) -> &'static str {
+        self.pick("General", "通用")
+    }
+
+    pub fn sidebar_group_options(self) -> &'static str {
+        self.pick("Options", "选项")
+    }
+
+    pub fn sidebar_group_guide(self) -> &'static str {
+        self.pick("Guide", "指南")
+    }
+
+    pub fn pane_display_lead(self) -> &'static str {
+        self.pick(
+            "The display sleeps for real — not brightness 0.",
+            "真·关闭屏幕，不是把亮度拉到 0。",
+        )
+    }
+
+    pub fn pane_safeguards_lead(self) -> &'static str {
+        self.pick(
+            "Lock only if you need it. End standby before the pack dies.",
+            "需要时再锁登录。电量过低时结束待命。",
+        )
+    }
+
+    pub fn pane_general_lead(self) -> &'static str {
+        self.pick("Applies to this Mac only.", "只影响这台 Mac。")
+    }
+
+    pub fn show_window(self) -> &'static str {
+        self.pick("Show Window", "显示窗口")
+    }
+
+    pub fn panel_hotkey_hint(self) -> String {
+        match self.lang {
+            Lang::En => format!("{DEFAULT_HOTKEY_LABEL} works with the display off"),
+            Lang::Zh => format!("屏幕关掉时也可按 {DEFAULT_HOTKEY_LABEL}"),
+        }
+    }
+
     pub fn onboarding(self) -> &'static str {
         self.pick(ONBOARDING_EN, ONBOARDING_ZH)
     }
@@ -809,6 +886,53 @@ mod tests {
         assert_eq!(zh.start_standby(), "开始关屏待命");
         assert_eq!(zh.panel_active_title(), "关屏待命中");
         assert_eq!(zh.end_standby(), "结束待命");
+    }
+
+    #[test]
+    fn panel_chrome_strings_are_bilingual() {
+        let en = Tr::new(Lang::En);
+        let zh = Tr::new(Lang::Zh);
+        assert_eq!(en.panel_summary_idle(), "Display off, Mac stays online");
+        assert_eq!(zh.panel_summary_idle(), "屏幕将关闭，Mac 保持在线");
+        assert_eq!(
+            en.panel_summary_active(),
+            "Display asleep, Mac stays online"
+        );
+        assert_eq!(zh.panel_summary_active(), "屏幕已休眠，Mac 仍在线");
+        assert_eq!(en.more_settings(), "More Settings");
+        assert_eq!(zh.more_settings(), "更多设置");
+        assert_ne!(
+            en.more_settings(),
+            en.settings_title(),
+            "footer is More Settings; the sheet heading stays Settings"
+        );
+        assert_eq!(en.settings_title(), "Settings");
+        assert_eq!(zh.settings_title(), "设置");
+        assert_eq!(en.back(), "Back");
+        assert_eq!(zh.back(), "返回");
+        assert_eq!(en.panel_section_session(), "Session");
+        assert_eq!(zh.panel_section_session(), "待命");
+        assert_eq!(en.panel_section_display(), "Display");
+        assert_eq!(zh.panel_section_display(), "屏幕");
+        assert_eq!(en.panel_section_lid(), "Lid");
+        assert_eq!(zh.panel_section_lid(), "合盖");
+        assert_eq!(en.panel_section_safeguards(), "Safeguards");
+        assert_eq!(zh.panel_section_safeguards(), "保护");
+        assert_eq!(en.panel_section_general(), "General");
+        assert_eq!(zh.panel_section_general(), "通用");
+        assert_eq!(en.sidebar_group_options(), "Options");
+        assert_eq!(zh.sidebar_group_options(), "选项");
+        assert_eq!(en.sidebar_group_guide(), "Guide");
+        assert_eq!(zh.sidebar_group_guide(), "指南");
+        assert_eq!(en.show_window(), "Show Window");
+        assert_eq!(zh.show_window(), "显示窗口");
+        assert!(en.pane_display_lead().contains("brightness"));
+        assert!(zh.pane_display_lead().contains("亮度"));
+        assert_eq!(en.pane_general_lead(), "Applies to this Mac only.");
+        assert!(en.panel_hotkey_hint().contains(DEFAULT_HOTKEY_LABEL));
+        assert!(zh.panel_hotkey_hint().contains(DEFAULT_HOTKEY_LABEL));
+        assert!(en.panel_hotkey_hint().contains("display off"));
+        assert!(zh.panel_hotkey_hint().contains("屏幕"));
     }
 
     #[test]

@@ -8,12 +8,12 @@
 
 ## 界面一览
 
-左键点一下菜单栏的太阳即可打开面板。点中央的大太阳开始——它会翻面成月亮，约 1.5 秒后屏幕关闭。所有功能都收在一个小巧、原生质感的弹出面板里。
+左键点一下菜单栏的太阳即可打开紧凑面板（与截图同一套：硬币、状态、开始/结束、分组卡片）。点 **开始关屏待命** —— 硬币翻成月亮，约 1.5 秒后屏幕关闭。关掉面板或再点图标只是隐藏，不会结束待命；待命中 **结束待命** 始终可点。更多设置里是其余开关。
 
 <table>
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-idle-zh.png" width="260" alt="Never Sleep 未开启，点太阳即可开始">
+      <img src="docs/screenshots/main-idle-zh.png" width="260" alt="Never Sleep 未开启，点开始关屏待命">
     </td>
     <td align="center" valign="top" width="50%">
       <img src="docs/screenshots/main-active-zh.png" width="260" alt="Never Sleep 关屏待命中，屏幕已关、Mac 仍在线">
@@ -85,7 +85,7 @@ cargo build -p never-sleep --release
 open "dist/Never Sleep.app"
 ```
 
-菜单栏默认显示拟人化太阳图标。左键打开控制面板，点击中央太阳即可开始；太阳会翻面变成月亮，约 1.5 秒后屏幕关闭。再次点击月亮即可结束待命。右键图标仍可打开原生备用菜单。Finder 显示 **Never Sleep**。
+菜单栏默认显示拟人化太阳图标。左键打开面板，再点 **开始关屏待命**。硬币会翻成月亮，约 1.5 秒后屏幕关闭。点 **结束待命** 即可停止。隐藏面板（或再点图标）不会结束待命。右键图标仍可打开原生备用菜单。Finder 显示 **Never Sleep**。
 
 | 选项 | 默认 | 含义 |
 | --- | --- | --- |

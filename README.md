@@ -8,12 +8,12 @@ The UI is **English by default**, with Simplified Chinese when the system langua
 
 ## A look at the app
 
-One left-click on the menu-bar sun opens the panel. Tap the big sun to start — it flips to a moon and the display goes dark about 1.5 seconds later. Everything lives in one small, native-feeling popover.
+One left-click on the menu-bar sun opens a compact panel (the same layout as the screenshots: coin, status, Start / End, grouped card). Press **Start Screen-Off Standby** — the coin flips to a moon and the display goes dark about 1.5 seconds later. Close the panel or click the icon again to hide it; **End Standby** stays clickable while a session is running. More Settings opens the rest of the toggles.
 
 <table>
   <tr>
     <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-idle-en.png" width="260" alt="Never Sleep idle — tap the sun to start screen-off standby">
+      <img src="docs/screenshots/main-idle-en.png" width="260" alt="Never Sleep idle — press Start Screen-Off Standby">
     </td>
     <td align="center" valign="top" width="50%">
       <img src="docs/screenshots/main-active-en.png" width="260" alt="Never Sleep active — screen off, Mac stays online">
@@ -85,7 +85,7 @@ cargo build -p never-sleep --release
 open "dist/Never Sleep.app"
 ```
 
-An anthropomorphic sun appears in the menu bar. Left-click it to open the control panel, then click the large sun to start. It flips into the moon before the display turns off about 1.5 seconds later; click the moon again to end standby. Right-click keeps the native fallback menu available.
+An anthropomorphic sun appears in the menu bar. Left-click it to open the panel, then press **Start Screen-Off Standby**. The coin flips to a moon before the display turns off about 1.5 seconds later; press **End Standby** to stop. Hide the panel (or click the icon again) — that does not end standby. Right-click keeps the native fallback menu.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
