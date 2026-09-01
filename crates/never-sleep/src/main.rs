@@ -402,6 +402,10 @@ mod tests {
             "an 8pt gap is the only space between the last menu row and the chrome bar"
         );
         assert!(
+            include_str!("panel.rs").contains("panel_hug_height() + SHADOW_INSET"),
+            "macOS window_height must call panel_hug_height or clippy -D warnings flags dead_code"
+        );
+        assert!(
             src.contains("help_step(&help_step3_title") && src.contains("state.help_step3"),
             "step 3 is one wrapping sentence, not a forced break after the hotkey chip"
         );

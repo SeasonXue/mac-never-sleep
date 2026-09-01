@@ -65,7 +65,7 @@ pub fn window_width() -> f64 {
 }
 
 pub fn window_height() -> f64 {
-    PANEL_HEIGHT + SHADOW_INSET * 2.0
+    panel_hug_height() + SHADOW_INSET * 2.0
 }
 
 /// Packed main column: coin, status, button, 3-row card, chrome. No stretch void.
