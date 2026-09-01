@@ -30,6 +30,10 @@ pub const ACTIVE_FILL_RGB: [u8; 3] = [0x1c, 0x1c, 0x1e];
 pub const HELP_ROW_GLYPH: f64 = 22.0;
 pub const HELP_ROW_GAP: f64 = 10.0;
 pub const HELP_ROW_INSET: f64 = 12.0;
+/// Vertical padding inside How-to / Keep-in-mind rows (breathing room above the hairline).
+pub const HELP_ROW_PAD_Y: f64 = 12.0;
+/// Space above and below a grouped-card separator.
+pub const CARD_SEPARATOR_GAP: f64 = 6.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelPlacement {
@@ -64,6 +68,15 @@ pub fn panel_fill_rgb(active: bool) -> [u8; 3] {
 /// Idle shows the sun; standby shows the moon. Never both at once.
 pub fn hero_shows_moon(active: bool) -> bool {
     active
+}
+
+/// Container `transform.rotation.y` for the two-faced coin (NSNumber, not CATransform3D).
+pub fn hero_flip_radians(active: bool) -> f64 {
+    if hero_shows_moon(active) {
+        std::f64::consts::PI
+    } else {
+        0.0
+    }
 }
 
 pub fn panel_inner_width() -> f64 {
@@ -452,6 +465,8 @@ mod tests {
         assert_eq!(panel_fill_rgb(true), [0x1c, 0x1c, 0x1e]);
         assert!(!hero_shows_moon(false));
         assert!(hero_shows_moon(true));
+        assert_eq!(hero_flip_radians(false), 0.0);
+        assert_eq!(hero_flip_radians(true), std::f64::consts::PI);
         assert!(
             grouped_copy_max_width() < panel_inner_width(),
             "help/settings row copy sits beside a glyph, not the full inner width"
@@ -483,6 +498,8 @@ mod tests {
         assert_eq!(HELP_ROW_GLYPH, 22.0);
         assert_eq!(HELP_ROW_GAP, 10.0);
         assert_eq!(HELP_ROW_INSET, 12.0);
+        assert_eq!(HELP_ROW_PAD_Y, 12.0);
+        assert_eq!(CARD_SEPARATOR_GAP, 6.0);
         assert_eq!(panel_inner_width(), 288.0);
         assert_eq!(grouped_copy_max_width(), 232.0);
     }

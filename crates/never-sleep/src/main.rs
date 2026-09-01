@@ -301,12 +301,32 @@ mod tests {
             "page stacks pin children to the card width so the coin cannot hug trailing"
         );
         assert!(
-            src.contains("hero_shows_moon"),
+            src.contains("hero_shows_moon") && src.contains("hero_flip_radians"),
             "idle shows the sun; standby shows the moon — never both faces at once"
+        );
+        assert!(
+            src.contains("transform.rotation.y"),
+            "the coin flips on Y via CALayer KVC (NSNumber), not a fade"
+        );
+        assert!(
+            !src.contains("CATransition") && !src.contains("setType: &*ns(\"fade\")"),
+            "standby must not cross-fade the coin; it should flip"
         );
         assert!(
             !src.contains("CATransform3DMakeRotation") && !src.contains("valueWithCATransform3D"),
             "do not pass CATransform3D through msg_send; that overlays both faces and crashes on click"
+        );
+        assert!(
+            src.contains("centerYAnchor") && src.contains("index_badge"),
+            "How-to step numbers sit on the badge center, not NSBox contentView top"
+        );
+        assert!(
+            src.contains("CARD_SEPARATOR_GAP") && src.contains("HELP_ROW_PAD_Y"),
+            "grouped cards keep space around hairlines so How-to rows are not cramped"
+        );
+        assert!(
+            src.contains("hotkey_cluster"),
+            "Press + ⌥⌘P stay on one line; the rest of step 3 wraps below"
         );
         assert!(
             src.contains("grouped_copy_max_width") && src.contains("pin_beside_glyph"),
@@ -523,7 +543,11 @@ mod tests {
         );
         assert!(
             !src.contains("arrange(&keys, after)"),
-            "step 3 must not put the hotkey sentence on one non-wrapping horizontal row"
+            "step 3 must not put the trailing sentence on the hotkey row"
+        );
+        assert!(
+            src.contains("hotkey_cluster"),
+            "Press and the kbd chip share one non-wrapping row"
         );
         assert!(
             src.contains("NSStackViewDistribution::Fill"),

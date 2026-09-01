@@ -27,11 +27,11 @@ use tao::window::Window;
 
 use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
-    grouped_copy_max_width, hero_flips, hero_shows_moon, motion_duration_secs, panel_fill_rgb,
-    panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem,
-    CARD_RADIUS, CONTENT_INSET, HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HERO_FLIP_SECS,
-    HERO_IMAGE, HERO_SIZE, PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET, SHADOW_OPACITY,
-    SHADOW_RADIUS,
+    grouped_copy_max_width, hero_flip_radians, hero_flips, hero_shows_moon, motion_duration_secs,
+    panel_fill_rgb, panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState,
+    PanelView, SidebarItem, CARD_RADIUS, CARD_SEPARATOR_GAP, CONTENT_INSET, HELP_ROW_GAP,
+    HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE,
+    PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET, SHADOW_OPACITY, SHADOW_RADIUS,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -137,9 +137,7 @@ impl PanelTarget {
 pub struct NativePanel {
     _target: Retained<PanelTarget>,
     wash: Retained<NSView>,
-    coin: Retained<NSImageView>,
-    sun: Retained<NSImage>,
-    moon: Retained<NSImage>,
+    coin: Retained<NSView>,
     main_view: Retained<NSView>,
     settings_view: Retained<NSView>,
     help_view: Retained<NSView>,
@@ -246,7 +244,7 @@ impl NativePanel {
             bottom: (HERO_SIZE - HERO_IMAGE) / 2.0,
             right: 0.0,
         });
-        let coin = coin_face(&sun, mtm);
+        let coin = coin_stack(&sun, &moon, mtm);
         arrange(&coin_body, &coin);
         coin_box.setContentView(Some(nv(&*coin_body)));
 
@@ -412,7 +410,7 @@ impl NativePanel {
         let help_step2_title = heading(mtm, 13.0);
         let help_step2_detail = wrap(mtm, 12.0);
         let help_step3_title = heading(mtm, 13.0);
-        let help_step3_before = wrap(mtm, 12.0);
+        let help_step3_before = inline_caption(mtm, 12.0);
         let help_hotkey = kbd_label(mtm);
         let help_step3_after = wrap(mtm, 12.0);
         let help_notes = section_header(mtm);
@@ -495,8 +493,6 @@ impl NativePanel {
             _target: target,
             wash,
             coin,
-            sun,
-            moon,
             main_view,
             settings_view,
             help_view,
@@ -687,12 +683,7 @@ impl NativePanel {
             0.0
         };
         set_fill_color(&self.wash, panel_fill_rgb(active), color_secs);
-        let image = if hero_shows_moon(active) {
-            &self.moon
-        } else {
-            &self.sun
-        };
-        set_coin_image(&self.coin, image, flip_secs);
+        set_coin_flip(&self.coin, hero_shows_moon(active), flip_secs);
         if let Some(window) = self.wash.window() {
             let name = unsafe {
                 if active {
@@ -872,7 +863,9 @@ fn grouped_card(mtm: MainThreadMarker, rows: &[Retained<NSStackView>]) -> Retain
     body.setAlignment(NSLayoutAttribute::Width);
     for (i, row) in rows.iter().enumerate() {
         if i > 0 {
+            spacer(&body, CARD_SEPARATOR_GAP, mtm);
             arrange(&body, &separator(mtm));
+            spacer(&body, CARD_SEPARATOR_GAP, mtm);
         }
         arrange(&body, row);
         span_stack(&body, nv(&**row));
@@ -919,6 +912,14 @@ fn heading(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
 fn section_header(mtm: MainThreadMarker) -> Retained<NSTextField> {
     let field = NSTextField::labelWithString(&ns(""), mtm);
     field.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+    field.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    field.setAlignment(NSTextAlignment::Left);
+    field
+}
+
+fn inline_caption(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
+    let field = NSTextField::labelWithString(&ns(""), mtm);
+    field.setFont(Some(&NSFont::systemFontOfSize(size)));
     field.setTextColor(Some(&NSColor::secondaryLabelColor()));
     field.setAlignment(NSTextAlignment::Left);
     field
@@ -972,6 +973,10 @@ fn kbd_label(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setDrawsBackground(true);
     field.setBezeled(false);
     field.setBordered(false);
+    field.setContentHuggingPriority_forOrientation(
+        750.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     field
 }
 
@@ -1171,13 +1176,9 @@ fn hairline(mtm: MainThreadMarker) -> Retained<NSBox> {
     line
 }
 
-fn index_badge(index: &str, mtm: MainThreadMarker) -> Retained<NSBox> {
-    let badge = NSBox::new(mtm);
-    badge.setBoxType(NSBoxType::Custom);
-    badge.setTitlePosition(NSTitlePosition::NoTitle);
-    badge.setCornerRadius(11.0);
-    badge.setBorderWidth(0.0);
-    badge.setFillColor(&NSColor::controlAccentColor());
+fn index_badge(index: &str, mtm: MainThreadMarker) -> Retained<NSView> {
+    let badge = NSView::new(mtm);
+    badge.setWantsLayer(true);
     nv(&*badge)
         .widthAnchor()
         .constraintEqualToConstant(HELP_ROW_GLYPH)
@@ -1186,11 +1187,28 @@ fn index_badge(index: &str, mtm: MainThreadMarker) -> Retained<NSBox> {
         .heightAnchor()
         .constraintEqualToConstant(HELP_ROW_GLYPH)
         .setActive(true);
+    if let Some(layer) = backing_layer(&badge) {
+        layer_set_corner_radius(&layer, HELP_ROW_GLYPH / 2.0);
+        layer.setBackgroundColor(Some(&cg_color(&NSColor::controlAccentColor())));
+    }
     let label = NSTextField::labelWithString(&ns(index), mtm);
     label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
     label.setTextColor(Some(&NSColor::whiteColor()));
     label.setAlignment(NSTextAlignment::Center);
-    badge.setContentView(Some(nv(&*label)));
+    label.setDrawsBackground(false);
+    label.setBezeled(false);
+    label.setBordered(false);
+    label.setTranslatesAutoresizingMaskIntoConstraints(false);
+    badge.addSubview(&label);
+    label
+        .centerXAnchor()
+        .constraintEqualToAnchor(&badge.centerXAnchor())
+        .setActive(true);
+    // Unflipped NSView: a small negative offset drops the digit onto the optical center.
+    label
+        .centerYAnchor()
+        .constraintEqualToAnchor_constant(&badge.centerYAnchor(), -0.5)
+        .setActive(true);
     badge
 }
 
@@ -1215,14 +1233,28 @@ fn help_hotkey_step(
     after: &NSTextField,
     mtm: MainThreadMarker,
 ) -> Retained<NSStackView> {
+    let keys = hotkey_cluster(before, hotkey, mtm);
     let copy = column(mtm, 2.0, 0.0);
     copy.setAlignment(NSLayoutAttribute::Leading);
     arrange(&copy, title);
-    arrange(&copy, before);
-    arrange(&copy, hotkey);
+    arrange(&copy, &keys);
     arrange(&copy, after);
     fill_width(nv(&*copy));
     glyph_copy_row(nv(&*index_badge("3", mtm)), nv(&*copy), mtm)
+}
+
+fn hotkey_cluster(
+    before: &NSTextField,
+    hotkey: &NSTextField,
+    mtm: MainThreadMarker,
+) -> Retained<NSStackView> {
+    let keys = NSStackView::new(mtm);
+    keys.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    keys.setAlignment(NSLayoutAttribute::CenterY);
+    keys.setSpacing(4.0);
+    arrange(&keys, before);
+    arrange(&keys, hotkey);
+    keys
 }
 
 fn help_note(copy: &NSTextField, symbol: &str, mtm: MainThreadMarker) -> Retained<NSStackView> {
@@ -1253,9 +1285,9 @@ fn glyph_copy_row(glyph: &NSView, copy: &NSView, mtm: MainThreadMarker) -> Retai
     row.setDistribution(NSStackViewDistribution::Fill);
     row.setSpacing(HELP_ROW_GAP);
     row.setEdgeInsets(NSEdgeInsets {
-        top: 9.0,
+        top: HELP_ROW_PAD_Y,
         left: HELP_ROW_INSET,
-        bottom: 9.0,
+        bottom: HELP_ROW_PAD_Y,
         right: HELP_ROW_INSET,
     });
     row.addArrangedSubview(glyph);
@@ -1280,6 +1312,31 @@ fn pin_beside_glyph(row: &NSView, copy: &NSView) {
         .setActive(true);
 }
 
+fn coin_stack(sun: &NSImage, moon: &NSImage, mtm: MainThreadMarker) -> Retained<NSView> {
+    let coin = NSView::new(mtm);
+    coin.setWantsLayer(true);
+    nv(&*coin)
+        .widthAnchor()
+        .constraintEqualToConstant(HERO_IMAGE)
+        .setActive(true);
+    nv(&*coin)
+        .heightAnchor()
+        .constraintEqualToConstant(HERO_IMAGE)
+        .setActive(true);
+    let sun_face = coin_face(sun, mtm);
+    let moon_face = coin_face(moon, mtm);
+    pin_fill(&coin, nv(&*sun_face));
+    pin_fill(&coin, nv(&*moon_face));
+    if let Some(layer) = backing_layer(nv(&*sun_face)) {
+        layer.setDoubleSided(false);
+    }
+    if let Some(layer) = backing_layer(nv(&*moon_face)) {
+        layer.setDoubleSided(false);
+        set_rotation_y(&layer, std::f64::consts::PI, std::f64::consts::PI, 0.0);
+    }
+    coin
+}
+
 fn coin_face(image: &NSImage, mtm: MainThreadMarker) -> Retained<NSImageView> {
     let face = NSImageView::new(mtm);
     face.setImage(Some(image));
@@ -1297,25 +1354,44 @@ fn coin_face(image: &NSImage, mtm: MainThreadMarker) -> Retained<NSImageView> {
     face
 }
 
-fn set_coin_image(coin: &NSImageView, image: &NSImage, duration: f64) {
-    if duration > 0.0 {
-        if let Some(layer) = backing_layer(nv(coin)) {
-            crossfade(&layer, duration);
-        }
-    }
-    coin.setImage(Some(image));
-}
-
-fn crossfade(layer: &CALayer, duration: f64) {
-    let Some(cls) = AnyClass::get(c"CATransition") else {
+fn set_coin_flip(coin: &NSView, showing_moon: bool, duration: f64) {
+    let Some(layer) = backing_layer(coin) else {
         return;
     };
-    unsafe {
-        let anim: Retained<AnyObject> = msg_send![cls, animation];
-        let _: () = msg_send![&*anim, setType: &*ns("fade")];
-        let _: () = msg_send![&*anim, setDuration: duration];
-        let _: () = msg_send![layer, addAnimation: &*anim, forKey: &*ns("fade")];
+    let to = hero_flip_radians(showing_moon);
+    let from = hero_flip_radians(!showing_moon);
+    set_rotation_y(&layer, from, to, duration);
+}
+
+fn set_rotation_y(layer: &CALayer, from: f64, to: f64, duration: f64) {
+    let to_num = ns_double(to);
+    if duration > 0.0 {
+        if let Some(cls) = AnyClass::get(c"CABasicAnimation") {
+            unsafe {
+                let anim: Retained<AnyObject> =
+                    msg_send![cls, animationWithKeyPath: &*ns("transform.rotation.y")];
+                let _: () = msg_send![&*anim, setDuration: duration];
+                let _: () = msg_send![&*anim, setFromValue: &*ns_double(from)];
+                let _: () = msg_send![&*anim, setToValue: &*to_num];
+                let _: () = msg_send![&*anim, setFillMode: &*ns("forwards")];
+                let _: () = msg_send![&*anim, setRemovedOnCompletion: false];
+                if let Some(tf_cls) = AnyClass::get(c"CAMediaTimingFunction") {
+                    let tf: Retained<AnyObject> =
+                        msg_send![tf_cls, functionWithName: &*ns("easeInEaseOut")];
+                    let _: () = msg_send![&*anim, setTimingFunction: &*tf];
+                }
+                let _: () = msg_send![layer, addAnimation: &*anim, forKey: &*ns("flip")];
+            }
+        }
     }
+    unsafe {
+        let _: () = msg_send![layer, setValue: &*to_num, forKeyPath: &*ns("transform.rotation.y")];
+    }
+}
+
+fn ns_double(value: f64) -> Retained<AnyObject> {
+    let cls = AnyClass::get(c"NSNumber").expect("NSNumber");
+    unsafe { msg_send![cls, numberWithDouble: value] }
 }
 
 fn decorate_card_shadow(card: &NSView) {
