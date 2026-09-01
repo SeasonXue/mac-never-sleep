@@ -375,8 +375,14 @@ mod tests {
             "How-to step numbers sit on the badge center, not NSBox contentView top"
         );
         assert!(
-            src.contains("CARD_SEPARATOR_GAP") && src.contains("HELP_ROW_PAD_Y"),
-            "grouped cards keep space around hairlines so How-to rows are not cramped"
+            src.contains("CARD_ROW_HEIGHT") && src.contains("CARD_ROW_INSET_X"),
+            "session/settings rows are the 32pt screenshot cells, not NSSwitch plus extra vertical insets"
+        );
+        let grouped = rust_fn_src(src, "grouped_card");
+        assert!(
+            grouped.contains("setContentViewMargins")
+                && grouped.contains("CARD_SEPARATOR_GAP > 0.0"),
+            "grouped NSBox must not add default margins; hairlines get no extra stack gap"
         );
         assert!(
             src.contains("help_step(&help_step3_title") && src.contains("state.help_step3"),

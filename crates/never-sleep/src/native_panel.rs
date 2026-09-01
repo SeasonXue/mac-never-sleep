@@ -30,10 +30,10 @@ use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
     grouped_copy_max_width, hero_flip_radians, hero_flips, hero_shows_moon, motion_duration_secs,
     panel_fill_rgb, panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState,
-    PanelView, SidebarItem, CARD_RADIUS, CARD_SEPARATOR_GAP, CONTENT_INSET, HELP_ROW_GAP,
-    HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE,
-    IDLE_FILL_RGB, PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET, SHADOW_OFFSET_Y, SHADOW_OPACITY,
-    SHADOW_RADIUS,
+    PanelView, SidebarItem, CARD_RADIUS, CARD_ROW_HEIGHT, CARD_ROW_INSET_X, CARD_SEPARATOR_GAP,
+    CONTENT_INSET, HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS,
+    HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB, PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET,
+    SHADOW_OFFSET_Y, SHADOW_OPACITY, SHADOW_RADIUS,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -944,9 +944,15 @@ fn grouped_card(mtm: MainThreadMarker, rows: &[Retained<NSStackView>]) -> Retain
     body.setAlignment(NSLayoutAttribute::Width);
     for (i, row) in rows.iter().enumerate() {
         if i > 0 {
-            spacer(&body, CARD_SEPARATOR_GAP, mtm);
-            arrange(&body, &separator(mtm));
-            spacer(&body, CARD_SEPARATOR_GAP, mtm);
+            if CARD_SEPARATOR_GAP > 0.0 {
+                spacer(&body, CARD_SEPARATOR_GAP, mtm);
+            }
+            let line = separator(mtm);
+            arrange(&body, &line);
+            span_stack(&body, nv(&*line));
+            if CARD_SEPARATOR_GAP > 0.0 {
+                spacer(&body, CARD_SEPARATOR_GAP, mtm);
+            }
         }
         arrange(&body, row);
         span_stack(&body, nv(&**row));
@@ -958,6 +964,7 @@ fn grouped_card(mtm: MainThreadMarker, rows: &[Retained<NSStackView>]) -> Retain
     card.setBorderWidth(0.5);
     card.setBorderColor(&NSColor::separatorColor());
     card.setFillColor(&NSColor::controlBackgroundColor());
+    card.setContentViewMargins(objc2_foundation::NSSize::new(0.0, 0.0));
     card.setContentView(Some(nv(&*body)));
     fill_width(nv(&*card));
     Retained::into_super(card)
@@ -1149,16 +1156,16 @@ fn control_row(
     row.setAlignment(NSLayoutAttribute::CenterY);
     row.setSpacing(10.0);
     row.setEdgeInsets(NSEdgeInsets {
-        top: 5.0,
-        left: 11.0,
-        bottom: 5.0,
-        right: 11.0,
+        top: 0.0,
+        left: CARD_ROW_INSET_X,
+        bottom: 0.0,
+        right: CARD_ROW_INSET_X,
     });
     arrange(&row, caption);
     row.addArrangedSubview(control);
     nv(&*row)
         .heightAnchor()
-        .constraintGreaterThanOrEqualToConstant(32.0)
+        .constraintGreaterThanOrEqualToConstant(CARD_ROW_HEIGHT)
         .setActive(true);
     fill_width(nv(&*row));
     row

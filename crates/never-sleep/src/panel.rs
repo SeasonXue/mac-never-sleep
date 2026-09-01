@@ -14,6 +14,9 @@ pub const HERO_SIZE: f64 = 124.0;
 pub const HERO_IMAGE: f64 = 104.0;
 pub const CARD_RADIUS: f64 = 8.0;
 pub const CONTENT_INSET: f64 = 16.0;
+/// Screenshot `.row`: 32pt cell, 11pt left/right. Vertical padding lives inside the 32pt.
+pub const CARD_ROW_HEIGHT: f64 = 32.0;
+pub const CARD_ROW_INSET_X: f64 = 11.0;
 /// Rounded panel chrome; matches the HTML-era `.panel` radius.
 pub const PANEL_CORNER: f64 = 10.0;
 /// Transparent window padding so the layer shadow can fade out around the card.
@@ -32,10 +35,10 @@ pub const ACTIVE_FILL_RGB: [u8; 3] = [0x1c, 0x1c, 0x1e];
 pub const HELP_ROW_GLYPH: f64 = 22.0;
 pub const HELP_ROW_GAP: f64 = 10.0;
 pub const HELP_ROW_INSET: f64 = 12.0;
-/// Vertical padding inside How-to / Keep-in-mind rows (breathing room above the hairline).
-pub const HELP_ROW_PAD_Y: f64 = 12.0;
-/// Space above and below a grouped-card separator.
-pub const CARD_SEPARATOR_GAP: f64 = 6.0;
+/// Vertical padding inside How-to / Keep-in-mind rows (HTML-era `9px`).
+pub const HELP_ROW_PAD_Y: f64 = 9.0;
+/// Extra stack space around a grouped-card hairline. Screenshot rows sit on the line.
+pub const CARD_SEPARATOR_GAP: f64 = 0.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelPlacement {
@@ -510,12 +513,26 @@ mod tests {
     }
 
     #[test]
+    fn grouped_menu_rows_hug_the_hairline() {
+        assert_eq!(CARD_ROW_HEIGHT, 32.0);
+        assert_eq!(CARD_ROW_INSET_X, 11.0);
+        assert_eq!(
+            CARD_SEPARATOR_GAP, 0.0,
+            "screenshot rows sit on the 0.5pt hairline; extra stack gap doubles the menu spacing"
+        );
+        assert_eq!(
+            HELP_ROW_PAD_Y, 9.0,
+            "How-to / Keep-in-mind padding matches the HTML-era 9px, not 12px plus a separator gap"
+        );
+    }
+
+    #[test]
     fn help_copy_wraps_inside_the_grouped_card() {
         assert_eq!(HELP_ROW_GLYPH, 22.0);
         assert_eq!(HELP_ROW_GAP, 10.0);
         assert_eq!(HELP_ROW_INSET, 12.0);
-        assert_eq!(HELP_ROW_PAD_Y, 12.0);
-        assert_eq!(CARD_SEPARATOR_GAP, 6.0);
+        assert_eq!(HELP_ROW_PAD_Y, 9.0);
+        assert_eq!(CARD_SEPARATOR_GAP, 0.0);
         assert_eq!(panel_inner_width(), 288.0);
         assert_eq!(grouped_copy_max_width(), 232.0);
         assert_eq!(
