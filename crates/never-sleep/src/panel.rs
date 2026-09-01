@@ -61,14 +61,6 @@ pub fn panel_fill_rgb(active: bool) -> [u8; 3] {
     }
 }
 
-pub fn hero_flip_radians(active: bool) -> f64 {
-    if active {
-        std::f64::consts::PI
-    } else {
-        0.0
-    }
-}
-
 /// Idle shows the sun; standby shows the moon. Never both at once.
 pub fn hero_shows_moon(active: bool) -> bool {
     active
@@ -458,8 +450,6 @@ mod tests {
         assert_eq!(PANEL_COLOR_SECS, 0.42);
         assert_eq!(panel_fill_rgb(false), [0xf5, 0xf5, 0xf7]);
         assert_eq!(panel_fill_rgb(true), [0x1c, 0x1c, 0x1e]);
-        assert_eq!(hero_flip_radians(false), 0.0);
-        assert_eq!(hero_flip_radians(true), std::f64::consts::PI);
         assert!(!hero_shows_moon(false));
         assert!(hero_shows_moon(true));
         assert!(
