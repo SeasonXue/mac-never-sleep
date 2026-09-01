@@ -22,6 +22,9 @@ impl Thermal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostSnapshot {
     pub monotonic_ms: u64,
+    /// Clock that keeps running during system sleep and does not jump with NTP.
+    /// On macOS this is `mach_continuous_time`; `monotonic_ms` is `Instant`.
+    pub continuous_ms: u64,
     pub unix_secs: i64,
     /// Seconds east of UTC.
     pub utc_offset_secs: i32,
@@ -205,6 +208,7 @@ mod tests {
     fn host() -> HostSnapshot {
         HostSnapshot {
             monotonic_ms: 5_000,
+            continuous_ms: 5_000,
             unix_secs: 1_700_000_000,
             utc_offset_secs: 0,
             on_ac: true,

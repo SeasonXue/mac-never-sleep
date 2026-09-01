@@ -1,6 +1,6 @@
 use crate::config::AppConfig;
 use crate::duration::{
-    countdown_secs, deadline_unix_secs, effective_elapsed_ms, format_duration, session_remaining_ms,
+    countdown_secs, deadline_unix_secs, format_duration, hours_elapsed_ms, session_remaining_ms,
 };
 use crate::i18n::{Lang, Tr};
 use crate::status::{build_view_model, HostSnapshot, JsonStatus, ViewModel};
@@ -118,6 +118,7 @@ impl StopReason {
 #[derive(Debug, Clone)]
 struct Session {
     started_ms: u64,
+    started_continuous_ms: u64,
     started_unix: i64,
     duration: DurationPref,
     deadline_unix: Option<i64>,
@@ -184,6 +185,7 @@ impl Engine {
             deadline_unix_secs(host.unix_secs, host.utc_offset_secs, host.unix_secs, pref);
         self.session = Some(Session {
             started_ms: host.monotonic_ms,
+            started_continuous_ms: host.continuous_ms,
             started_unix: host.unix_secs,
             duration: pref,
             deadline_unix: deadline,
@@ -371,8 +373,8 @@ impl Engine {
                 session.duration,
                 deadline,
                 session.started_unix,
-                session.started_ms,
-                host.monotonic_ms,
+                session.started_continuous_ms,
+                host.continuous_ms,
                 host.unix_secs,
             )
         })
@@ -385,12 +387,7 @@ impl Engine {
     fn elapsed_secs(&self, session: &Session, host: &HostSnapshot) -> u64 {
         match session.duration {
             DurationPref::Hours { .. } => {
-                effective_elapsed_ms(
-                    session.started_unix,
-                    session.started_ms,
-                    host.unix_secs,
-                    host.monotonic_ms,
-                ) / 1_000
+                hours_elapsed_ms(session.started_continuous_ms, host.continuous_ms) / 1_000
             }
             DurationPref::UntilLocal { .. } | DurationPref::Indefinite => {
                 crate::elapsed_secs(session.started_ms, host.monotonic_ms)
@@ -439,6 +436,7 @@ mod tests {
     fn host(ms: u64) -> HostSnapshot {
         HostSnapshot {
             monotonic_ms: ms,
+            continuous_ms: ms,
             unix_secs: 1_700_000_000 + (ms as i64 / 1000),
             utc_offset_secs: 8 * 3600,
             on_ac: true,
@@ -622,6 +620,25 @@ mod tests {
     }
 
     #[test]
+    fn duration_hours_ignores_large_ntp_forward_correction() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(60_000);
+        h.unix_secs = h0.unix_secs + 3_600;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(
+            !has_release(&e),
+            "a forward NTP/manual correction while the Mac stays awake must not end Hours"
+        );
+        assert!(eng.is_active());
+        assert_eq!(eng.json_status(&h).remaining_secs, Some(3_540));
+        assert_eq!(eng.json_status(&h).elapsed_secs, Some(60));
+    }
+
+    #[test]
     fn duration_hours_stops_when_monotonic_elapses() {
         let mut cfg = cfg();
         cfg.duration = DurationPref::Hours { hours: 1 };
@@ -633,23 +650,25 @@ mod tests {
         let e = eng.handle(Input::Tick, &h);
         assert!(
             has_release(&e),
-            "Hours sessions end on elapsed monotonic time, not the wall clock"
+            "Hours sessions end when the suspend-aware clock elapses, even if unix_secs is stuck"
         );
     }
 
     #[test]
-    fn duration_hours_stops_after_suspend_when_wall_clock_elapses() {
+    fn duration_hours_stops_after_suspend_when_continuous_clock_elapses() {
         let mut cfg = cfg();
         cfg.duration = DurationPref::Hours { hours: 1 };
         let mut eng = Engine::new(cfg);
         let h0 = host(0);
         eng.handle(Input::Start, &h0);
         let mut h = host(2_000);
-        h.unix_secs = h0.unix_secs + 3_600;
+        h.monotonic_ms = 2_000;
+        h.continuous_ms = 3_600_000;
+        h.unix_secs = h0.unix_secs;
         let e = eng.handle(Input::Tick, &h);
         assert!(
             has_release(&e),
-            "Instant does not run during system sleep; the wall deadline must still end Hours"
+            "Instant does not run during system sleep; mach_continuous_time must still end Hours"
         );
     }
 
@@ -661,6 +680,8 @@ mod tests {
         let h0 = host(0);
         eng.handle(Input::Start, &h0);
         let mut h = host(2_000);
+        h.monotonic_ms = 2_000;
+        h.continuous_ms = 1_800_000;
         h.unix_secs = h0.unix_secs + 1_800;
         let e = eng.handle(Input::Tick, &h);
         assert!(!has_release(&e));

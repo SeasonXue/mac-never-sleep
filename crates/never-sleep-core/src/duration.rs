@@ -98,45 +98,31 @@ pub fn elapsed_secs(started_ms: u64, now_ms: u64) -> u64 {
     now_ms.saturating_sub(started_ms) / 1_000
 }
 
-/// Wall time this far ahead of `Instant` is treated as system sleep, not NTP/truncation.
-pub const WALL_SUSPEND_SLACK_MS: u64 = 15_000;
-
 /// Elapsed time for an `Hours` session.
 ///
-/// `Instant` does not run while the Mac is asleep. A large wall-clock lead is
-/// therefore counted as suspend. Ordinary `unix_secs` truncation stays on the
-/// monotonic clock so the UI does not skip a few seconds.
-pub fn effective_elapsed_ms(started_unix: i64, started_ms: u64, now_unix: i64, now_ms: u64) -> u64 {
-    let mono = now_ms.saturating_sub(started_ms);
-    let wall = now_unix.saturating_sub(started_unix).max(0) as u64 * 1_000;
-    if wall > mono.saturating_add(WALL_SUSPEND_SLACK_MS) {
-        wall
-    } else {
-        mono
-    }
+/// Uses a suspend-aware clock (`HostSnapshot.continuous_ms`): it keeps running
+/// while the Mac sleeps (`mach_continuous_time`) and does not jump with NTP.
+/// `Instant` / `monotonic_ms` does not run during sleep.
+pub fn hours_elapsed_ms(started_continuous_ms: u64, now_continuous_ms: u64) -> u64 {
+    now_continuous_ms.saturating_sub(started_continuous_ms)
 }
 
 /// Remaining milliseconds for the active duration kind.
 ///
-/// `Hours` uses [`effective_elapsed_ms`] so countdown and stop share one clock.
+/// `Hours` uses [`hours_elapsed_ms`] so countdown and stop share one clock.
 /// `UntilLocal` follows the wall clock, matching “until 08:00”.
 pub fn session_remaining_ms(
     pref: DurationPref,
     deadline_unix: i64,
     started_unix: i64,
-    started_ms: u64,
-    now_ms: u64,
+    started_continuous_ms: u64,
+    now_continuous_ms: u64,
     now_unix: i64,
 ) -> u64 {
     match pref {
         DurationPref::Hours { .. } => {
             let duration_ms = deadline_unix.saturating_sub(started_unix).max(0) as u64 * 1_000;
-            duration_ms.saturating_sub(effective_elapsed_ms(
-                started_unix,
-                started_ms,
-                now_unix,
-                now_ms,
-            ))
+            duration_ms.saturating_sub(hours_elapsed_ms(started_continuous_ms, now_continuous_ms))
         }
         DurationPref::UntilLocal { .. } => {
             deadline_unix.saturating_sub(now_unix).max(0) as u64 * 1_000
@@ -357,20 +343,33 @@ mod tests {
             deadline,
             started_unix,
             0,
-            2_000,
+            1_800_000,
             started_unix + 1_800,
         );
         assert_eq!(
             after_sleep, 1_800_000,
             "30 minutes of suspend must show 30 minutes left, not ~1h"
         );
-        assert_eq!(
-            effective_elapsed_ms(started_unix, 0, started_unix + 5, 2_000),
-            2_000
+        assert_eq!(hours_elapsed_ms(0, 2_000), 2_000);
+        assert_eq!(hours_elapsed_ms(0, 1_800_000), 1_800_000);
+    }
+
+    #[test]
+    fn hours_remaining_ignores_forward_clock_correction() {
+        let started_unix = 1_700_000_000;
+        let deadline = started_unix + 3_600;
+        let after_ntp = session_remaining_ms(
+            DurationPref::Hours { hours: 1 },
+            deadline,
+            started_unix,
+            0,
+            60_000,
+            started_unix + 3_600,
         );
         assert_eq!(
-            effective_elapsed_ms(started_unix, 0, started_unix + 1_800, 2_000),
-            1_800_000
+            after_ntp, 3_540_000,
+            "a forward NTP/manual correction while awake must not consume Hours remaining"
         );
+        assert_eq!(hours_elapsed_ms(0, 60_000), 60_000);
     }
 }

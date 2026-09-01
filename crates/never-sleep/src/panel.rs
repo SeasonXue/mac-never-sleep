@@ -630,6 +630,7 @@ mod tests {
     fn host() -> HostSnapshot {
         HostSnapshot {
             monotonic_ms: 5_000,
+            continuous_ms: 5_000,
             unix_secs: 1_700_000_000,
             utc_offset_secs: 0,
             on_ac: true,
@@ -1198,11 +1199,12 @@ mod tests {
         let started = panel_state(&engine.config, &engine.view(&h));
         assert_eq!(started.elapsed_clock, "1:00:00");
         h.monotonic_ms += 5_000;
+        h.continuous_ms += 5_000;
         h.unix_secs += 8;
         let later = panel_state(&engine.config, &engine.view(&h));
         assert_eq!(
             later.elapsed_clock, "0:59:55",
-            "countdown follows monotonic time, not a jumped wall clock"
+            "countdown follows the suspend-aware clock, not a jumped wall clock"
         );
         assert!(panel_clock_only_changed(&started, &later));
         assert!(!panel_clock_only_changed(&started, &started));
