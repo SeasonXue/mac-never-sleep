@@ -7,19 +7,20 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, ClassType, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSBox, NSBoxType, NSButton,
-    NSCellImagePosition, NSColor, NSControlStateValueOff, NSControlStateValueOn, NSFont,
-    NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSImageView, NSLayoutAttribute,
-    NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView, NSSegmentSwitchTracking,
-    NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment,
-    NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
+    NSAccessibility, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua,
+    NSAppearanceNameDarkAqua, NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSBox,
+    NSBoxType, NSButton, NSCellImagePosition, NSColor, NSControlStateValueOff,
+    NSControlStateValueOn, NSFont, NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSImageView,
+    NSLayoutAttribute, NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView,
+    NSSegmentSwitchTracking, NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch,
+    NSTextAlignment, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
     NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
     NSWindow,
 };
 use objc2_core_graphics::CGColor;
 use objc2_foundation::{
-    MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString, NSUserDefaults,
+    MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSPoint, NSString,
+    NSUserDefaults,
 };
 use objc2_quartz_core::{CALayer, CATransaction, CATransform3D};
 use tao::event_loop::EventLoopProxy;
@@ -28,13 +29,13 @@ use tao::window::Window;
 
 use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
-    grouped_copy_max_width, hero_flip_radians, hero_flips, hero_shows_moon, motion_duration_secs,
-    panel_fill_rgb, panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState,
-    PanelView, SidebarItem, CARD_HAIRLINE, CARD_RADIUS, CARD_ROW_HEIGHT, CARD_ROW_INSET_X,
-    CARD_SEPARATOR_GAP, CONTENT_INSET, FOOTER_GAP, FOOTER_HEIGHT, HELP_ROW_GAP, HELP_ROW_GLYPH,
-    HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB,
-    PANEL_COLOR_SECS, PANEL_CORNER, PRIMARY_HEIGHT, SHADOW_INSET, SHADOW_OFFSET_Y, SHADOW_OPACITY,
-    SHADOW_RADIUS, WARNING_SLOT,
+    grouped_copy_max_width, help_back_target, help_from_after_open, hero_flip_radians, hero_flips,
+    hero_shows_moon, menu_help_origin, motion_duration_secs, panel_fill_rgb, panel_inner_width,
+    preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem, CARD_HAIRLINE,
+    CARD_RADIUS, CARD_ROW_HEIGHT, CARD_ROW_INSET_X, CARD_SEPARATOR_GAP, CONTENT_INSET, FOOTER_GAP,
+    FOOTER_HEIGHT, HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS,
+    HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB, PANEL_COLOR_SECS, PANEL_CORNER, PRIMARY_HEIGHT,
+    SHADOW_INSET, SHADOW_OFFSET_Y, SHADOW_OPACITY, SHADOW_RADIUS, WARNING_SLOT,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -259,7 +260,9 @@ pub struct NativePanel {
     help_note_lid: Retained<NSTextField>,
     help_note_battery: Retained<NSTextField>,
     help_note_quit: Retained<NSTextField>,
+    help_scroll: Retained<NSScrollView>,
     current: PanelView,
+    help_from: PanelView,
 }
 
 impl NativePanel {
@@ -339,7 +342,17 @@ impl NativePanel {
             .heightAnchor()
             .constraintEqualToConstant(HERO_SIZE)
             .setActive(true);
-        pin_fill(nv(&*hero), nv(&*coin_box));
+        let hero_host = NSView::new(mtm);
+        nv(&*hero_host)
+            .widthAnchor()
+            .constraintEqualToConstant(HERO_SIZE)
+            .setActive(true);
+        nv(&*hero_host)
+            .heightAnchor()
+            .constraintEqualToConstant(HERO_SIZE)
+            .setActive(true);
+        pin_fill(&hero_host, nv(&*coin_box));
+        pin_fill(&hero_host, nv(&*hero));
 
         let status_title = heading(mtm, 17.0);
         status_title.setAlignment(NSTextAlignment::Center);
@@ -390,7 +403,7 @@ impl NativePanel {
 
         let hero_wrap = column(mtm, 0.0, 0.0);
         hero_wrap.setAlignment(NSLayoutAttribute::CenterX);
-        arrange(&hero_wrap, &hero);
+        arrange(&hero_wrap, &hero_host);
 
         let footer = chrome_bar(&more, None, Some(&quit_main), mtm);
         let main_stack = column(mtm, 0.0, CONTENT_INSET);
@@ -611,7 +624,9 @@ impl NativePanel {
             help_note_lid,
             help_note_battery,
             help_note_quit,
+            help_scroll: scroll,
             current: PanelView::Main,
+            help_from: PanelView::Main,
         };
         panel.apply_view();
         panel.set_active(false, false);
@@ -638,27 +653,59 @@ impl NativePanel {
         self.duration.addItemWithTitle(&ns(&state.duration_8h));
         self.duration.addItemWithTitle(&ns(&state.duration_until));
         self.duration.selectItemAtIndex(state.duration.index());
-        set_text(&self.resleep_label, &state.resleep);
-        set_switch(&self.resleep, state.resleep_display);
-        set_text(&self.battery_label, &state.battery);
-        set_switch(&self.battery, state.battery_floor);
+        set_switch_row(
+            &self.resleep_label,
+            &self.resleep,
+            &state.resleep,
+            state.resleep_display,
+        );
+        set_switch_row(
+            &self.battery_label,
+            &self.battery,
+            &state.battery,
+            state.battery_floor,
+        );
         self.more.setTitle(&ns(&state.more_settings));
         self.quit_main.setTitle(&ns(&state.quit));
 
         self.back.setToolTip(Some(&ns(&state.back)));
         set_text(&self.settings_title, &state.settings);
-        set_text(&self.screen_off_label, &state.screen_off_label);
-        set_switch(&self.screen_off, state.screen_off);
-        set_text(&self.lid_label, &state.lid_awake_label);
-        set_switch(&self.lid, state.lid_awake);
-        set_text(&self.resleep_settings_label, &state.resleep);
-        set_switch(&self.resleep_settings, state.resleep_display);
-        set_text(&self.lock_label, &state.lock_screen_label);
-        set_switch(&self.lock, state.lock_screen);
-        set_text(&self.battery_settings_label, &state.battery);
-        set_switch(&self.battery_settings, state.battery_floor);
-        set_text(&self.login_label, &state.launch_at_login_label);
-        set_switch(&self.login, state.launch_at_login);
+        set_switch_row(
+            &self.screen_off_label,
+            &self.screen_off,
+            &state.screen_off_label,
+            state.screen_off,
+        );
+        set_switch_row(
+            &self.lid_label,
+            &self.lid,
+            &state.lid_awake_label,
+            state.lid_awake,
+        );
+        set_switch_row(
+            &self.resleep_settings_label,
+            &self.resleep_settings,
+            &state.resleep,
+            state.resleep_display,
+        );
+        set_switch_row(
+            &self.lock_label,
+            &self.lock,
+            &state.lock_screen_label,
+            state.lock_screen,
+        );
+        set_switch_row(
+            &self.battery_settings_label,
+            &self.battery_settings,
+            &state.battery,
+            state.battery_floor,
+        );
+        set_switch_row(
+            &self.login_label,
+            &self.login,
+            &state.launch_at_login_label,
+            state.launch_at_login,
+        );
         self.language
             .setSelectedSegment(if state.lang == never_sleep_core::Lang::Zh {
                 1
@@ -697,6 +744,20 @@ impl NativePanel {
     }
 
     pub fn show_help(&mut self) {
+        self.open_help(self.current, false);
+    }
+
+    pub fn show_help_from_menu(&mut self) {
+        self.open_help(menu_help_origin(), true);
+    }
+
+    fn open_help(&mut self, origin: PanelView, from_menu: bool) {
+        self.help_from = help_from_after_open(self.current, self.help_from, origin, from_menu);
+        self.help_scroll
+            .contentView()
+            .scrollToPoint(NSPoint::new(0.0, 0.0));
+        self.help_scroll
+            .reflectScrolledClipView(&self.help_scroll.contentView());
         self.show_pane(SidebarItem::Help);
     }
 
@@ -706,7 +767,13 @@ impl NativePanel {
 
     pub fn go_back(&mut self) {
         match self.current {
-            PanelView::Help => self.show_pane(SidebarItem::Display),
+            PanelView::Help => {
+                let item = match help_back_target(self.help_from) {
+                    PanelView::Settings => SidebarItem::Display,
+                    _ => SidebarItem::Standby,
+                };
+                self.show_pane(item);
+            }
             PanelView::Settings | PanelView::Main => self.show_pane(SidebarItem::Standby),
         }
     }
@@ -1048,6 +1115,12 @@ fn set_switch(control: &NSSwitch, on: bool) {
     } else {
         NSControlStateValueOff
     });
+}
+
+fn set_switch_row(label: &NSTextField, toggle: &NSSwitch, text: &str, on: bool) {
+    set_text(label, text);
+    set_switch(toggle, on);
+    toggle.setAccessibilityLabel(Some(&ns(text)));
 }
 
 fn bind_switch(toggle: &NSSwitch, target: &PanelTarget, tag: isize) {

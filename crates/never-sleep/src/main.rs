@@ -325,6 +325,30 @@ mod tests {
             "first paint hides the moon so the two logos cannot overlap"
         );
         assert!(
+            !src.contains("pin_fill(nv(&*hero), nv(&*coin_box))"),
+            "coin subviews inside the NSButton steal hit-testing from toggle:"
+        );
+        assert!(
+            src.contains("pin_fill(&hero_host") && src.contains("pin_fill(&hero_host, nv(&*hero))"),
+            "coin visual sits behind a sibling transparent button so the 124pt coin is one click"
+        );
+        assert!(
+            src.contains("setAccessibilityLabel"),
+            "NSSwitch must announce Screen Off / Lid / Battery, not untitled switches"
+        );
+        assert!(
+            src.contains("help_back_target")
+                && src.contains("help_from")
+                && src.contains("show_help_from_menu")
+                && src.contains("menu_help_origin")
+                && src.contains("help_from_after_open"),
+            "Help Back returns to Main when opened from Main, Settings when opened from Settings"
+        );
+        assert!(
+            src.contains("scrollToPoint"),
+            "reopening How to use must start at the heading, not the previous scroll offset"
+        );
+        assert!(
             src.contains("transform.rotation.y")
                 && src.contains("hero_flip_radians")
                 && src.contains("setDoubleSided")
@@ -484,6 +508,15 @@ mod tests {
             "left-click anchors the panel under the status item"
         );
         assert!(
+            gui.contains("UserEvent::TrayAnchor")
+                && !gui.contains("button: MouseButton::Left,\n            button_state: MouseButtonState::Up"),
+            "right-click must record the status-item rect so Show Window / Settings / Help anchor under it"
+        );
+        assert!(
+            gui.contains("suppress_tray_reopen") || gui.contains("ignore_tray_until"),
+            "status-item mouse-down hides via focus loss; the matching mouse-up must not reopen"
+        );
+        assert!(
             gui.contains("Focused(false)"),
             "losing key status dismisses the panel without ending standby"
         );
@@ -502,6 +535,10 @@ mod tests {
         assert!(
             gui.contains("&& event.logical_key == Key::Escape"),
             "Escape hide must be one if so macOS clippy::collapsible_if stays clean"
+        );
+        assert!(
+            gui.contains("show_help_from_menu"),
+            "status-item Help must not reuse the in-panel origin"
         );
         assert!(
             gui.contains("handles.show_window.id()"),
@@ -574,6 +611,10 @@ mod tests {
         assert!(
             cargo.contains("\"NSText\""),
             "NSTextAlignment and setAlignment need the objc2-app-kit NSText feature"
+        );
+        assert!(
+            cargo.contains("\"NSAccessibilityProtocols\""),
+            "NSSwitch setAccessibilityLabel needs the objc2-app-kit NSAccessibilityProtocols feature"
         );
         assert!(
             !src.contains("CATransform3DMakeRotation"),
