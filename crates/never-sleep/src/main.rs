@@ -187,6 +187,16 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    fn rust_fn_src<'a>(src: &'a str, name: &str) -> &'a str {
+        let needle = format!("fn {name}(");
+        let start = src
+            .find(&needle)
+            .unwrap_or_else(|| panic!("native_panel.rs must define {name}"));
+        let after = &src[start + needle.len()..];
+        let end = after.find("\nfn ").unwrap_or(after.len());
+        &src[start..start + needle.len() + end]
+    }
+
     #[test]
     fn celestial_icons_have_distinct_pixels() {
         let (moon, w, h) = icon::celestial_icon(true);
@@ -349,7 +359,7 @@ mod tests {
             "image is already &NSImage; &*image trips clippy borrow_deref_ref on macOS"
         );
         assert!(
-            src.contains("setDisableActions: true"),
+            src.contains("CATransaction::setDisableActions(true)"),
             "setting rotation.y must disable implicit actions so one click is one half-turn, not two"
         );
         assert!(
@@ -455,6 +465,45 @@ mod tests {
         assert!(
             !gui.contains("popover.as_mut()\n            panel.show()"),
             "handle_menu_event must not as_mut a by-value Option<&mut Popover>"
+        );
+    }
+
+    #[test]
+    fn standby_click_plays_one_half_turn() {
+        let src = include_str!("native_panel.rs");
+        let flip = rust_fn_src(src, "set_coin_flip");
+        let snap = flip
+            .find("if duration <= 0.0")
+            .expect("snap path when the click should not animate");
+        assert!(
+            !flip[..snap].contains("layout_coin_layers")
+                && !flip[..snap].contains("layoutSubtreeIfNeeded"),
+            "relayout before an animated flip sets bounds/anchorPoint and Core Animation plays a second half-turn"
+        );
+        assert!(
+            flip[snap..].contains("layout_coin_layers"),
+            "snap-to-face still recenters the layers when there is no flip to disturb"
+        );
+        let rot = rust_fn_src(src, "set_rotation_y");
+        let begin = rot
+            .find("CATransaction::begin()")
+            .expect("typed CATransaction::begin so disableActions actually applies");
+        let add = rot
+            .find("addAnimation")
+            .expect("one explicit transform.rotation.y animation");
+        let set = rot
+            .find("setValue")
+            .expect("model layer must land on the destination angle");
+        let commit = rot
+            .find("CATransaction::commit()")
+            .expect("typed CATransaction::commit");
+        assert!(
+            rot.contains("CATransaction::setDisableActions(true)"),
+            "msg_send setDisableActions is easy to mis-type; use the crate method"
+        );
+        assert!(
+            begin < add && add < commit && begin < set && set < commit,
+            "addAnimation + setValue must share one disableActions transaction; otherwise the default transform action plays a second flip"
         );
     }
 

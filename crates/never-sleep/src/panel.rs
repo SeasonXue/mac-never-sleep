@@ -529,6 +529,19 @@ mod tests {
     }
 
     #[test]
+    fn standby_click_is_one_half_turn() {
+        assert_eq!(hero_flip_radians(false), 0.0);
+        assert_eq!(hero_flip_radians(true), std::f64::consts::PI);
+        assert_eq!(
+            hero_flip_radians(true) - hero_flip_radians(false),
+            std::f64::consts::PI,
+            "Start Screen-Off Standby rotates the coin once, 0→π, not a full spin"
+        );
+        assert_eq!(HERO_FLIP_SECS, 0.52);
+        assert!(hero_flips(false));
+    }
+
+    #[test]
     fn hero_flip_and_color_respect_reduce_motion() {
         assert!(hero_flips(false));
         assert!(!hero_flips(true));

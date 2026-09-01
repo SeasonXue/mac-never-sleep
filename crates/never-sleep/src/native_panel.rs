@@ -748,6 +748,7 @@ impl NativePanel {
         } else {
             0.0
         };
+        // Appearance first, actions off, then flush so Dark Aqua cannot restart the flip.
         set_chrome_appearance(&self.clip, active);
         set_fill_color(&self.wash, panel_fill_rgb(active), color_secs);
         set_coin_flip(
@@ -1390,8 +1391,10 @@ fn face_layer(image: &NSImage) -> Retained<CALayer> {
 }
 
 fn rest_coin_faces(sun: &CALayer, moon: &CALayer, showing_moon: bool) {
-    sun.setHidden(showing_moon);
-    moon.setHidden(!showing_moon);
+    with_actions_disabled(|| {
+        sun.setHidden(showing_moon);
+        moon.setHidden(!showing_moon);
+    });
 }
 
 fn set_coin_flip(
@@ -1403,23 +1406,29 @@ fn set_coin_flip(
     showing_moon: bool,
     duration: f64,
 ) {
-    coin.layoutSubtreeIfNeeded();
-    layout_coin_layers(coin, rotator, sun, moon);
     let to = hero_flip_radians(showing_moon);
     if duration <= 0.0 {
         flip_done.cancel();
         rest_coin_faces(sun, moon, showing_moon);
+        coin.layoutSubtreeIfNeeded();
+        with_actions_disabled(|| layout_coin_layers(coin, rotator, sun, moon));
         set_rotation_y(rotator, to, to, 0.0);
         return;
     }
-    sun.setHidden(false);
-    moon.setHidden(false);
+    // Do not relayout during a flip: setBounds/setAnchorPoint queues another transform action.
+    with_actions_disabled(|| {
+        sun.setHidden(false);
+        moon.setHidden(false);
+    });
     set_rotation_y(rotator, hero_flip_radians(!showing_moon), to, duration);
     flip_done.schedule(showing_moon, duration);
 }
 
 fn set_rotation_y(layer: &CALayer, from: f64, to: f64, duration: f64) {
     let to_num = ns_double(to);
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    layer.removeAnimationForKey(&ns("flip"));
     if duration > 0.0 {
         if let Some(cls) = AnyClass::get(c"CABasicAnimation") {
             unsafe {
@@ -1428,8 +1437,6 @@ fn set_rotation_y(layer: &CALayer, from: f64, to: f64, duration: f64) {
                 let _: () = msg_send![&*anim, setDuration: duration];
                 let _: () = msg_send![&*anim, setFromValue: &*ns_double(from)];
                 let _: () = msg_send![&*anim, setToValue: &*to_num];
-                let _: () = msg_send![&*anim, setFillMode: &*ns("forwards")];
-                let _: () = msg_send![&*anim, setRemovedOnCompletion: false];
                 if let Some(tf_cls) = AnyClass::get(c"CAMediaTimingFunction") {
                     let tf: Retained<AnyObject> =
                         msg_send![tf_cls, functionWithName: &*ns("easeInEaseOut")];
@@ -1438,17 +1445,18 @@ fn set_rotation_y(layer: &CALayer, from: f64, to: f64, duration: f64) {
                 let _: () = msg_send![layer, addAnimation: &*anim, forKey: &*ns("flip")];
             }
         }
-    } else {
-        unsafe {
-            let _: () = msg_send![layer, removeAnimationForKey: &*ns("flip")];
-        }
     }
     unsafe {
-        let _: () = msg_send![CATransaction::class(), begin];
-        let _: () = msg_send![CATransaction::class(), setDisableActions: true];
         let _: () = msg_send![layer, setValue: &*to_num, forKeyPath: &*ns("transform.rotation.y")];
-        let _: () = msg_send![CATransaction::class(), commit];
     }
+    CATransaction::commit();
+}
+
+fn with_actions_disabled(body: impl FnOnce()) {
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    body();
+    CATransaction::commit();
 }
 
 fn set_chrome_appearance(clip: &NSView, active: bool) {
@@ -1462,12 +1470,11 @@ fn set_chrome_appearance(clip: &NSView, active: bool) {
     let Some(appearance) = NSAppearance::appearanceNamed(name) else {
         return;
     };
-    unsafe {
-        let _: () = msg_send![CATransaction::class(), begin];
-        let _: () = msg_send![CATransaction::class(), setDisableActions: true];
-        clip.setAppearance(Some(&appearance));
-        let _: () = msg_send![CATransaction::class(), commit];
-    }
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    clip.setAppearance(Some(&appearance));
+    CATransaction::commit();
+    CATransaction::flush();
 }
 
 fn layout_coin_layers(coin: &NSView, rotator: &CALayer, sun: &CALayer, moon: &CALayer) {
@@ -1544,13 +1551,11 @@ fn set_fill_color(view: &NSView, rgb: [u8; 3], duration: f64) {
         return;
     };
     let color = rgb_color(rgb);
-    unsafe {
-        let _: () = msg_send![CATransaction::class(), begin];
-        let _: () = msg_send![CATransaction::class(), setAnimationDuration: duration];
-        let _: () = msg_send![CATransaction::class(), setDisableActions: duration <= 0.0];
-        layer.setBackgroundColor(Some(&color));
-        let _: () = msg_send![CATransaction::class(), commit];
-    }
+    CATransaction::begin();
+    CATransaction::setAnimationDuration(duration);
+    CATransaction::setDisableActions(duration <= 0.0);
+    layer.setBackgroundColor(Some(&color));
+    CATransaction::commit();
 }
 
 fn rgb_color(rgb: [u8; 3]) -> Retained<CGColor> {
