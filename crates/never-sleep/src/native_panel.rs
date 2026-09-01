@@ -27,11 +27,11 @@ use tao::window::Window;
 
 use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
-    grouped_copy_max_width, hero_flip_radians, hero_flips, hero_shows_moon, motion_duration_secs,
-    panel_fill_rgb, panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState,
-    PanelView, SidebarItem, CARD_RADIUS, CARD_SEPARATOR_GAP, CONTENT_INSET, HELP_ROW_GAP,
-    HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE,
-    PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET, SHADOW_OPACITY, SHADOW_RADIUS,
+    grouped_copy_max_width, hero_flips, hero_shows_moon, motion_duration_secs, panel_fill_rgb,
+    panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem,
+    CARD_RADIUS, CARD_SEPARATOR_GAP, CONTENT_INSET, HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET,
+    HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE, PANEL_COLOR_SECS, PANEL_CORNER,
+    SHADOW_INSET, SHADOW_OPACITY, SHADOW_RADIUS,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -137,7 +137,8 @@ impl PanelTarget {
 pub struct NativePanel {
     _target: Retained<PanelTarget>,
     wash: Retained<NSView>,
-    coin: Retained<NSView>,
+    sun_face: Retained<NSImageView>,
+    moon_face: Retained<NSImageView>,
     main_view: Retained<NSView>,
     settings_view: Retained<NSView>,
     help_view: Retained<NSView>,
@@ -181,9 +182,7 @@ pub struct NativePanel {
     help_step2_title: Retained<NSTextField>,
     help_step2_detail: Retained<NSTextField>,
     help_step3_title: Retained<NSTextField>,
-    help_step3_before: Retained<NSTextField>,
-    help_hotkey: Retained<NSTextField>,
-    help_step3_after: Retained<NSTextField>,
+    help_step3_detail: Retained<NSTextField>,
     help_notes: Retained<NSTextField>,
     help_note_lid: Retained<NSTextField>,
     help_note_battery: Retained<NSTextField>,
@@ -244,7 +243,7 @@ impl NativePanel {
             bottom: (HERO_SIZE - HERO_IMAGE) / 2.0,
             right: 0.0,
         });
-        let coin = coin_stack(&sun, &moon, mtm);
+        let (coin, sun_face, moon_face) = coin_stack(&sun, &moon, mtm);
         arrange(&coin_body, &coin);
         coin_box.setContentView(Some(nv(&*coin_body)));
 
@@ -410,9 +409,7 @@ impl NativePanel {
         let help_step2_title = heading(mtm, 13.0);
         let help_step2_detail = wrap(mtm, 12.0);
         let help_step3_title = heading(mtm, 13.0);
-        let help_step3_before = inline_caption(mtm, 12.0);
-        let help_hotkey = kbd_label(mtm);
-        let help_step3_after = wrap(mtm, 12.0);
+        let help_step3_detail = wrap(mtm, 12.0);
         let help_notes = section_header(mtm);
         let help_note_lid = wrap(mtm, 13.0);
         help_note_lid.setTextColor(Some(&NSColor::labelColor()));
@@ -426,13 +423,7 @@ impl NativePanel {
             &[
                 help_step(&help_step1_title, &help_step1_detail, "1", mtm),
                 help_step(&help_step2_title, &help_step2_detail, "2", mtm),
-                help_hotkey_step(
-                    &help_step3_title,
-                    &help_step3_before,
-                    &help_hotkey,
-                    &help_step3_after,
-                    mtm,
-                ),
+                help_step(&help_step3_title, &help_step3_detail, "3", mtm),
             ],
         );
         let notes_card = grouped_card(
@@ -492,7 +483,8 @@ impl NativePanel {
         let panel = Self {
             _target: target,
             wash,
-            coin,
+            sun_face,
+            moon_face,
             main_view,
             settings_view,
             help_view,
@@ -536,9 +528,7 @@ impl NativePanel {
             help_step2_title,
             help_step2_detail,
             help_step3_title,
-            help_step3_before,
-            help_hotkey,
-            help_step3_after,
+            help_step3_detail,
             help_notes,
             help_note_lid,
             help_note_battery,
@@ -615,9 +605,7 @@ impl NativePanel {
         set_text(&self.help_step2_title, &state.help_step2_title);
         set_text(&self.help_step2_detail, &state.help_step2_detail);
         set_text(&self.help_step3_title, &state.help_step3_title);
-        set_text(&self.help_step3_before, &state.help_step3_before);
-        set_text(&self.help_hotkey, &state.help_hotkey);
-        set_text(&self.help_step3_after, &state.help_step3_after);
+        set_text(&self.help_step3_detail, &state.help_step3);
         let notes = if state.lang == never_sleep_core::Lang::En {
             state.help_notes.to_uppercase()
         } else {
@@ -683,7 +671,12 @@ impl NativePanel {
             0.0
         };
         set_fill_color(&self.wash, panel_fill_rgb(active), color_secs);
-        set_coin_flip(&self.coin, hero_shows_moon(active), flip_secs);
+        set_coin_flip(
+            &self.sun_face,
+            &self.moon_face,
+            hero_shows_moon(active),
+            flip_secs,
+        );
         if let Some(window) = self.wash.window() {
             let name = unsafe {
                 if active {
@@ -917,14 +910,6 @@ fn section_header(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field
 }
 
-fn inline_caption(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
-    let field = NSTextField::labelWithString(&ns(""), mtm);
-    field.setFont(Some(&NSFont::systemFontOfSize(size)));
-    field.setTextColor(Some(&NSColor::secondaryLabelColor()));
-    field.setAlignment(NSTextAlignment::Left);
-    field
-}
-
 fn wrap(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
     wrap_to(mtm, size, grouped_copy_max_width())
 }
@@ -960,21 +945,6 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
     );
     field.setContentCompressionResistancePriority_forOrientation(
         250.0_f32,
-        NSLayoutConstraintOrientation::Horizontal,
-    );
-    field
-}
-
-fn kbd_label(mtm: MainThreadMarker) -> Retained<NSTextField> {
-    let field = NSTextField::labelWithString(&ns(""), mtm);
-    field.setFont(Some(&NSFont::boldSystemFontOfSize(11.0)));
-    field.setTextColor(Some(&NSColor::labelColor()));
-    field.setBackgroundColor(Some(&NSColor::quaternaryLabelColor()));
-    field.setDrawsBackground(true);
-    field.setBezeled(false);
-    field.setBordered(false);
-    field.setContentHuggingPriority_forOrientation(
-        750.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
     );
     field
@@ -1226,37 +1196,6 @@ fn help_step(
     glyph_copy_row(nv(&*index_badge(index, mtm)), nv(&*copy), mtm)
 }
 
-fn help_hotkey_step(
-    title: &NSTextField,
-    before: &NSTextField,
-    hotkey: &NSTextField,
-    after: &NSTextField,
-    mtm: MainThreadMarker,
-) -> Retained<NSStackView> {
-    let keys = hotkey_cluster(before, hotkey, mtm);
-    let copy = column(mtm, 2.0, 0.0);
-    copy.setAlignment(NSLayoutAttribute::Leading);
-    arrange(&copy, title);
-    arrange(&copy, &keys);
-    arrange(&copy, after);
-    fill_width(nv(&*copy));
-    glyph_copy_row(nv(&*index_badge("3", mtm)), nv(&*copy), mtm)
-}
-
-fn hotkey_cluster(
-    before: &NSTextField,
-    hotkey: &NSTextField,
-    mtm: MainThreadMarker,
-) -> Retained<NSStackView> {
-    let keys = NSStackView::new(mtm);
-    keys.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    keys.setAlignment(NSLayoutAttribute::CenterY);
-    keys.setSpacing(4.0);
-    arrange(&keys, before);
-    arrange(&keys, hotkey);
-    keys
-}
-
 fn help_note(copy: &NSTextField, symbol: &str, mtm: MainThreadMarker) -> Retained<NSStackView> {
     let icon = NSImageView::new(mtm);
     if let Some(image) =
@@ -1312,7 +1251,15 @@ fn pin_beside_glyph(row: &NSView, copy: &NSView) {
         .setActive(true);
 }
 
-fn coin_stack(sun: &NSImage, moon: &NSImage, mtm: MainThreadMarker) -> Retained<NSView> {
+fn coin_stack(
+    sun: &NSImage,
+    moon: &NSImage,
+    mtm: MainThreadMarker,
+) -> (
+    Retained<NSView>,
+    Retained<NSImageView>,
+    Retained<NSImageView>,
+) {
     let coin = NSView::new(mtm);
     coin.setWantsLayer(true);
     nv(&*coin)
@@ -1323,18 +1270,14 @@ fn coin_stack(sun: &NSImage, moon: &NSImage, mtm: MainThreadMarker) -> Retained<
         .heightAnchor()
         .constraintEqualToConstant(HERO_IMAGE)
         .setActive(true);
+    if let Some(layer) = backing_layer(&coin) {
+        layer.setMasksToBounds(true);
+    }
     let sun_face = coin_face(sun, mtm);
     let moon_face = coin_face(moon, mtm);
     pin_fill(&coin, nv(&*sun_face));
     pin_fill(&coin, nv(&*moon_face));
-    if let Some(layer) = backing_layer(nv(&*sun_face)) {
-        layer.setDoubleSided(false);
-    }
-    if let Some(layer) = backing_layer(nv(&*moon_face)) {
-        layer.setDoubleSided(false);
-        set_rotation_y(&layer, std::f64::consts::PI, std::f64::consts::PI, 0.0);
-    }
-    coin
+    (coin, sun_face, moon_face)
 }
 
 fn coin_face(image: &NSImage, mtm: MainThreadMarker) -> Retained<NSImageView> {
@@ -1354,27 +1297,36 @@ fn coin_face(image: &NSImage, mtm: MainThreadMarker) -> Retained<NSImageView> {
     face
 }
 
-fn set_coin_flip(coin: &NSView, showing_moon: bool, duration: f64) {
-    let Some(layer) = backing_layer(coin) else {
-        return;
-    };
-    let to = hero_flip_radians(showing_moon);
-    let from = hero_flip_radians(!showing_moon);
-    set_rotation_y(&layer, from, to, duration);
+fn set_coin_flip(sun: &NSImageView, moon: &NSImageView, showing_moon: bool, duration: f64) {
+    let sun_to = if showing_moon { 0.0 } else { 1.0 };
+    let moon_to = if showing_moon { 1.0 } else { 0.0 };
+    let half = duration / 2.0;
+    if let Some(layer) = backing_layer(nv(sun)) {
+        let delay = if showing_moon { 0.0 } else { half };
+        set_scale_x(&layer, 1.0 - sun_to, sun_to, half, delay);
+    }
+    if let Some(layer) = backing_layer(nv(moon)) {
+        let delay = if showing_moon { half } else { 0.0 };
+        set_scale_x(&layer, 1.0 - moon_to, moon_to, half, delay);
+    }
 }
 
-fn set_rotation_y(layer: &CALayer, from: f64, to: f64, duration: f64) {
+fn set_scale_x(layer: &CALayer, from: f64, to: f64, duration: f64, delay: f64) {
     let to_num = ns_double(to);
     if duration > 0.0 {
         if let Some(cls) = AnyClass::get(c"CABasicAnimation") {
             unsafe {
                 let anim: Retained<AnyObject> =
-                    msg_send![cls, animationWithKeyPath: &*ns("transform.rotation.y")];
+                    msg_send![cls, animationWithKeyPath: &*ns("transform.scale.x")];
                 let _: () = msg_send![&*anim, setDuration: duration];
                 let _: () = msg_send![&*anim, setFromValue: &*ns_double(from)];
                 let _: () = msg_send![&*anim, setToValue: &*to_num];
-                let _: () = msg_send![&*anim, setFillMode: &*ns("forwards")];
+                let _: () = msg_send![&*anim, setFillMode: &*ns("both")];
                 let _: () = msg_send![&*anim, setRemovedOnCompletion: false];
+                if delay > 0.0 {
+                    let begin = media_time() + delay;
+                    let _: () = msg_send![&*anim, setBeginTime: begin];
+                }
                 if let Some(tf_cls) = AnyClass::get(c"CAMediaTimingFunction") {
                     let tf: Retained<AnyObject> =
                         msg_send![tf_cls, functionWithName: &*ns("easeInEaseOut")];
@@ -1385,8 +1337,17 @@ fn set_rotation_y(layer: &CALayer, from: f64, to: f64, duration: f64) {
         }
     }
     unsafe {
-        let _: () = msg_send![layer, setValue: &*to_num, forKeyPath: &*ns("transform.rotation.y")];
+        let _: () = msg_send![layer, setValue: &*to_num, forKeyPath: &*ns("transform.scale.x")];
     }
+}
+
+fn media_time() -> f64 {
+    unsafe { CACurrentMediaTime() }
+}
+
+#[link(name = "QuartzCore", kind = "framework")]
+unsafe extern "C" {
+    fn CACurrentMediaTime() -> f64;
 }
 
 fn ns_double(value: f64) -> Retained<AnyObject> {

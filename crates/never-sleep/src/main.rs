@@ -301,16 +301,16 @@ mod tests {
             "page stacks pin children to the card width so the coin cannot hug trailing"
         );
         assert!(
-            src.contains("hero_shows_moon") && src.contains("hero_flip_radians"),
+            src.contains("hero_shows_moon"),
             "idle shows the sun; standby shows the moon — never both faces at once"
         );
         assert!(
-            src.contains("transform.rotation.y"),
-            "the coin flips on Y via CALayer KVC (NSNumber), not a fade"
+            src.contains("transform.scale.x"),
+            "the coin flips in place by squashing scale.x, not a 3D matrix or fade"
         );
         assert!(
-            !src.contains("CATransition") && !src.contains("setType: &*ns(\"fade\")"),
-            "standby must not cross-fade the coin; it should flip"
+            !src.contains("transform.rotation.y") && !src.contains("CATransition"),
+            "rotation.y offset the faces beside an empty circle; fade is not a flip"
         );
         assert!(
             !src.contains("CATransform3DMakeRotation") && !src.contains("valueWithCATransform3D"),
@@ -325,8 +325,12 @@ mod tests {
             "grouped cards keep space around hairlines so How-to rows are not cramped"
         );
         assert!(
-            src.contains("hotkey_cluster"),
-            "Press + ⌥⌘P stay on one line; the rest of step 3 wraps below"
+            src.contains("help_step(&help_step3_title") && src.contains("state.help_step3"),
+            "step 3 is one wrapping sentence, not a forced break after the hotkey chip"
+        );
+        assert!(
+            !src.contains("hotkey_cluster"),
+            "do not split Press / ⌥⌘P / the rest across stack rows"
         );
         assert!(
             src.contains("grouped_copy_max_width") && src.contains("pin_beside_glyph"),
@@ -542,12 +546,8 @@ mod tests {
             "How-to details wrap to the card inner width beside the badge"
         );
         assert!(
-            !src.contains("arrange(&keys, after)"),
-            "step 3 must not put the trailing sentence on the hotkey row"
-        );
-        assert!(
-            src.contains("hotkey_cluster"),
-            "Press and the kbd chip share one non-wrapping row"
+            !src.contains("hotkey_cluster") && !src.contains("help_hotkey_step"),
+            "step 3 uses the same wrapping help_step as 1 and 2"
         );
         assert!(
             src.contains("NSStackViewDistribution::Fill"),

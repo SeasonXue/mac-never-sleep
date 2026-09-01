@@ -6,7 +6,7 @@
 
 Accessory + 菜单栏 Extra。左键把 **320×480** 圆角卡片吸附在状态项下方；失焦、Escape、再点图标会隐藏面板，**不结束待命**。右键状态项菜单。不占 Dock。窗口比卡片大一圈（`SHADOW_INSET` 24pt），给四周柔和层阴影留出发光空间。
 
-待命中面板铺上 `#1c1c1e`，未开启为 `#f5f5f7`，420ms 过渡。硬币用 `transform.rotation.y`（NSNumber KVC）翻转；系统「减少动态效果」时立刻换面。不要把 `CATransform3D` 结构体塞进 `msg_send`。
+待命中面板铺上 `#1c1c1e`，未开启为 `#f5f5f7`，420ms 过渡。硬币在原位用 `transform.scale.x` 翻转（先收起当前面，再展开另一面）；系统「减少动态效果」时立刻换面。不要把 `CATransform3D` 结构体塞进 `msg_send`，也不要绕 Y 轴转容器（会把脸甩到圆圈旁边）。
 
 ## 三页（截图）
 

@@ -70,15 +70,6 @@ pub fn hero_shows_moon(active: bool) -> bool {
     active
 }
 
-/// Container `transform.rotation.y` for the two-faced coin (NSNumber, not CATransform3D).
-pub fn hero_flip_radians(active: bool) -> f64 {
-    if hero_shows_moon(active) {
-        std::f64::consts::PI
-    } else {
-        0.0
-    }
-}
-
 pub fn panel_inner_width() -> f64 {
     PANEL_WIDTH - CONTENT_INSET * 2.0
 }
@@ -86,6 +77,15 @@ pub fn panel_inner_width() -> f64 {
 /// Wrapping width beside a 22pt glyph inside a grouped card.
 pub fn grouped_copy_max_width() -> f64 {
     panel_inner_width() - HELP_ROW_INSET * 2.0 - HELP_ROW_GLYPH - HELP_ROW_GAP
+}
+
+/// One wrapping How-to sentence: "按 ⌥⌘P，或点菜单…" / "Press ⌥⌘P or choose…".
+pub fn join_help_step3(before: &str, hotkey: &str, after: &str) -> String {
+    if after.starts_with('，') || after.starts_with(',') {
+        format!("{before} {hotkey}{after}")
+    } else {
+        format!("{before} {hotkey} {after}")
+    }
 }
 
 pub fn hero_flips(reduce_motion: bool) -> bool {
@@ -297,11 +297,10 @@ pub struct PanelState {
 
 pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
     let t = cfg.tr();
-    let help_step3 = format!(
-        "{} {} {}",
+    let help_step3 = join_help_step3(
         t.help_step3_before(),
         DEFAULT_HOTKEY_LABEL,
-        t.help_step3_after()
+        t.help_step3_after(),
     );
     PanelState {
         active: vm.active,
@@ -465,8 +464,6 @@ mod tests {
         assert_eq!(panel_fill_rgb(true), [0x1c, 0x1c, 0x1e]);
         assert!(!hero_shows_moon(false));
         assert!(hero_shows_moon(true));
-        assert_eq!(hero_flip_radians(false), 0.0);
-        assert_eq!(hero_flip_radians(true), std::f64::consts::PI);
         assert!(
             grouped_copy_max_width() < panel_inner_width(),
             "help/settings row copy sits beside a glyph, not the full inner width"
@@ -502,6 +499,14 @@ mod tests {
         assert_eq!(CARD_SEPARATOR_GAP, 6.0);
         assert_eq!(panel_inner_width(), 288.0);
         assert_eq!(grouped_copy_max_width(), 232.0);
+        assert_eq!(
+            join_help_step3("按", "⌥⌘P", "，或点菜单「结束待命」。"),
+            "按 ⌥⌘P，或点菜单「结束待命」。"
+        );
+        assert_eq!(
+            join_help_step3("Press", "⌥⌘P", "or choose “End Standby” in the menu."),
+            "Press ⌥⌘P or choose “End Standby” in the menu."
+        );
     }
 
     #[test]
@@ -617,6 +622,11 @@ mod tests {
         assert_eq!(state.section_general, "通用");
         assert_eq!(state.language_label, "语言");
         assert!(!state.help_note_lid.contains("熄屏待命"));
+        assert!(
+            state.help_step3.contains("⌥⌘P，或"),
+            "Chinese step 3 must not break after the hotkey: {}",
+            state.help_step3
+        );
     }
 
     #[test]
