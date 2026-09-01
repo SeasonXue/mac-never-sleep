@@ -50,11 +50,15 @@ pub enum Effect {
 pub enum Input {
     Start,
     StartWith(DurationPref),
-    Stop { reason: StopReason },
+    Stop {
+        reason: StopReason,
+    },
     Toggle,
     Tick,
     DisplayWoke,
     DisplaySlept,
+    /// Person asked to darken the panel now. Does not end standby.
+    SleepDisplayNow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +168,7 @@ impl Engine {
                 self.optimistic_display_asleep = true;
             }
             Input::Tick => self.tick(host, &mut effects),
+            Input::SleepDisplayNow => self.sleep_display_now(host, &mut effects),
         }
         effects
     }
@@ -245,19 +250,30 @@ impl Engine {
             effects.push(Effect::ApplyPower(plan));
         }
         if self.should_sleep_display(host) {
-            let first = self
-                .session
-                .as_ref()
-                .is_some_and(|s| !s.initial_display_off_sent);
-            if let Some(session) = self.session.as_mut() {
-                session.initial_display_off_sent = true;
-                session.last_sleep_display_ms = Some(host.monotonic_ms);
-            }
-            self.optimistic_display_asleep = true;
-            effects.push(Effect::SleepDisplay);
-            if first && self.config.lock_screen {
-                effects.push(Effect::LockSession);
-            }
+            self.emit_sleep_display(host, effects);
+        }
+    }
+
+    fn sleep_display_now(&mut self, host: &HostSnapshot, effects: &mut Vec<Effect>) {
+        if self.session.is_none() {
+            return;
+        }
+        self.emit_sleep_display(host, effects);
+    }
+
+    fn emit_sleep_display(&mut self, host: &HostSnapshot, effects: &mut Vec<Effect>) {
+        let first = self
+            .session
+            .as_ref()
+            .is_some_and(|s| !s.initial_display_off_sent);
+        if let Some(session) = self.session.as_mut() {
+            session.initial_display_off_sent = true;
+            session.last_sleep_display_ms = Some(host.monotonic_ms);
+        }
+        self.optimistic_display_asleep = true;
+        effects.push(Effect::SleepDisplay);
+        if first && self.config.lock_screen {
+            effects.push(Effect::LockSession);
         }
     }
 
@@ -765,5 +781,54 @@ mod tests {
         eng.handle(Input::DisplaySlept, &h);
         let st = eng.json_status(&h);
         assert_eq!(st.display, "asleep");
+    }
+
+    #[test]
+    fn sleep_display_now_emits_while_user_present() {
+        let mut eng = Engine::new(cfg());
+        eng.handle(Input::Start, &host(0));
+        let mut h = host(200);
+        h.display_asleep = Some(false);
+        h.hid_idle_ms = 500;
+        h.lid_closed = false;
+        assert!(h.user_present(45_000));
+        let e = eng.handle(Input::SleepDisplayNow, &h);
+        assert!(has_sleep(&e), "an explicit tap must sleep the display now");
+        assert!(eng.is_active());
+        assert!(!has_release(&e));
+    }
+
+    #[test]
+    fn sleep_display_now_ignored_when_idle() {
+        let mut eng = Engine::new(cfg());
+        let e = eng.handle(Input::SleepDisplayNow, &host(0));
+        assert!(e.is_empty());
+        assert!(!eng.is_active());
+    }
+
+    #[test]
+    fn sleep_display_now_does_not_end_session() {
+        let mut cfg = cfg();
+        cfg.screen_off = false;
+        let mut eng = Engine::new(cfg);
+        eng.handle(Input::Start, &host(0));
+        let e = eng.handle(Input::SleepDisplayNow, &host(100));
+        assert!(has_sleep(&e));
+        assert!(eng.is_active(), "Sleep Display Now is not End Standby");
+        assert!(!has_release(&e));
+    }
+
+    #[test]
+    fn sleep_display_now_locks_on_first_off_when_configured() {
+        let mut cfg = cfg();
+        cfg.lock_screen = true;
+        let mut eng = Engine::new(cfg);
+        eng.handle(Input::Start, &host(0));
+        let e = eng.handle(Input::SleepDisplayNow, &host(200));
+        assert!(has_sleep(&e));
+        assert!(e.iter().any(|x| matches!(x, Effect::LockSession)));
+        let e = eng.handle(Input::SleepDisplayNow, &host(400));
+        assert!(has_sleep(&e), "a second tap still reasserts display sleep");
+        assert!(!e.iter().any(|x| matches!(x, Effect::LockSession)));
     }
 }

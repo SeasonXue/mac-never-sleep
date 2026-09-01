@@ -286,6 +286,19 @@ mod tests {
                 && !src.contains("SidebarItem::General"),
             "unused sidebar variants are macOS clippy dead_code after dropping arrow-key traversal"
         );
+        assert!(
+            src.contains("sleepNow:"),
+            "the moon panel must offer Sleep Display Now"
+        );
+        assert!(
+            src.contains("elapsed"),
+            "moon mode shows an elapsed clock beside End Standby"
+        );
+        assert!(!src.contains("breathe"), "the Start pill must not pulse");
+        assert!(
+            !src.contains("session_card"),
+            "duration and session switches live in Settings, not a main grouped card"
+        );
     }
 
     #[test]
@@ -302,7 +315,7 @@ mod tests {
         );
         assert!(
             src.contains("grouped_card"),
-            "session and settings sit in inset grouped cards"
+            "settings and How-to sit in inset grouped cards"
         );
         assert!(
             src.contains("NSBoxType::Separator") || src.contains("separator("),
@@ -820,6 +833,14 @@ mod tests {
     #[test]
     fn gui_ignores_queued_toggle_clicks_until_refresh() {
         let gui = include_str!("gui.rs");
+        assert!(
+            gui.contains("panel_tick_ms"),
+            "the pill clock ticks every second while a session is running"
+        );
+        assert!(
+            gui.contains("SleepDisplayNow"),
+            "Sleep Display Now is a UI command, not a new IPC cmd"
+        );
         assert!(
             gui.contains("ToggleGate"),
             "native toggle buttons need the same in-flight guard the WebView had"

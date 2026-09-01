@@ -2,16 +2,18 @@
 
 use std::time::{Duration, Instant};
 
-use never_sleep_core::{AppConfig, DurationPref, Lang, Tr, ViewModel, DEFAULT_HOTKEY_LABEL};
+use never_sleep_core::{
+    format_clock, AppConfig, DurationPref, Lang, Tr, ViewModel, DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
+};
 
 /// Ignore a second Start/End click that AppKit queued from the same press.
 pub const TOGGLE_COOLDOWN_MS: u64 = 400;
 /// Status-item mouse-down can hide the panel (focus loss) before mouse-up toggles it.
 pub const TRAY_REOPEN_GUARD_MS: u64 = 400;
 
-/// Compact menu-bar popover. Height hugs the packed main column (not a 480pt void).
+/// Compact menu-bar popover. Height hugs the packed main/settings column.
 pub const PANEL_WIDTH: f64 = 320.0;
-pub const PANEL_HEIGHT: f64 = 440.0;
+pub const PANEL_HEIGHT: f64 = 391.0;
 /// Two 12pt lid-on-battery lines plus the 3pt status-stack gap after the summary.
 pub const WARNING_SLOT: f64 = 35.0;
 pub const HERO_SIZE: f64 = 124.0;
@@ -26,6 +28,12 @@ pub const CARD_HAIRLINE: f64 = 1.0;
 /// Space between the last menu block and 更多设置 / 退出. Not a stretch void.
 pub const FOOTER_GAP: f64 = 8.0;
 pub const PRIMARY_HEIGHT: f64 = 28.0;
+/// Elapsed clock under the summary while standby is on.
+pub const ELAPSED_HEIGHT: f64 = 22.0;
+/// Gap between the Start/End pill and the reserved Sleep Display Now row.
+pub const PRIMARY_CLUSTER_GAP: f64 = 8.0;
+/// Settings chevron + title row.
+pub const SHEET_HEAD_HEIGHT: f64 = 36.0;
 /// Language segmented control; same height as the main Start/End push.
 pub const LANGUAGE_HEIGHT: f64 = 28.0;
 pub const FOOTER_HEIGHT: f64 = 36.0;
@@ -50,6 +58,8 @@ pub const SHADOW_OPACITY: f32 = 0.28;
 pub const HERO_FLIP_SECS: f64 = 0.52;
 /// Idle `#f5f5f7` ↔ active `#1c1c1e` wash (HTML `420ms`).
 pub const PANEL_COLOR_SECS: f64 = 0.42;
+/// UI clock tick while a session is running. Idle keeps `HEARTBEAT_MS`.
+pub const PANEL_TICK_ACTIVE_MS: u64 = 1_000;
 pub const IDLE_FILL_RGB: [u8; 3] = [0xf5, 0xf5, 0xf7];
 pub const ACTIVE_FILL_RGB: [u8; 3] = [0x1c, 0x1c, 0x1e];
 /// Numbered badge / SF Symbol in How-to and Keep-in-mind rows.
@@ -107,22 +117,41 @@ pub fn panel_window_y(tray_y: f64, tray_height: f64) -> f64 {
     tray_y + tray_height + MENU_BAR_GAP - SHADOW_INSET_TOP
 }
 
-/// Packed main column: coin, status, button, 3-row card, chrome. No stretch void.
-pub fn panel_hug_height() -> f64 {
+/// Packed main column: coin, status, elapsed clock, Start/End, reserved Sleep Now, chrome.
+pub fn main_column_height() -> f64 {
     CONTENT_INSET * 2.0
         + HERO_SIZE
         + 12.0
         + 22.0
         + 3.0
         + 16.0
+        + 3.0
+        + ELAPSED_HEIGHT
         + WARNING_SLOT
         + 14.0
         + PRIMARY_HEIGHT
-        + 12.0
-        + CARD_ROW_HEIGHT * 3.0
-        + CARD_HAIRLINE * 2.0
+        + PRIMARY_CLUSTER_GAP
+        + PRIMARY_HEIGHT
         + FOOTER_GAP
         + FOOTER_HEIGHT
+}
+
+/// Packed settings column: head, 7-row card (duration + six switches), language, chrome.
+pub fn settings_column_height() -> f64 {
+    CONTENT_INSET * 2.0
+        + SHEET_HEAD_HEIGHT
+        + 8.0
+        + CARD_ROW_HEIGHT * 7.0
+        + CARD_HAIRLINE * 6.0
+        + 12.0
+        + LANGUAGE_HEIGHT
+        + FOOTER_GAP
+        + FOOTER_HEIGHT
+}
+
+/// Window card height is the taller of main and settings so neither page clips.
+pub fn panel_hug_height() -> f64 {
+    main_column_height().max(settings_column_height())
 }
 
 pub fn panel_fill_rgb(active: bool) -> [u8; 3] {
@@ -191,6 +220,15 @@ pub fn motion_duration_secs(reduce_motion: bool, full_secs: f64) -> f64 {
         0.0
     } else {
         full_secs
+    }
+}
+
+/// Event-loop wait while a session is running so the elapsed clock ticks every second.
+pub fn panel_tick_ms(active: bool) -> u64 {
+    if active {
+        PANEL_TICK_ACTIVE_MS
+    } else {
+        HEARTBEAT_MS
     }
 }
 
@@ -364,6 +402,10 @@ pub struct PanelState {
     pub status_title: String,
     pub summary: String,
     pub primary_action: String,
+    pub elapsed_clock: String,
+    pub show_elapsed: bool,
+    pub sleep_now_label: String,
+    pub show_sleep_now: bool,
     pub duration_label: String,
     pub duration_indefinite: String,
     pub duration_1h: String,
@@ -438,6 +480,14 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
         .into(),
         summary: panel_summary(vm, t),
         primary_action: vm.primary_action.clone(),
+        elapsed_clock: if vm.active {
+            format_clock(vm.elapsed_secs.unwrap_or(0))
+        } else {
+            String::new()
+        },
+        show_elapsed: vm.active,
+        sleep_now_label: t.sleep_display_now_action().into(),
+        show_sleep_now: vm.active,
         duration_label: t.duration_menu().into(),
         duration_indefinite: t.indefinite().into(),
         duration_1h: t.hours(1),
@@ -660,6 +710,10 @@ mod tests {
         );
         assert_eq!(HERO_FLIP_SECS, 0.52);
         assert_eq!(PANEL_COLOR_SECS, 0.42);
+        assert_eq!(ELAPSED_HEIGHT, 22.0);
+        assert_eq!(PRIMARY_CLUSTER_GAP, 8.0);
+        assert_eq!(SHEET_HEAD_HEIGHT, 36.0);
+        assert_eq!(PANEL_TICK_ACTIVE_MS, 1_000);
         assert_eq!(panel_fill_rgb(false), [0xf5, 0xf5, 0xf7]);
         assert_eq!(panel_fill_rgb(true), [0x1c, 0x1c, 0x1e]);
         assert!(!hero_shows_moon(false));
@@ -739,7 +793,48 @@ mod tests {
         assert_eq!(
             panel_hug_height(),
             PANEL_HEIGHT,
-            "window height is the packed main column, not a 480pt canvas with a stretch void"
+            "window height is the taller packed column, not a 480pt canvas with a stretch void"
+        );
+        assert_eq!(
+            main_column_height(),
+            CONTENT_INSET * 2.0
+                + HERO_SIZE
+                + 12.0
+                + 22.0
+                + 3.0
+                + 16.0
+                + 3.0
+                + ELAPSED_HEIGHT
+                + WARNING_SLOT
+                + 14.0
+                + PRIMARY_HEIGHT
+                + PRIMARY_CLUSTER_GAP
+                + PRIMARY_HEIGHT
+                + FOOTER_GAP
+                + FOOTER_HEIGHT,
+            "main reserves the elapsed clock, End Standby, and Sleep Display Now"
+        );
+        assert_eq!(
+            settings_column_height(),
+            CONTENT_INSET * 2.0
+                + SHEET_HEAD_HEIGHT
+                + 8.0
+                + CARD_ROW_HEIGHT * 7.0
+                + CARD_HAIRLINE * 6.0
+                + 12.0
+                + LANGUAGE_HEIGHT
+                + FOOTER_GAP
+                + FOOTER_HEIGHT,
+            "settings now holds duration plus the six switches"
+        );
+        assert_eq!(
+            panel_hug_height(),
+            main_column_height(),
+            "main is the taller page once the elapsed clock is reserved"
+        );
+        assert!(
+            settings_column_height() < panel_hug_height(),
+            "settings slack fills the extra under the language control"
         );
     }
 
@@ -863,6 +958,16 @@ mod tests {
     }
 
     #[test]
+    fn panel_tick_is_one_second_while_active() {
+        assert_eq!(panel_tick_ms(true), 1_000);
+        assert_eq!(panel_tick_ms(false), HEARTBEAT_MS);
+        assert!(
+            panel_tick_ms(true) < panel_tick_ms(false),
+            "the elapsed clock must tick faster than the idle power heartbeat"
+        );
+    }
+
+    #[test]
     fn toggle_gate_ignores_clicks_until_cooldown() {
         let mut gate = ToggleGate::default();
         let t0 = Instant::now();
@@ -936,6 +1041,11 @@ mod tests {
         assert!(!state.active);
         assert_eq!(state.status_title, t.panel_idle_title());
         assert_eq!(state.summary, t.panel_summary_idle());
+        assert_eq!(state.primary_action, t.start_standby());
+        assert!(!state.show_elapsed);
+        assert!(state.elapsed_clock.is_empty());
+        assert_eq!(state.sleep_now_label, t.sleep_display_now_action());
+        assert!(!state.show_sleep_now);
     }
 
     #[test]
@@ -954,6 +1064,13 @@ mod tests {
         assert_eq!(state.status_title, t.panel_active_title());
         assert_eq!(state.summary, t.user_controls_display());
         assert_eq!(state.primary_action, t.end_standby());
+        assert!(state.show_elapsed);
+        assert_eq!(
+            state.elapsed_clock,
+            format_clock(vm.elapsed_secs.unwrap_or(0))
+        );
+        assert!(state.show_sleep_now);
+        assert_eq!(state.sleep_now_label, "立即熄屏");
         assert_eq!(state.more_settings, "更多设置");
         assert_eq!(state.section_session, "待命");
         assert_eq!(state.section_display, "屏幕");
@@ -989,6 +1106,30 @@ mod tests {
         assert!(state.pane_lid_lead.contains("best-effort"));
         assert_eq!(state.hotkey_hint, t.panel_hotkey_hint());
         assert_eq!(state.primary_action, t.start_standby());
+        assert!(!state.show_elapsed);
+        assert!(!state.show_sleep_now);
         assert!(state.hotkey_hint.contains("display off"));
+    }
+
+    #[test]
+    fn moon_panel_keeps_end_standby_and_shows_elapsed_clock() {
+        let cfg = AppConfig::default();
+        let mut engine = Engine::new(cfg.clone());
+        let mut h = host();
+        let _ = engine.handle(never_sleep_core::Input::Start, &h);
+        h.monotonic_ms = 70_000;
+        let vm = engine.view(&h);
+        let state = panel_state(&engine.config, &vm);
+        let t = Tr::new(Lang::En);
+        assert_eq!(vm.elapsed_secs, Some(65));
+        assert_eq!(state.elapsed_clock, "1:05");
+        assert!(state.show_elapsed);
+        assert_eq!(
+            state.primary_action,
+            t.end_standby(),
+            "the Start/End pill stays End Standby; the clock is a separate label"
+        );
+        assert!(state.show_sleep_now);
+        assert_eq!(state.sleep_now_label, t.sleep_display_now_action());
     }
 }

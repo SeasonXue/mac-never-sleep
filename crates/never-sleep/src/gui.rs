@@ -5,7 +5,7 @@ use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use never_sleep_core::{
     AppConfig, DurationPref, Engine, Input, Lang, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
-    DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
+    DEFAULT_HOTKEY_LABEL,
 };
 use tao::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use tao::event::{ElementState, Event, StartCause, WindowEvent};
@@ -22,9 +22,9 @@ use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
-    dismiss_on_focus_loss, panel_placement, panel_state, panel_window_y, physical_to_logical,
-    suppress_tray_reopen, window_height, window_width, PanelPlacement, PanelState, ToggleGate,
-    PANEL_HEIGHT, PANEL_WIDTH,
+    dismiss_on_focus_loss, panel_placement, panel_state, panel_tick_ms, panel_window_y,
+    physical_to_logical, suppress_tray_reopen, window_height, window_width, PanelPlacement,
+    PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH,
 };
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
@@ -43,6 +43,7 @@ pub(crate) enum UserEvent {
 #[derive(Debug)]
 pub(crate) enum UiCommand {
     Toggle,
+    SleepDisplayNow,
     SetDuration { value: String },
     SetOption { key: String, enabled: bool },
     SetLanguage { language: String },
@@ -297,8 +298,9 @@ pub fn run() {
     let mut toggle_gate = ToggleGate::default();
 
     event_loop.run(move |event, _, control_flow| {
-        *control_flow =
-            ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(HEARTBEAT_MS));
+        *control_flow = ControlFlow::WaitUntil(
+            Instant::now() + Duration::from_millis(panel_tick_ms(engine.is_active())),
+        );
 
         while let Ok(incoming) = ipc_rx.try_recv() {
             handle_ipc(&mut engine, platform.as_mut(), incoming);
@@ -761,6 +763,9 @@ fn handle_ui_command(
                 return;
             }
             dispatch(engine, platform, Input::Toggle);
+        }
+        UiCommand::SleepDisplayNow => {
+            dispatch(engine, platform, Input::SleepDisplayNow);
         }
         UiCommand::SetDuration { value } => {
             let pref = match value.as_str() {

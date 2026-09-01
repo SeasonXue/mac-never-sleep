@@ -59,6 +59,18 @@ pub fn format_duration(lang: Lang, secs: u64) -> String {
     }
 }
 
+/// Compact elapsed clock for the moon-panel timer. Language-independent digits.
+pub fn format_clock(secs: u64) -> String {
+    let hours = secs / 3600;
+    let mins = (secs % 3600) / 60;
+    let rem = secs % 60;
+    if hours == 0 {
+        format!("{mins}:{rem:02}")
+    } else {
+        format!("{hours}:{mins:02}:{rem:02}")
+    }
+}
+
 fn format_duration_en(secs: u64) -> String {
     if secs < 60 {
         return format!("{secs} sec");
@@ -141,6 +153,16 @@ mod tests {
         assert_eq!(format_duration(Lang::En, 90), "1 min 30 sec");
         assert_eq!(format_duration(Lang::En, 3600), "1 hr");
         assert_eq!(format_duration(Lang::En, 3720), "1 hr 2 min");
+    }
+
+    #[test]
+    fn format_clock_is_compact_elapsed() {
+        assert_eq!(format_clock(0), "0:00");
+        assert_eq!(format_clock(5), "0:05");
+        assert_eq!(format_clock(65), "1:05");
+        assert_eq!(format_clock(3599), "59:59");
+        assert_eq!(format_clock(3600), "1:00:00");
+        assert_eq!(format_clock(3725), "1:02:05");
     }
 
     #[test]

@@ -77,6 +77,8 @@ pub struct ViewModel {
     pub display_asleep: bool,
     /// True when HID idle + lid say a person is at the keyboard.
     pub user_present: bool,
+    /// Elapsed seconds in the current session; `None` while idle.
+    pub elapsed_secs: Option<u64>,
 }
 
 pub fn build_view_model(
@@ -191,6 +193,7 @@ pub fn build_view_model(
         battery_floor_label: cfg.battery_floor_label(),
         display_asleep,
         user_present: host.user_present(cfg.user_idle_resleep_ms),
+        elapsed_secs: if active { elapsed } else { None },
     }
 }
 
@@ -278,6 +281,17 @@ mod tests {
         assert_eq!(view.primary_action, cfg.tr().start_standby());
         assert!(!view.display_asleep);
         assert!(view.user_present);
+        assert_eq!(view.elapsed_secs, None);
+    }
+
+    #[test]
+    fn active_view_exposes_elapsed_secs() {
+        let cfg = AppConfig::default();
+        let mut h = host();
+        h.monotonic_ms = 66_000;
+        let view = build_view_model(&cfg, true, Some(1_000), None, &h, None, false);
+        assert_eq!(view.elapsed_secs, Some(65));
+        assert_eq!(view.primary_action, cfg.tr().end_standby());
     }
 
     #[test]

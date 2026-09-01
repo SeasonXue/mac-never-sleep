@@ -343,6 +343,10 @@ impl Tr {
         self.pick("Sleep display immediately", "立即关闭屏幕")
     }
 
+    pub fn sleep_display_now_action(self) -> &'static str {
+        self.pick("Sleep Display Now", "立即熄屏")
+    }
+
     pub fn lid_awake(self) -> &'static str {
         self.pick(
             "Keep running when the lid is closed (best effort)",
@@ -901,6 +905,14 @@ mod tests {
         assert_eq!(zh.panel_summary_active(), "屏幕已休眠，Mac 仍在线");
         assert_eq!(en.more_settings(), "More Settings");
         assert_eq!(zh.more_settings(), "更多设置");
+        assert_eq!(en.sleep_display_now_action(), "Sleep Display Now");
+        assert_eq!(zh.sleep_display_now_action(), "立即熄屏");
+        assert_ne!(
+            en.sleep_display_now_action(),
+            en.screen_off_now(),
+            "the moon-panel action is a one-shot, not the settings toggle"
+        );
+        assert_ne!(zh.sleep_display_now_action(), zh.screen_off_now());
         assert_ne!(
             en.more_settings(),
             en.settings_title(),

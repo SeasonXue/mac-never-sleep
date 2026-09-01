@@ -1,4 +1,4 @@
-//! Native AppKit panel matching `docs/screenshots`: coin, grouped card, three sheets.
+//! Native AppKit panel matching `docs/screenshots`: coin, Start pill, three sheets.
 
 use std::cell::Cell;
 use std::ops::Deref;
@@ -33,12 +33,12 @@ use crate::panel::{
     hero_flip_radians, hero_flips, hero_shows_moon, menu_help_origin, motion_duration_secs,
     panel_fill_rgb, panel_inner_width, preferred_glass, switch_copy_max_width, DurationKey,
     GlassKind, PanelState, PanelView, SidebarItem, CARD_HAIRLINE, CARD_RADIUS, CARD_ROW_HEIGHT,
-    CARD_ROW_INSET_X, CARD_SEPARATOR_GAP, CONTENT_INSET, CONTROL_ROW_GAP, FOOTER_GAP,
-    FOOTER_HEIGHT, HELP_BLOCK_GAP, HELP_BODY_PAD_BOTTOM, HELP_COPY_GAP, HELP_LEAD_GAP,
+    CARD_ROW_INSET_X, CARD_SEPARATOR_GAP, CONTENT_INSET, CONTROL_ROW_GAP, ELAPSED_HEIGHT,
+    FOOTER_GAP, FOOTER_HEIGHT, HELP_BLOCK_GAP, HELP_BODY_PAD_BOTTOM, HELP_COPY_GAP, HELP_LEAD_GAP,
     HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HELP_SECTION_GAP, HERO_FLIP_SECS,
     HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB, LANGUAGE_HEIGHT, PANEL_COLOR_SECS, PANEL_CORNER,
-    PRIMARY_HEIGHT, SHADOW_INSET, SHADOW_INSET_TOP, SHADOW_OFFSET_Y, SHADOW_OPACITY, SHADOW_RADIUS,
-    WARNING_SLOT,
+    PRIMARY_CLUSTER_GAP, PRIMARY_HEIGHT, SHADOW_INSET, SHADOW_INSET_TOP, SHADOW_OFFSET_Y,
+    SHADOW_OPACITY, SHADOW_RADIUS, SHEET_HEAD_HEIGHT, WARNING_SLOT,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -65,6 +65,11 @@ define_class!(
         #[unsafe(method(toggle:))]
         fn toggle(&self, _sender: Option<&AnyObject>) {
             self.emit(UiCommand::Toggle);
+        }
+
+        #[unsafe(method(sleepNow:))]
+        fn sleep_now(&self, _sender: Option<&AnyObject>) {
+            self.emit(UiCommand::SleepDisplayNow);
         }
 
         #[unsafe(method(more:))]
@@ -221,14 +226,12 @@ pub struct NativePanel {
     last_active: Option<bool>,
     status_title: Retained<NSTextField>,
     summary: Retained<NSTextField>,
+    elapsed: Retained<NSTextField>,
     warning: Retained<NSTextField>,
     primary: Retained<NSButton>,
+    sleep_now: Retained<NSButton>,
     duration: Retained<NSPopUpButton>,
     duration_label: Retained<NSTextField>,
-    resleep_label: Retained<NSTextField>,
-    resleep: Retained<NSSwitch>,
-    battery_label: Retained<NSTextField>,
-    battery: Retained<NSSwitch>,
     more: Retained<NSButton>,
     quit_main: Retained<NSButton>,
     back: Retained<NSButton>,
@@ -361,6 +364,13 @@ impl NativePanel {
         status_title.setAlignment(NSTextAlignment::Center);
         let summary = wrap_to(mtm, 12.0, panel_inner_width());
         summary.setAlignment(NSTextAlignment::Center);
+        let elapsed = heading(mtm, 17.0);
+        elapsed.setAlignment(NSTextAlignment::Center);
+        elapsed.setFont(Some(&tabular_font(17.0)));
+        nv(&*elapsed)
+            .heightAnchor()
+            .constraintEqualToConstant(ELAPSED_HEIGHT)
+            .setActive(true);
         let warning = wrap_to(mtm, 12.0, panel_inner_width());
         warning.setAlignment(NSTextAlignment::Center);
         warning.setTextColor(Some(&NSColor::systemOrangeColor()));
@@ -372,6 +382,19 @@ impl NativePanel {
             .setActive(true);
         fill_width(nv(&*primary));
 
+        let sleep_now = push_button(&target, sel!(sleepNow:), NSBezelStyle::Push, mtm);
+        nv(&*sleep_now)
+            .heightAnchor()
+            .constraintEqualToConstant(PRIMARY_HEIGHT)
+            .setActive(true);
+        fill_width(nv(&*sleep_now));
+        let sleep_host = NSView::new(mtm);
+        nv(&*sleep_host)
+            .heightAnchor()
+            .constraintEqualToConstant(PRIMARY_HEIGHT)
+            .setActive(true);
+        pin_fill(&sleep_host, nv(&*sleep_now));
+
         let duration_label = row_caption(mtm);
         let duration = NSPopUpButton::new(mtm);
         unsafe {
@@ -379,16 +402,6 @@ impl NativePanel {
             duration.setAction(Some(sel!(durationChanged:)));
         }
         duration.setBordered(false);
-        let (resleep_label, resleep, resleep_row) = labeled_switch(&target, TAG_RESLEEP, mtm);
-        let (battery_label, battery, battery_row) = labeled_switch(&target, TAG_BATTERY, mtm);
-        let session_card = grouped_card(
-            mtm,
-            &[
-                duration_row(&duration_label, duration.as_ref(), mtm),
-                resleep_row,
-                battery_row,
-            ],
-        );
 
         let more = text_button(&target, sel!(more:), mtm);
         let quit_main = text_button(&target, sel!(quit:), mtm);
@@ -398,6 +411,7 @@ impl NativePanel {
         status.setDetachesHiddenViews(false);
         arrange(&status, &status_title);
         arrange(&status, &summary);
+        arrange(&status, &elapsed);
         arrange(&status, &warning);
         nv(&*warning)
             .heightAnchor()
@@ -409,22 +423,30 @@ impl NativePanel {
         arrange(&hero_wrap, &hero_host);
 
         let footer = chrome_bar(&more, None, Some(&quit_main), mtm);
+        let main_slack = NSView::new(mtm);
+        stretch(&main_slack);
+        main_slack
+            .heightAnchor()
+            .constraintGreaterThanOrEqualToConstant(FOOTER_GAP)
+            .setActive(true);
         let main_stack = column(mtm, 0.0, CONTENT_INSET);
         main_stack.setAlignment(NSLayoutAttribute::CenterX);
+        main_stack.setDistribution(NSStackViewDistribution::Fill);
         arrange(&main_stack, &hero_wrap);
         spacer(&main_stack, 12.0, mtm);
         arrange(&main_stack, &status);
         spacer(&main_stack, 14.0, mtm);
         arrange(&main_stack, &primary);
-        spacer(&main_stack, 12.0, mtm);
-        arrange(&main_stack, &session_card);
-        spacer(&main_stack, FOOTER_GAP, mtm);
+        spacer(&main_stack, PRIMARY_CLUSTER_GAP, mtm);
+        arrange(&main_stack, &sleep_host);
+        arrange(&main_stack, &main_slack);
         arrange(&main_stack, &footer);
         pin_fill(&main_view, nv(&*main_stack));
         span_stack(&main_stack, nv(&*hero_wrap));
         span_stack(&main_stack, nv(&*status));
         span_stack(&main_stack, nv(&*primary));
-        span_stack(&main_stack, nv(&*session_card));
+        span_stack(&main_stack, &sleep_host);
+        span_stack(&main_stack, &main_slack);
         span_stack(&main_stack, nv(&*footer));
 
         let back = icon_button(&target, sel!(back:), "chevron.left", mtm);
@@ -442,6 +464,7 @@ impl NativePanel {
         let settings_card = grouped_card(
             mtm,
             &[
+                duration_row(&duration_label, duration.as_ref(), mtm),
                 screen_off_row,
                 lid_row,
                 resleep_settings_row,
@@ -594,14 +617,12 @@ impl NativePanel {
             last_active: None,
             status_title,
             summary,
+            elapsed,
             warning,
             primary,
+            sleep_now,
             duration,
             duration_label,
-            resleep_label,
-            resleep,
-            battery_label,
-            battery,
             more,
             quit_main,
             back,
@@ -651,11 +672,19 @@ impl NativePanel {
         self.last_active = Some(state.active);
         set_text(&self.status_title, &state.status_title);
         set_text(&self.summary, &state.summary);
+        set_text(&self.elapsed, &state.elapsed_clock);
+        self.elapsed.setHidden(!state.show_elapsed);
         set_text(&self.warning, &state.warning);
         self.warning.setHidden(state.warning.is_empty());
         self.primary.setTitle(&ns(&state.primary_action));
         self.primary
+            .setAccessibilityLabel(Some(&ns(&state.primary_action)));
+        self.primary
             .setKeyEquivalent(&ns(if state.active { "" } else { "\r" }));
+        self.sleep_now.setTitle(&ns(&state.sleep_now_label));
+        self.sleep_now
+            .setAccessibilityLabel(Some(&ns(&state.sleep_now_label)));
+        self.sleep_now.setHidden(!state.show_sleep_now);
         set_text(&self.duration_label, &state.duration_label);
         self.duration.removeAllItems();
         self.duration
@@ -665,18 +694,6 @@ impl NativePanel {
         self.duration.addItemWithTitle(&ns(&state.duration_8h));
         self.duration.addItemWithTitle(&ns(&state.duration_until));
         self.duration.selectItemAtIndex(state.duration.index());
-        set_switch_row(
-            &self.resleep_label,
-            &self.resleep,
-            &state.resleep,
-            state.resleep_display,
-        );
-        set_switch_row(
-            &self.battery_label,
-            &self.battery,
-            &state.battery,
-            state.battery_floor,
-        );
         self.more.setTitle(&ns(&state.more_settings));
         self.quit_main.setTitle(&ns(&state.quit));
 
@@ -1176,6 +1193,10 @@ fn bind_switch(toggle: &NSSwitch, target: &PanelTarget, tag: isize) {
     toggle.setTag(tag);
 }
 
+fn tabular_font(size: f64) -> Retained<NSFont> {
+    unsafe { msg_send![NSFont::class(), monospacedDigitSystemFontOfSize: size, weight: 0.0] }
+}
+
 fn push_button(
     target: &PanelTarget,
     action: Sel,
@@ -1302,7 +1323,7 @@ fn sheet_head(
     arrange(&row, &tail);
     nv(&*row)
         .heightAnchor()
-        .constraintEqualToConstant(36.0)
+        .constraintEqualToConstant(SHEET_HEAD_HEIGHT)
         .setActive(true);
     fill_width(nv(&*row));
     row
