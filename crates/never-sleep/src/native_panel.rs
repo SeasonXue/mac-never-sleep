@@ -2,7 +2,6 @@
 
 use std::ops::Deref;
 
-use objc2::encode::{Encode, Encoding};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, ClassType, DefinedClass, MainThreadOnly};
@@ -20,19 +19,19 @@ use objc2_app_kit::{
 use objc2_core_graphics::CGColor;
 use objc2_foundation::{
     MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString, NSUserDefaults,
-    NSValue,
 };
-use objc2_quartz_core::{CABasicAnimation, CALayer, CAMediaTimingFunction, CATransaction};
+use objc2_quartz_core::{CALayer, CATransaction};
 use tao::event_loop::EventLoopProxy;
 use tao::platform::macos::WindowExtMacOS;
 use tao::window::Window;
 
 use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
-    hero_flip_radians, hero_flips, motion_duration_secs, panel_fill_rgb, preferred_glass,
-    DurationKey, GlassKind, PanelState, PanelView, SidebarItem, CARD_RADIUS, CONTENT_INSET,
-    HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE, PANEL_COLOR_SECS, PANEL_CORNER, PANEL_WIDTH,
-    SHADOW_INSET, SHADOW_OPACITY, SHADOW_RADIUS,
+    grouped_copy_max_width, hero_flips, hero_shows_moon, motion_duration_secs, panel_fill_rgb,
+    panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem,
+    CARD_RADIUS, CONTENT_INSET, HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HERO_FLIP_SECS,
+    HERO_IMAGE, HERO_SIZE, PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET, SHADOW_OPACITY,
+    SHADOW_RADIUS,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -138,7 +137,9 @@ impl PanelTarget {
 pub struct NativePanel {
     _target: Retained<PanelTarget>,
     wash: Retained<NSView>,
-    coin: Retained<NSView>,
+    coin: Retained<NSImageView>,
+    sun: Retained<NSImage>,
+    moon: Retained<NSImage>,
     main_view: Retained<NSView>,
     settings_view: Retained<NSView>,
     help_view: Retained<NSView>,
@@ -236,7 +237,6 @@ impl NativePanel {
             .constraintEqualToConstant(HERO_SIZE)
             .setActive(true);
 
-        let coin = coin_flip(&sun, &moon, mtm);
         let coin_body = NSStackView::new(mtm);
         coin_body.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
         coin_body.setAlignment(NSLayoutAttribute::CenterX);
@@ -246,6 +246,7 @@ impl NativePanel {
             bottom: (HERO_SIZE - HERO_IMAGE) / 2.0,
             right: 0.0,
         });
+        let coin = coin_face(&sun, mtm);
         arrange(&coin_body, &coin);
         coin_box.setContentView(Some(nv(&*coin_body)));
 
@@ -271,9 +272,9 @@ impl NativePanel {
 
         let status_title = heading(mtm, 17.0);
         status_title.setAlignment(NSTextAlignment::Center);
-        let summary = wrap(mtm, 12.0);
+        let summary = wrap_to(mtm, 12.0, panel_inner_width());
         summary.setAlignment(NSTextAlignment::Center);
-        let warning = wrap(mtm, 12.0);
+        let warning = wrap_to(mtm, 12.0, panel_inner_width());
         warning.setAlignment(NSTextAlignment::Center);
         warning.setTextColor(Some(&NSColor::systemOrangeColor()));
 
@@ -402,7 +403,7 @@ impl NativePanel {
         help_title.setAlignment(NSTextAlignment::Center);
         let help_kicker = heading(mtm, 12.0);
         help_kicker.setTextColor(Some(&NSColor::controlAccentColor()));
-        let help_lead = wrap(mtm, 14.0);
+        let help_lead = wrap_to(mtm, 14.0, panel_inner_width());
         help_lead.setFont(Some(&NSFont::boldSystemFontOfSize(14.0)));
         help_lead.setTextColor(Some(&NSColor::labelColor()));
         let help_how = section_header(mtm);
@@ -466,7 +467,9 @@ impl NativePanel {
         arrange(&help_body, &notes_card);
         span_stack(&help_body, nv(&*help_kicker));
         span_stack(&help_body, nv(&*help_lead));
+        span_stack(&help_body, nv(&*help_how));
         span_stack(&help_body, nv(&*how_card));
+        span_stack(&help_body, nv(&*help_notes));
         span_stack(&help_body, nv(&*notes_card));
 
         let scroll = NSScrollView::new(mtm);
@@ -492,6 +495,8 @@ impl NativePanel {
             _target: target,
             wash,
             coin,
+            sun,
+            moon,
             main_view,
             settings_view,
             help_view,
@@ -682,7 +687,12 @@ impl NativePanel {
             0.0
         };
         set_fill_color(&self.wash, panel_fill_rgb(active), color_secs);
-        set_coin_flip(&self.coin, active, flip_secs);
+        let image = if hero_shows_moon(active) {
+            &self.moon
+        } else {
+            &self.sun
+        };
+        set_coin_image(&self.coin, image, flip_secs);
         if let Some(window) = self.wash.window() {
             let name = unsafe {
                 if active {
@@ -865,6 +875,7 @@ fn grouped_card(mtm: MainThreadMarker, rows: &[Retained<NSStackView>]) -> Retain
             arrange(&body, &separator(mtm));
         }
         arrange(&body, row);
+        span_stack(&body, nv(&**row));
     }
     let card = NSBox::new(mtm);
     card.setBoxType(NSBoxType::Custom);
@@ -914,12 +925,24 @@ fn section_header(mtm: MainThreadMarker) -> Retained<NSTextField> {
 }
 
 fn wrap(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
+    wrap_to(mtm, size, grouped_copy_max_width())
+}
+
+fn wrap_to(mtm: MainThreadMarker, size: f64, max_width: f64) -> Retained<NSTextField> {
     let field = NSTextField::wrappingLabelWithString(&ns(""), mtm);
     field.setSelectable(false);
     field.setFont(Some(&NSFont::systemFontOfSize(size)));
     field.setTextColor(Some(&NSColor::secondaryLabelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(PANEL_WIDTH - CONTENT_INSET * 2.0);
+    field.setPreferredMaxLayoutWidth(max_width);
+    field.setContentHuggingPriority_forOrientation(
+        1.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    field.setContentCompressionResistancePriority_forOrientation(
+        250.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     field
 }
 
@@ -929,7 +952,7 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::labelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(220.0);
+    field.setPreferredMaxLayoutWidth(grouped_copy_max_width());
     field.setContentHuggingPriority_forOrientation(
         1.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
@@ -1157,11 +1180,11 @@ fn index_badge(index: &str, mtm: MainThreadMarker) -> Retained<NSBox> {
     badge.setFillColor(&NSColor::controlAccentColor());
     nv(&*badge)
         .widthAnchor()
-        .constraintEqualToConstant(22.0)
+        .constraintEqualToConstant(HELP_ROW_GLYPH)
         .setActive(true);
     nv(&*badge)
         .heightAnchor()
-        .constraintEqualToConstant(22.0)
+        .constraintEqualToConstant(HELP_ROW_GLYPH)
         .setActive(true);
     let label = NSTextField::labelWithString(&ns(index), mtm);
     label.setFont(Some(&NSFont::boldSystemFontOfSize(12.0)));
@@ -1182,20 +1205,7 @@ fn help_step(
     arrange(&copy, title);
     arrange(&copy, detail);
     fill_width(nv(&*copy));
-    let row = NSStackView::new(mtm);
-    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    row.setAlignment(NSLayoutAttribute::Top);
-    row.setSpacing(10.0);
-    row.setEdgeInsets(NSEdgeInsets {
-        top: 9.0,
-        left: 12.0,
-        bottom: 9.0,
-        right: 12.0,
-    });
-    arrange(&row, &index_badge(index, mtm));
-    arrange(&row, &copy);
-    fill_width(nv(&*row));
-    row
+    glyph_copy_row(nv(&*index_badge(index, mtm)), nv(&*copy), mtm)
 }
 
 fn help_hotkey_step(
@@ -1205,33 +1215,14 @@ fn help_hotkey_step(
     after: &NSTextField,
     mtm: MainThreadMarker,
 ) -> Retained<NSStackView> {
-    let keys = NSStackView::new(mtm);
-    keys.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    keys.setAlignment(NSLayoutAttribute::CenterY);
-    keys.setSpacing(4.0);
-    arrange(&keys, before);
-    arrange(&keys, hotkey);
-    arrange(&keys, after);
-    fill_width(nv(&*keys));
     let copy = column(mtm, 2.0, 0.0);
     copy.setAlignment(NSLayoutAttribute::Leading);
     arrange(&copy, title);
-    arrange(&copy, &keys);
+    arrange(&copy, before);
+    arrange(&copy, hotkey);
+    arrange(&copy, after);
     fill_width(nv(&*copy));
-    let row = NSStackView::new(mtm);
-    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    row.setAlignment(NSLayoutAttribute::Top);
-    row.setSpacing(10.0);
-    row.setEdgeInsets(NSEdgeInsets {
-        top: 9.0,
-        left: 12.0,
-        bottom: 9.0,
-        right: 12.0,
-    });
-    arrange(&row, &index_badge("3", mtm));
-    arrange(&row, &copy);
-    fill_width(nv(&*row));
-    row
+    glyph_copy_row(nv(&*index_badge("3", mtm)), nv(&*copy), mtm)
 }
 
 fn help_note(copy: &NSTextField, symbol: &str, mtm: MainThreadMarker) -> Retained<NSStackView> {
@@ -1246,56 +1237,47 @@ fn help_note(copy: &NSTextField, symbol: &str, mtm: MainThreadMarker) -> Retaine
     icon.setEditable(false);
     nv(&*icon)
         .widthAnchor()
-        .constraintEqualToConstant(22.0)
+        .constraintEqualToConstant(HELP_ROW_GLYPH)
         .setActive(true);
     nv(&*icon)
         .heightAnchor()
-        .constraintEqualToConstant(22.0)
+        .constraintEqualToConstant(HELP_ROW_GLYPH)
         .setActive(true);
+    glyph_copy_row(nv(&*icon), nv(copy), mtm)
+}
+
+fn glyph_copy_row(glyph: &NSView, copy: &NSView, mtm: MainThreadMarker) -> Retained<NSStackView> {
     let row = NSStackView::new(mtm);
     row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
     row.setAlignment(NSLayoutAttribute::Top);
-    row.setSpacing(10.0);
+    row.setDistribution(NSStackViewDistribution::Fill);
+    row.setSpacing(HELP_ROW_GAP);
     row.setEdgeInsets(NSEdgeInsets {
         top: 9.0,
-        left: 12.0,
+        left: HELP_ROW_INSET,
         bottom: 9.0,
-        right: 12.0,
+        right: HELP_ROW_INSET,
     });
-    arrange(&row, &icon);
-    arrange(&row, copy);
+    row.addArrangedSubview(glyph);
+    row.addArrangedSubview(copy);
     fill_width(nv(&*row));
+    copy.setContentHuggingPriority_forOrientation(
+        1.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    copy.setContentCompressionResistancePriority_forOrientation(
+        250.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    pin_beside_glyph(nv(&*row), copy);
     row
 }
 
-fn coin_flip(sun: &NSImage, moon: &NSImage, mtm: MainThreadMarker) -> Retained<NSView> {
-    let coin = NSView::new(mtm);
-    coin.setWantsLayer(true);
-    nv(&*coin)
-        .widthAnchor()
-        .constraintEqualToConstant(HERO_IMAGE)
+fn pin_beside_glyph(row: &NSView, copy: &NSView) {
+    let inset = HELP_ROW_INSET * 2.0 + HELP_ROW_GAP + HELP_ROW_GLYPH;
+    copy.widthAnchor()
+        .constraintEqualToAnchor_constant(&row.widthAnchor(), -inset)
         .setActive(true);
-    nv(&*coin)
-        .heightAnchor()
-        .constraintEqualToConstant(HERO_IMAGE)
-        .setActive(true);
-    let sun_face = coin_face(sun, mtm);
-    let moon_face = coin_face(moon, mtm);
-    pin_fill(&coin, nv(&*sun_face));
-    pin_fill(&coin, nv(&*moon_face));
-    if let Some(layer) = backing_layer(&coin) {
-        let mut perspective = identity_transform();
-        perspective.m34 = -1.0 / 760.0;
-        layer_set_sublayer_transform(&layer, perspective);
-    }
-    if let Some(layer) = backing_layer(nv(&*sun_face)) {
-        layer.setDoubleSided(false);
-    }
-    if let Some(layer) = backing_layer(nv(&*moon_face)) {
-        layer.setDoubleSided(false);
-        layer_set_transform(&layer, rotate_y(std::f64::consts::PI));
-    }
-    coin
 }
 
 fn coin_face(image: &NSImage, mtm: MainThreadMarker) -> Retained<NSImageView> {
@@ -1303,8 +1285,37 @@ fn coin_face(image: &NSImage, mtm: MainThreadMarker) -> Retained<NSImageView> {
     face.setImage(Some(image));
     face.setEditable(false);
     face.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+    nv(&*face)
+        .widthAnchor()
+        .constraintEqualToConstant(HERO_IMAGE)
+        .setActive(true);
+    nv(&*face)
+        .heightAnchor()
+        .constraintEqualToConstant(HERO_IMAGE)
+        .setActive(true);
     face.setWantsLayer(true);
     face
+}
+
+fn set_coin_image(coin: &NSImageView, image: &NSImage, duration: f64) {
+    if duration > 0.0 {
+        if let Some(layer) = backing_layer(nv(coin)) {
+            crossfade(&layer, duration);
+        }
+    }
+    coin.setImage(Some(image));
+}
+
+fn crossfade(layer: &CALayer, duration: f64) {
+    let Some(cls) = AnyClass::get(c"CATransition") else {
+        return;
+    };
+    unsafe {
+        let anim: Retained<AnyObject> = msg_send![cls, animation];
+        let _: () = msg_send![&*anim, setType: &*ns("fade")];
+        let _: () = msg_send![&*anim, setDuration: duration];
+        let _: () = msg_send![layer, addAnimation: &*anim, forKey: &*ns("fade")];
+    }
 }
 
 fn decorate_card_shadow(card: &NSView) {
@@ -1338,42 +1349,6 @@ fn set_fill_color(view: &NSView, rgb: [u8; 3], duration: f64) {
     }
 }
 
-fn set_coin_flip(coin: &NSView, active: bool, duration: f64) {
-    let Some(layer) = backing_layer(coin) else {
-        return;
-    };
-    let to = rotate_y(hero_flip_radians(active));
-    if duration > 0.0 {
-        let from = rotate_y(hero_flip_radians(!active));
-        let anim: Retained<CABasicAnimation> = unsafe {
-            msg_send![CABasicAnimation::class(), animationWithKeyPath: &*ns("transform")]
-        };
-        anim_set_duration(&anim, duration);
-        let from_val = value_with_transform(from);
-        let to_val = value_with_transform(to);
-        unsafe {
-            anim.setFromValue(Some(value_obj(&from_val)));
-            anim.setToValue(Some(value_obj(&to_val)));
-        }
-        let timing: Retained<CAMediaTimingFunction> = unsafe {
-            msg_send![
-                CAMediaTimingFunction::class(),
-                functionWithControlPoints: 0.22f32,
-                c1y: 0.78f32,
-                c2x: 0.18f32,
-                c2y: 1.12f32
-            ]
-        };
-        anim.setTimingFunction(Some(&timing));
-        layer.addAnimation_forKey(&anim, Some(&ns("flip")));
-    }
-    layer_set_transform(&layer, to);
-}
-
-fn value_obj(value: &NSValue) -> &AnyObject {
-    unsafe { &*(core::ptr::from_ref(value).cast::<AnyObject>()) }
-}
-
 fn rgb_color(rgb: [u8; 3]) -> Retained<CGColor> {
     cg_color(&NSColor::colorWithRed_green_blue_alpha(
         f64::from(rgb[0]) / 255.0,
@@ -1389,93 +1364,6 @@ fn cg_color(color: &NSColor) -> Retained<CGColor> {
 
 fn reduce_motion() -> bool {
     NSUserDefaults::standardUserDefaults().boolForKey(&ns("AppleReduceMotion"))
-}
-
-fn identity_transform() -> Transform3D {
-    Transform3D {
-        m11: 1.0,
-        m12: 0.0,
-        m13: 0.0,
-        m14: 0.0,
-        m21: 0.0,
-        m22: 1.0,
-        m23: 0.0,
-        m24: 0.0,
-        m31: 0.0,
-        m32: 0.0,
-        m33: 1.0,
-        m34: 0.0,
-        m41: 0.0,
-        m42: 0.0,
-        m43: 0.0,
-        m44: 1.0,
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Transform3D {
-    m11: f64,
-    m12: f64,
-    m13: f64,
-    m14: f64,
-    m21: f64,
-    m22: f64,
-    m23: f64,
-    m24: f64,
-    m31: f64,
-    m32: f64,
-    m33: f64,
-    m34: f64,
-    m41: f64,
-    m42: f64,
-    m43: f64,
-    m44: f64,
-}
-
-unsafe impl Encode for Transform3D {
-    const ENCODING: Encoding = Encoding::Struct(
-        "CATransform3D",
-        &[
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-            f64::ENCODING,
-        ],
-    );
-}
-
-#[link(name = "QuartzCore", kind = "framework")]
-unsafe extern "C" {
-    fn CATransform3DMakeRotation(angle: f64, x: f64, y: f64, z: f64) -> Transform3D;
-}
-
-fn rotate_y(radians: f64) -> Transform3D {
-    unsafe { CATransform3DMakeRotation(radians, 0.0, 1.0, 0.0) }
-}
-
-fn layer_set_transform(layer: &CALayer, transform: Transform3D) {
-    unsafe {
-        let _: () = msg_send![layer, setTransform: transform];
-    }
-}
-
-fn layer_set_sublayer_transform(layer: &CALayer, transform: Transform3D) {
-    unsafe {
-        let _: () = msg_send![layer, setSublayerTransform: transform];
-    }
 }
 
 fn layer_set_corner_radius(layer: &CALayer, radius: f64) {
@@ -1495,14 +1383,4 @@ fn layer_set_shadow_offset(layer: &CALayer, width: f64, height: f64) {
     unsafe {
         let _: () = msg_send![layer, setShadowOffset: size];
     }
-}
-
-fn anim_set_duration(anim: &CABasicAnimation, duration: f64) {
-    unsafe {
-        let _: () = msg_send![anim, setDuration: duration];
-    }
-}
-
-fn value_with_transform(transform: Transform3D) -> Retained<NSValue> {
-    unsafe { msg_send![NSValue::class(), valueWithCATransform3D: transform] }
 }

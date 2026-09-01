@@ -301,8 +301,16 @@ mod tests {
             "page stacks pin children to the card width so the coin cannot hug trailing"
         );
         assert!(
-            src.contains("CATransform3DMakeRotation"),
-            "the sun/moon coin flips with a rotateY animation"
+            src.contains("hero_shows_moon"),
+            "idle shows the sun; standby shows the moon — never both faces at once"
+        );
+        assert!(
+            !src.contains("CATransform3DMakeRotation") && !src.contains("valueWithCATransform3D"),
+            "do not pass CATransform3D through msg_send; that overlays both faces and crashes on click"
+        );
+        assert!(
+            src.contains("grouped_copy_max_width") && src.contains("pin_beside_glyph"),
+            "How to use / Keep in mind copy must wrap beside the 22pt glyph, not clip"
         );
         assert!(
             src.contains("setShadowRadius"),
@@ -406,8 +414,8 @@ mod tests {
             "NSTextAlignment and setAlignment need the objc2-app-kit NSText feature"
         );
         assert!(
-            cargo.contains("\"CATransform3D\"") || src.contains("CATransform3DMakeRotation"),
-            "coin flip uses a Core Animation rotateY transform"
+            !src.contains("CATransform3DMakeRotation"),
+            "coin face swap must not use a CATransform3D C struct"
         );
         assert!(
             src.contains("NSAppearanceCustomization"),
@@ -508,6 +516,14 @@ mod tests {
         assert!(
             src.contains("row_caption"),
             "switch captions wrap instead of pushing the control off-screen"
+        );
+        assert!(
+            src.contains("grouped_copy_max_width"),
+            "How-to details wrap to the card inner width beside the badge"
+        );
+        assert!(
+            !src.contains("arrange(&keys, after)"),
+            "step 3 must not put the hotkey sentence on one non-wrapping horizontal row"
         );
         assert!(
             src.contains("NSStackViewDistribution::Fill"),

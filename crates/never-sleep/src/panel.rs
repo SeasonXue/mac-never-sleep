@@ -20,12 +20,16 @@ pub const PANEL_CORNER: f64 = 10.0;
 pub const SHADOW_INSET: f64 = 24.0;
 pub const SHADOW_RADIUS: f64 = 18.0;
 pub const SHADOW_OPACITY: f32 = 0.28;
-/// Coin `rotateY` duration (HTML `520ms cubic-bezier(.22, .78, .18, 1.12)`).
+/// Coin face swap duration (HTML-era `520ms` flip).
 pub const HERO_FLIP_SECS: f64 = 0.52;
 /// Idle `#f5f5f7` ↔ active `#1c1c1e` wash (HTML `420ms`).
 pub const PANEL_COLOR_SECS: f64 = 0.42;
 pub const IDLE_FILL_RGB: [u8; 3] = [0xf5, 0xf5, 0xf7];
 pub const ACTIVE_FILL_RGB: [u8; 3] = [0x1c, 0x1c, 0x1e];
+/// Numbered badge / SF Symbol in How-to and Keep-in-mind rows.
+pub const HELP_ROW_GLYPH: f64 = 22.0;
+pub const HELP_ROW_GAP: f64 = 10.0;
+pub const HELP_ROW_INSET: f64 = 12.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelPlacement {
@@ -63,6 +67,20 @@ pub fn hero_flip_radians(active: bool) -> f64 {
     } else {
         0.0
     }
+}
+
+/// Idle shows the sun; standby shows the moon. Never both at once.
+pub fn hero_shows_moon(active: bool) -> bool {
+    active
+}
+
+pub fn panel_inner_width() -> f64 {
+    PANEL_WIDTH - CONTENT_INSET * 2.0
+}
+
+/// Wrapping width beside a 22pt glyph inside a grouped card.
+pub fn grouped_copy_max_width() -> f64 {
+    panel_inner_width() - HELP_ROW_INSET * 2.0 - HELP_ROW_GLYPH - HELP_ROW_GAP
 }
 
 pub fn hero_flips(reduce_motion: bool) -> bool {
@@ -442,6 +460,17 @@ mod tests {
         assert_eq!(panel_fill_rgb(true), [0x1c, 0x1c, 0x1e]);
         assert_eq!(hero_flip_radians(false), 0.0);
         assert_eq!(hero_flip_radians(true), std::f64::consts::PI);
+        assert!(!hero_shows_moon(false));
+        assert!(hero_shows_moon(true));
+        assert!(
+            grouped_copy_max_width() < panel_inner_width(),
+            "help/settings row copy sits beside a glyph, not the full inner width"
+        );
+        assert!(
+            grouped_copy_max_width() > 180.0,
+            "Chinese How-to sentences must still have room to wrap: {}",
+            grouped_copy_max_width()
+        );
         assert_eq!(window_width(), PANEL_WIDTH + SHADOW_INSET * 2.0);
         assert_eq!(window_height(), PANEL_HEIGHT + SHADOW_INSET * 2.0);
         assert!(
@@ -457,6 +486,15 @@ mod tests {
             dismiss_on_focus_loss(),
             "a menu-bar popover must hide when it loses key focus"
         );
+    }
+
+    #[test]
+    fn help_copy_wraps_inside_the_grouped_card() {
+        assert_eq!(HELP_ROW_GLYPH, 22.0);
+        assert_eq!(HELP_ROW_GAP, 10.0);
+        assert_eq!(HELP_ROW_INSET, 12.0);
+        assert_eq!(panel_inner_width(), 288.0);
+        assert_eq!(grouped_copy_max_width(), 232.0);
     }
 
     #[test]
