@@ -955,7 +955,8 @@ fn labeled_switch(
         750.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
     );
-    (caption, toggle, control_row(&caption, nv(&*toggle), mtm))
+    let row = control_row(&caption, nv(&*toggle), mtm);
+    (caption, toggle, row)
 }
 
 fn duration_row(

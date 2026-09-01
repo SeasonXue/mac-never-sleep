@@ -313,8 +313,8 @@ mod tests {
             "NSBox::setFillColor takes &NSColor, not Option"
         );
         assert!(
-            src.contains("pin_fill"),
-            "pages pin leading and trailing so cards do not hug the right edge"
+            !src.contains("(caption, toggle, control_row(&caption"),
+            "labeled_switch must build the row before moving caption/toggle (E0382 on macOS)"
         );
         assert!(
             src.contains("index_badge"),
