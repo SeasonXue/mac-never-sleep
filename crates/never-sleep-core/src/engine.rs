@@ -1,7 +1,6 @@
 use crate::config::AppConfig;
 use crate::duration::{
-    countdown_secs, deadline_unix_secs, elapsed_secs, format_duration, remaining_ms,
-    session_remaining_ms,
+    countdown_secs, deadline_unix_secs, effective_elapsed_ms, format_duration, session_remaining_ms,
 };
 use crate::i18n::{Lang, Tr};
 use crate::status::{build_view_model, HostSnapshot, JsonStatus, ViewModel};
@@ -294,29 +293,8 @@ impl Engine {
                 }
             }
         }
-        if let Some(deadline) = session.deadline_unix {
-            match session.duration {
-                DurationPref::Hours { .. } => {
-                    // Instant does not advance while the Mac is asleep, so also
-                    // honour the wall deadline after closed-lid suspend.
-                    if remaining_ms(
-                        deadline,
-                        session.started_unix,
-                        session.started_ms,
-                        host.monotonic_ms,
-                    ) == 0
-                        || host.unix_secs >= deadline
-                    {
-                        return Some(StopReason::DurationElapsed);
-                    }
-                }
-                DurationPref::UntilLocal { .. } => {
-                    if host.unix_secs >= deadline {
-                        return Some(StopReason::DurationElapsed);
-                    }
-                }
-                DurationPref::Indefinite => {}
-            }
+        if self.remaining_ms(session, host) == Some(0) {
+            return Some(StopReason::DurationElapsed);
         }
         None
     }
@@ -359,8 +337,11 @@ impl Engine {
     }
 
     pub fn view(&self, host: &HostSnapshot) -> ViewModel {
-        let (started, remaining) = match &self.session {
-            Some(s) => (Some(s.started_ms), self.remaining_secs(s, host)),
+        let (elapsed, remaining) = match &self.session {
+            Some(s) => (
+                Some(self.elapsed_secs(s, host)),
+                self.remaining_secs(s, host),
+            ),
             None => (None, None),
         };
         let last_stop = self
@@ -369,7 +350,7 @@ impl Engine {
         build_view_model(
             &self.config,
             self.is_active(),
-            started,
+            elapsed,
             remaining,
             host,
             last_stop.as_deref(),
@@ -401,10 +382,26 @@ impl Engine {
         self.remaining_ms(session, host).map(countdown_secs)
     }
 
+    fn elapsed_secs(&self, session: &Session, host: &HostSnapshot) -> u64 {
+        match session.duration {
+            DurationPref::Hours { .. } => {
+                effective_elapsed_ms(
+                    session.started_unix,
+                    session.started_ms,
+                    host.unix_secs,
+                    host.monotonic_ms,
+                ) / 1_000
+            }
+            DurationPref::UntilLocal { .. } | DurationPref::Indefinite => {
+                crate::elapsed_secs(session.started_ms, host.monotonic_ms)
+            }
+        }
+    }
+
     pub fn json_status(&self, host: &HostSnapshot) -> JsonStatus {
         let (elapsed, remaining) = match &self.session {
             Some(s) => (
-                Some(elapsed_secs(s.started_ms, host.monotonic_ms)),
+                Some(self.elapsed_secs(s, host)),
                 self.remaining_secs(s, host),
             ),
             None => (None, None),
@@ -654,6 +651,28 @@ mod tests {
             has_release(&e),
             "Instant does not run during system sleep; the wall deadline must still end Hours"
         );
+    }
+
+    #[test]
+    fn hours_countdown_matches_suspend_aware_deadline() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(2_000);
+        h.unix_secs = h0.unix_secs + 1_800;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(!has_release(&e));
+        assert!(eng.is_active());
+        assert_eq!(
+            eng.json_status(&h).remaining_secs,
+            Some(1_800),
+            "30 minutes of suspend must leave 30 minutes on the countdown, not ~1h"
+        );
+        assert_eq!(eng.json_status(&h).elapsed_secs, Some(1_800));
+        assert_eq!(eng.view(&h).remaining_secs, Some(1_800));
+        assert_eq!(eng.view(&h).elapsed_secs, Some(1_800));
     }
 
     #[test]

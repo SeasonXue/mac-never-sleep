@@ -98,11 +98,28 @@ pub fn elapsed_secs(started_ms: u64, now_ms: u64) -> u64 {
     now_ms.saturating_sub(started_ms) / 1_000
 }
 
+/// Wall time this far ahead of `Instant` is treated as system sleep, not NTP/truncation.
+pub const WALL_SUSPEND_SLACK_MS: u64 = 15_000;
+
+/// Elapsed time for an `Hours` session.
+///
+/// `Instant` does not run while the Mac is asleep. A large wall-clock lead is
+/// therefore counted as suspend. Ordinary `unix_secs` truncation stays on the
+/// monotonic clock so the UI does not skip a few seconds.
+pub fn effective_elapsed_ms(started_unix: i64, started_ms: u64, now_unix: i64, now_ms: u64) -> u64 {
+    let mono = now_ms.saturating_sub(started_ms);
+    let wall = now_unix.saturating_sub(started_unix).max(0) as u64 * 1_000;
+    if wall > mono.saturating_add(WALL_SUSPEND_SLACK_MS) {
+        wall
+    } else {
+        mono
+    }
+}
+
 /// Remaining milliseconds for the active duration kind.
 ///
-/// `Hours` follows the monotonic clock so the UI does not skip seconds when
-/// `unix_secs` truncates. `UntilLocal` follows the wall clock, matching the stop
-/// condition for “until 08:00”.
+/// `Hours` uses [`effective_elapsed_ms`] so countdown and stop share one clock.
+/// `UntilLocal` follows the wall clock, matching “until 08:00”.
 pub fn session_remaining_ms(
     pref: DurationPref,
     deadline_unix: i64,
@@ -112,7 +129,15 @@ pub fn session_remaining_ms(
     now_unix: i64,
 ) -> u64 {
     match pref {
-        DurationPref::Hours { .. } => remaining_ms(deadline_unix, started_unix, started_ms, now_ms),
+        DurationPref::Hours { .. } => {
+            let duration_ms = deadline_unix.saturating_sub(started_unix).max(0) as u64 * 1_000;
+            duration_ms.saturating_sub(effective_elapsed_ms(
+                started_unix,
+                started_ms,
+                now_unix,
+                now_ms,
+            ))
+        }
         DurationPref::UntilLocal { .. } => {
             deadline_unix.saturating_sub(now_unix).max(0) as u64 * 1_000
         }
@@ -309,5 +334,43 @@ mod tests {
             started_unix + 10,
         );
         assert_eq!(hours, 3_595_000);
+    }
+
+    #[test]
+    fn hours_remaining_counts_suspend_not_small_wall_jumps() {
+        let started_unix = 1_700_000_000;
+        let deadline = started_unix + 3_600;
+        let truncated = session_remaining_ms(
+            DurationPref::Hours { hours: 1 },
+            deadline,
+            started_unix,
+            0,
+            2_000,
+            started_unix + 5,
+        );
+        assert_eq!(
+            truncated, 3_598_000,
+            "a few truncated unix seconds must not skip the countdown"
+        );
+        let after_sleep = session_remaining_ms(
+            DurationPref::Hours { hours: 1 },
+            deadline,
+            started_unix,
+            0,
+            2_000,
+            started_unix + 1_800,
+        );
+        assert_eq!(
+            after_sleep, 1_800_000,
+            "30 minutes of suspend must show 30 minutes left, not ~1h"
+        );
+        assert_eq!(
+            effective_elapsed_ms(started_unix, 0, started_unix + 5, 2_000),
+            2_000
+        );
+        assert_eq!(
+            effective_elapsed_ms(started_unix, 0, started_unix + 1_800, 2_000),
+            1_800_000
+        );
     }
 }
