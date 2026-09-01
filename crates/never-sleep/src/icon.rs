@@ -38,79 +38,49 @@ pub fn celestial_icon(active: bool) -> (Vec<u8>, u32, u32) {
 
 #[cfg(any(test, target_os = "macos"))]
 fn sun_sample(x: f32, y: f32) -> bool {
-    let cx = 18.0;
-    let cy = 18.0;
-    let dx = x - cx;
-    let dy = y - cy;
+    let dx = x - 18.0;
+    let dy = y - 18.0;
     let radius = (dx * dx + dy * dy).sqrt();
-    let mut body = radius <= 8.7;
 
-    // Twelve tapered, slightly offset rays keep the silhouette handmade at menu-bar scale.
-    for ray in 0..12 {
-        let angle =
-            ray as f32 * std::f32::consts::TAU / 12.0 + if ray % 2 == 0 { -0.035 } else { 0.045 };
+    // A large solid core makes the mark feel full and legible at menu-bar scale.
+    if radius <= 9.0 {
+        return true;
+    }
+
+    // Eight short, chunky tapered rays hugging the core: a plump sun silhouette
+    // that holds up next to other menu-bar glyphs like ChatGPT.
+    const RAY_INNER: f32 = 10.2;
+    const RAY_OUTER: f32 = 17.0;
+    for ray in 0..8 {
+        let angle = ray as f32 * std::f32::consts::TAU / 8.0;
         let cos = angle.cos();
         let sin = angle.sin();
         let radial = dx * cos + dy * sin;
-        let tangent = -dx * sin + dy * cos;
-        let length = if ray % 3 == 0 { 14.4 } else { 13.2 };
-        let half_width = 1.55 * (1.0 - ((radial - 8.0) / 7.2).clamp(0.0, 0.72));
-        if radial >= 7.6 && radial <= length && tangent.abs() <= half_width {
-            body = true;
+        if !(RAY_INNER..=RAY_OUTER).contains(&radial) {
+            continue;
+        }
+        let tangent = (-dx * sin + dy * cos).abs();
+        let t = (radial - RAY_INNER) / (RAY_OUTER - RAY_INNER);
+        let half_width = 2.7 - t * 1.9;
+        if tangent <= half_width {
+            return true;
         }
     }
-
-    if !body {
-        return false;
-    }
-
-    // The watchful eye and crooked smile are transparent cuts in the template silhouette.
-    let eye_cut = ellipse(x, y, 20.5, 16.2, 3.3, 1.15);
-    let eye_pupil = circle(x, y, 21.1, 16.35, 0.7);
-    let mouth_cut = segment_distance(x, y, 19.1, 22.0, 23.1, 21.1) < 0.55;
-    let brow_cut = segment_distance(x, y, 18.6, 13.4, 22.7, 12.6) < 0.42;
-    (body && !(eye_cut || mouth_cut || brow_cut)) || eye_pupil
+    false
 }
 
 #[cfg(any(test, target_os = "macos"))]
 fn moon_sample(x: f32, y: f32) -> bool {
-    let outer = circle(x, y, 17.8, 18.0, 13.2);
-    let inner = circle(x, y, 11.2, 15.9, 10.7);
-    let body = outer && !inner;
-    if !body {
-        return false;
-    }
-
-    let eye_cut = ellipse(x, y, 21.8, 15.6, 2.9, 1.05);
-    let eye_pupil = circle(x, y, 22.1, 15.7, 0.65);
-    let mouth_cut = segment_distance(x, y, 20.4, 22.1, 23.5, 21.35) < 0.5;
-    let brow_cut = segment_distance(x, y, 20.0, 12.9, 23.7, 12.2) < 0.4;
-    (body && !(eye_cut || mouth_cut || brow_cut)) || eye_pupil
+    // A clean crescent: a full disc with an offset disc carved out of the right,
+    // horns opening toward the trailing edge like the app's moon artwork.
+    let body = circle(x, y, 16.6, 18.0, 13.6);
+    let bite = circle(x, y, 25.8, 18.0, 12.2);
+    body && !bite
 }
 
 #[cfg(any(test, target_os = "macos"))]
 fn circle(x: f32, y: f32, cx: f32, cy: f32, radius: f32) -> bool {
     (x - cx).powi(2) + (y - cy).powi(2) <= radius.powi(2)
-}
-
-#[cfg(any(test, target_os = "macos"))]
-fn ellipse(x: f32, y: f32, cx: f32, cy: f32, rx: f32, ry: f32) -> bool {
-    ((x - cx) / rx).powi(2) + ((y - cy) / ry).powi(2) <= 1.0
-}
-
-#[cfg(any(test, target_os = "macos"))]
-fn segment_distance(x: f32, y: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
-    let vx = bx - ax;
-    let vy = by - ay;
-    let wx = x - ax;
-    let wy = y - ay;
-    let denom = vx * vx + vy * vy;
-    let t = if denom == 0.0 {
-        0.0
-    } else {
-        ((wx * vx + wy * vy) / denom).clamp(0.0, 1.0)
-    };
-    ((x - (ax + t * vx)).powi(2) + (y - (ay + t * vy)).powi(2)).sqrt()
 }
 
 #[cfg(target_os = "macos")]
