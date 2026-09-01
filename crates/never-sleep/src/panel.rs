@@ -6,6 +6,8 @@ use never_sleep_core::{AppConfig, DurationPref, Lang, Tr, ViewModel, DEFAULT_HOT
 
 /// Ignore a second Start/End click that AppKit queued from the same press.
 pub const TOGGLE_COOLDOWN_MS: u64 = 400;
+/// Status-item mouse-down can hide the panel (focus loss) before mouse-up toggles it.
+pub const TRAY_REOPEN_GUARD_MS: u64 = 400;
 
 /// Compact menu-bar popover. Height hugs the packed main column (not a 480pt void).
 pub const PANEL_WIDTH: f64 = 320.0;
@@ -203,6 +205,19 @@ impl SidebarItem {
             Self::Display => PanelView::Settings,
         }
     }
+}
+
+/// Help opened from Settings returns there; Help from Main or the menu returns to Main.
+pub fn help_back_target(opened_from: PanelView) -> PanelView {
+    match opened_from {
+        PanelView::Settings => PanelView::Settings,
+        PanelView::Main | PanelView::Help => PanelView::Main,
+    }
+}
+
+/// True when a tray mouse-up should not reopen a panel that just hid from that same click.
+pub fn suppress_tray_reopen(ms_since_focus_loss_hide: u64) -> bool {
+    ms_since_focus_loss_hide < TRAY_REOPEN_GUARD_MS
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -489,6 +504,30 @@ mod tests {
         for item in SidebarItem::ALL {
             assert_eq!(SidebarItem::from_index(item.index()), Some(item));
         }
+    }
+
+    #[test]
+    fn help_back_returns_to_the_view_that_opened_it() {
+        assert_eq!(help_back_target(PanelView::Main), PanelView::Main);
+        assert_eq!(help_back_target(PanelView::Settings), PanelView::Settings);
+        assert_eq!(
+            help_back_target(PanelView::Help),
+            PanelView::Main,
+            "opening Help while already on Help still backs to Main"
+        );
+    }
+
+    #[test]
+    fn tray_click_after_focus_loss_does_not_reopen() {
+        assert!(
+            suppress_tray_reopen(0),
+            "the mouse-up that dismissed the panel must not toggle it open again"
+        );
+        assert!(suppress_tray_reopen(TRAY_REOPEN_GUARD_MS - 1));
+        assert!(
+            !suppress_tray_reopen(TRAY_REOPEN_GUARD_MS),
+            "a later status-item click must still open the panel"
+        );
     }
 
     #[test]

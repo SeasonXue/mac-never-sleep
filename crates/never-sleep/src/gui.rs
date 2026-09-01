@@ -22,8 +22,8 @@ use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
-    dismiss_on_focus_loss, panel_placement, panel_state, window_height, window_width,
-    PanelPlacement, PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH, SHADOW_INSET,
+    dismiss_on_focus_loss, panel_placement, panel_state, suppress_tray_reopen, window_height,
+    window_width, PanelPlacement, PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH, SHADOW_INSET,
 };
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
@@ -35,6 +35,7 @@ pub(crate) enum UserEvent {
     Hotkey,
     Menu(tray_icon::menu::MenuId),
     Tray(TrayRect),
+    TrayAnchor(TrayRect),
     Ui(UiCommand),
 }
 
@@ -56,6 +57,7 @@ struct Popover {
     visible: bool,
     last_tray: Option<TrayRect>,
     last: Option<PanelState>,
+    focus_loss_hide_at: Option<Instant>,
 }
 
 impl Popover {
@@ -84,6 +86,7 @@ impl Popover {
             visible: false,
             last_tray: None,
             last: None,
+            focus_loss_hide_at: None,
         })
     }
 
@@ -92,6 +95,12 @@ impl Popover {
         if self.visible {
             self.hide();
             return;
+        }
+        if let Some(at) = self.focus_loss_hide_at.take() {
+            let ms = Instant::now().saturating_duration_since(at).as_millis() as u64;
+            if suppress_tray_reopen(ms) {
+                return;
+            }
         }
         self.place_at(rect);
         self.window.set_visible(true);
@@ -168,6 +177,13 @@ impl Popover {
         self.visible = false;
     }
 
+    fn hide_from_focus_loss(&mut self) {
+        if self.visible {
+            self.focus_loss_hide_at = Some(Instant::now());
+        }
+        self.hide();
+    }
+
     fn update(&mut self, state: PanelState) {
         if self.last.as_ref() == Some(&state) {
             return;
@@ -235,12 +251,16 @@ pub fn run() {
     TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
         if let TrayIconEvent::Click {
             rect,
-            button: MouseButton::Left,
+            button,
             button_state: MouseButtonState::Up,
             ..
         } = event
         {
-            let _ = proxy_tray.send_event(UserEvent::Tray(rect));
+            if button == MouseButton::Left {
+                let _ = proxy_tray.send_event(UserEvent::Tray(rect));
+            } else {
+                let _ = proxy_tray.send_event(UserEvent::TrayAnchor(rect));
+            }
         }
     }));
 
@@ -367,6 +387,11 @@ pub fn run() {
                     panel.toggle_at(rect);
                 }
             }
+            Event::UserEvent(UserEvent::TrayAnchor(rect)) => {
+                if let Some(panel) = popover.as_mut() {
+                    panel.last_tray = Some(rect);
+                }
+            }
             Event::UserEvent(UserEvent::Ui(command)) => {
                 handle_ui_command(
                     command,
@@ -405,7 +430,7 @@ pub fn run() {
                 if dismiss_on_focus_loss() {
                     if let Some(popover) = popover.as_mut() {
                         if popover.window.id() == window_id {
-                            popover.hide();
+                            popover.hide_from_focus_loss();
                         }
                     }
                 }
