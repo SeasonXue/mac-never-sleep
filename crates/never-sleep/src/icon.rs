@@ -42,14 +42,14 @@ fn sun_sample(x: f32, y: f32) -> bool {
     let dy = y - 18.0;
     let radius = (dx * dx + dy * dy).sqrt();
 
-    // A solid core keeps the mark legible at menu-bar scale.
-    if radius <= 6.8 {
+    // A large solid core makes the mark feel full and legible at menu-bar scale.
+    if radius <= 9.0 {
         return true;
     }
 
-    // Eight bold, evenly tapered rays with a clean gap from the core: a simple
-    // sun silhouette that holds up next to other menu-bar glyphs like ChatGPT.
-    const RAY_INNER: f32 = 8.6;
+    // Eight short, chunky tapered rays hugging the core: a plump sun silhouette
+    // that holds up next to other menu-bar glyphs like ChatGPT.
+    const RAY_INNER: f32 = 10.2;
     const RAY_OUTER: f32 = 17.0;
     for ray in 0..8 {
         let angle = ray as f32 * std::f32::consts::TAU / 8.0;
@@ -61,7 +61,7 @@ fn sun_sample(x: f32, y: f32) -> bool {
         }
         let tangent = (-dx * sin + dy * cos).abs();
         let t = (radial - RAY_INNER) / (RAY_OUTER - RAY_INNER);
-        let half_width = 2.2 - t * 1.55;
+        let half_width = 2.7 - t * 1.9;
         if tangent <= half_width {
             return true;
         }
@@ -73,8 +73,8 @@ fn sun_sample(x: f32, y: f32) -> bool {
 fn moon_sample(x: f32, y: f32) -> bool {
     // A clean crescent: a full disc with an offset disc carved out of the right,
     // horns opening toward the trailing edge like the app's moon artwork.
-    let body = circle(x, y, 17.0, 18.0, 13.2);
-    let bite = circle(x, y, 24.6, 18.0, 12.0);
+    let body = circle(x, y, 16.6, 18.0, 13.6);
+    let bite = circle(x, y, 25.8, 18.0, 12.2);
     body && !bite
 }
 
