@@ -748,6 +748,7 @@ impl NativePanel {
         } else {
             0.0
         };
+        set_chrome_appearance(&self.clip, active);
         set_fill_color(&self.wash, panel_fill_rgb(active), color_secs);
         set_coin_flip(
             &self.coin,
@@ -758,16 +759,6 @@ impl NativePanel {
             hero_shows_moon(active),
             flip_secs,
         );
-        let name = unsafe {
-            if active {
-                NSAppearanceNameDarkAqua
-            } else {
-                NSAppearanceNameAqua
-            }
-        };
-        if let Some(appearance) = NSAppearance::appearanceNamed(name) {
-            self.clip.setAppearance(Some(&appearance));
-        }
         if let Some(window) = self.wash.window() {
             window.setOpaque(false);
             window.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -1453,7 +1444,29 @@ fn set_rotation_y(layer: &CALayer, from: f64, to: f64, duration: f64) {
         }
     }
     unsafe {
+        let _: () = msg_send![CATransaction::class(), begin];
+        let _: () = msg_send![CATransaction::class(), setDisableActions: true];
         let _: () = msg_send![layer, setValue: &*to_num, forKeyPath: &*ns("transform.rotation.y")];
+        let _: () = msg_send![CATransaction::class(), commit];
+    }
+}
+
+fn set_chrome_appearance(clip: &NSView, active: bool) {
+    let name = unsafe {
+        if active {
+            NSAppearanceNameDarkAqua
+        } else {
+            NSAppearanceNameAqua
+        }
+    };
+    let Some(appearance) = NSAppearance::appearanceNamed(name) else {
+        return;
+    };
+    unsafe {
+        let _: () = msg_send![CATransaction::class(), begin];
+        let _: () = msg_send![CATransaction::class(), setDisableActions: true];
+        clip.setAppearance(Some(&appearance));
+        let _: () = msg_send![CATransaction::class(), commit];
     }
 }
 
