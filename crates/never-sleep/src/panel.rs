@@ -162,38 +162,28 @@ pub enum PanelView {
     Help,
 }
 
-/// Sidebar destinations. Coarse `PanelView` stays for Help / Settings reachability.
+/// Screenshot destinations. Coarse `PanelView` stays for Help / Settings reachability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarItem {
     Standby,
     Display,
-    Lid,
-    Safeguards,
-    General,
     Help,
 }
 
 impl SidebarItem {
-    pub const ALL: [Self; 6] = [
-        Self::Standby,
-        Self::Display,
-        Self::Lid,
-        Self::Safeguards,
-        Self::General,
-        Self::Help,
-    ];
+    #[cfg(test)]
+    pub const ALL: [Self; 3] = [Self::Standby, Self::Display, Self::Help];
 
+    #[cfg(test)]
     pub fn index(self) -> isize {
         match self {
             Self::Standby => 0,
             Self::Display => 1,
-            Self::Lid => 2,
-            Self::Safeguards => 3,
-            Self::General => 4,
-            Self::Help => 5,
+            Self::Help => 2,
         }
     }
 
+    #[cfg(test)]
     pub fn from_index(index: isize) -> Option<Self> {
         Self::ALL.iter().copied().find(|item| item.index() == index)
     }
@@ -202,9 +192,6 @@ impl SidebarItem {
         match self {
             Self::Standby => "moon.zzz",
             Self::Display => "display",
-            Self::Lid => "laptopcomputer",
-            Self::Safeguards => "checkmark.shield",
-            Self::General => "gearshape",
             Self::Help => "questionmark.circle",
         }
     }
@@ -213,7 +200,7 @@ impl SidebarItem {
         match self {
             Self::Standby => PanelView::Main,
             Self::Help => PanelView::Help,
-            Self::Display | Self::Lid | Self::Safeguards | Self::General => PanelView::Settings,
+            Self::Display => PanelView::Settings,
         }
     }
 }
@@ -488,13 +475,17 @@ mod tests {
 
     #[test]
     fn sidebar_lists_standby_options_and_help() {
-        assert_eq!(SidebarItem::ALL.len(), 6);
+        assert_eq!(
+            SidebarItem::ALL.len(),
+            3,
+            "screenshot panel has Main / Settings / Help, not a six-row sidebar"
+        );
         assert_eq!(SidebarItem::Standby.as_panel_view(), PanelView::Main);
         assert_eq!(SidebarItem::Display.as_panel_view(), PanelView::Settings);
         assert_eq!(SidebarItem::Help.as_panel_view(), PanelView::Help);
         assert_eq!(SidebarItem::Standby.symbol(), "moon.zzz");
-        assert_eq!(SidebarItem::from_index(5), Some(SidebarItem::Help));
-        assert_eq!(SidebarItem::from_index(9), None);
+        assert_eq!(SidebarItem::from_index(2), Some(SidebarItem::Help));
+        assert_eq!(SidebarItem::from_index(5), None);
         for item in SidebarItem::ALL {
             assert_eq!(SidebarItem::from_index(item.index()), Some(item));
         }

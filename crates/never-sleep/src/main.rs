@@ -280,6 +280,12 @@ mod tests {
             src.contains("SidebarItem"),
             "sidebar destinations still map onto Main/Settings/Help"
         );
+        assert!(
+            !src.contains("SidebarItem::Lid")
+                && !src.contains("SidebarItem::Safeguards")
+                && !src.contains("SidebarItem::General"),
+            "unused sidebar variants are macOS clippy dead_code after dropping arrow-key traversal"
+        );
     }
 
     #[test]
@@ -492,6 +498,10 @@ mod tests {
         assert!(
             !gui.contains("select_adjacent") && !gui.contains("ArrowDown"),
             "arrow keys must stay with NSPopUpButton; sidebar traversal steals duration Up/Down"
+        );
+        assert!(
+            gui.contains("&& event.logical_key == Key::Escape"),
+            "Escape hide must be one if so macOS clippy::collapsible_if stays clean"
         );
         assert!(
             gui.contains("handles.show_window.id()"),

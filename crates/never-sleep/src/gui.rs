@@ -417,10 +417,8 @@ pub fn run() {
             } => {
                 if event.state == ElementState::Pressed {
                     if let Some(panel) = popover.as_mut() {
-                        if panel.window.id() == window_id {
-                            if event.logical_key == Key::Escape {
-                                panel.hide();
-                            }
+                        if panel.window.id() == window_id && event.logical_key == Key::Escape {
+                            panel.hide();
                         }
                     }
                 }
