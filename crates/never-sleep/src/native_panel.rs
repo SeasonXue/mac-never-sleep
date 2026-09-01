@@ -29,13 +29,16 @@ use tao::window::Window;
 
 use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
-    grouped_copy_max_width, help_back_target, help_from_after_open, hero_flip_radians, hero_flips,
-    hero_shows_moon, menu_help_origin, motion_duration_secs, panel_fill_rgb, panel_inner_width,
-    preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem, CARD_HAIRLINE,
-    CARD_RADIUS, CARD_ROW_HEIGHT, CARD_ROW_INSET_X, CARD_SEPARATOR_GAP, CONTENT_INSET, FOOTER_GAP,
-    FOOTER_HEIGHT, HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS,
-    HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB, PANEL_COLOR_SECS, PANEL_CORNER, PRIMARY_HEIGHT,
-    SHADOW_INSET, SHADOW_OFFSET_Y, SHADOW_OPACITY, SHADOW_RADIUS, WARNING_SLOT,
+    grouped_copy_max_width, help_back_target, help_from_after_open, help_scroll_y,
+    hero_flip_radians, hero_flips, hero_shows_moon, menu_help_origin, motion_duration_secs,
+    panel_fill_rgb, panel_inner_width, preferred_glass, switch_copy_max_width, DurationKey,
+    GlassKind, PanelState, PanelView, SidebarItem, CARD_HAIRLINE, CARD_RADIUS, CARD_ROW_HEIGHT,
+    CARD_ROW_INSET_X, CARD_SEPARATOR_GAP, CONTENT_INSET, CONTROL_ROW_GAP, FOOTER_GAP,
+    FOOTER_HEIGHT, HELP_BLOCK_GAP, HELP_BODY_PAD_BOTTOM, HELP_COPY_GAP, HELP_LEAD_GAP,
+    HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HELP_SECTION_GAP, HERO_FLIP_SECS,
+    HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB, LANGUAGE_HEIGHT, PANEL_COLOR_SECS, PANEL_CORNER,
+    PRIMARY_HEIGHT, SHADOW_INSET, SHADOW_INSET_TOP, SHADOW_OFFSET_Y, SHADOW_OPACITY, SHADOW_RADIUS,
+    WARNING_SLOT,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -459,26 +462,34 @@ impl NativePanel {
         fill_width(nv(&*language));
         nv(&*language)
             .heightAnchor()
-            .constraintEqualToConstant(24.0)
+            .constraintEqualToConstant(LANGUAGE_HEIGHT)
             .setActive(true);
         let help_button = text_button(&target, sel!(help:), mtm);
         let quit_settings = text_button(&target, sel!(quit:), mtm);
 
         let settings_head = sheet_head(&back, &settings_title, mtm);
         let settings_footer = chrome_bar(&help_button, None, Some(&quit_settings), mtm);
+        let settings_slack = NSView::new(mtm);
+        stretch(&settings_slack);
+        settings_slack
+            .heightAnchor()
+            .constraintGreaterThanOrEqualToConstant(FOOTER_GAP)
+            .setActive(true);
         let settings_stack = column(mtm, 0.0, CONTENT_INSET);
         settings_stack.setAlignment(NSLayoutAttribute::Leading);
+        settings_stack.setDistribution(NSStackViewDistribution::Fill);
         arrange(&settings_stack, &settings_head);
         spacer(&settings_stack, 8.0, mtm);
         arrange(&settings_stack, &settings_card);
         spacer(&settings_stack, 12.0, mtm);
         arrange(&settings_stack, &language);
-        spacer(&settings_stack, FOOTER_GAP, mtm);
+        arrange(&settings_stack, &settings_slack);
         arrange(&settings_stack, &settings_footer);
         pin_fill(&settings_view, nv(&*settings_stack));
         span_stack(&settings_stack, nv(&*settings_head));
         span_stack(&settings_stack, nv(&*settings_card));
         span_stack(&settings_stack, nv(&*language));
+        span_stack(&settings_stack, &settings_slack);
         span_stack(&settings_stack, nv(&*settings_footer));
 
         let help_back = icon_button(&target, sel!(back:), "chevron.left", mtm);
@@ -523,22 +534,23 @@ impl NativePanel {
 
         let help_body = column(mtm, 0.0, 0.0);
         help_body.setAlignment(NSLayoutAttribute::Leading);
+        hug_vertically(nv(&*help_body));
         help_body.setEdgeInsets(NSEdgeInsets {
             top: 0.0,
             left: 0.0,
-            bottom: 12.0,
+            bottom: HELP_BODY_PAD_BOTTOM,
             right: 0.0,
         });
         arrange(&help_body, &help_kicker);
-        spacer(&help_body, 5.0, mtm);
+        spacer(&help_body, HELP_LEAD_GAP, mtm);
         arrange(&help_body, &help_lead);
-        spacer(&help_body, 12.0, mtm);
+        spacer(&help_body, HELP_BLOCK_GAP, mtm);
         arrange(&help_body, &help_how);
-        spacer(&help_body, 6.0, mtm);
+        spacer(&help_body, HELP_SECTION_GAP, mtm);
         arrange(&help_body, &how_card);
-        spacer(&help_body, 14.0, mtm);
+        spacer(&help_body, HELP_BLOCK_GAP, mtm);
         arrange(&help_body, &help_notes);
-        spacer(&help_body, 6.0, mtm);
+        spacer(&help_body, HELP_SECTION_GAP, mtm);
         arrange(&help_body, &notes_card);
         span_stack(&help_body, nv(&*help_kicker));
         span_stack(&help_body, nv(&*help_lead));
@@ -753,12 +765,32 @@ impl NativePanel {
 
     fn open_help(&mut self, origin: PanelView, from_menu: bool) {
         self.help_from = help_from_after_open(self.current, self.help_from, origin, from_menu);
-        self.help_scroll
-            .contentView()
-            .scrollToPoint(NSPoint::new(0.0, 0.0));
-        self.help_scroll
-            .reflectScrolledClipView(&self.help_scroll.contentView());
         self.show_pane(SidebarItem::Help);
+        self.scroll_help_to_top();
+    }
+
+    fn scroll_help_to_top(&self) {
+        let scroll = &self.help_scroll;
+        let Some(doc) = scroll.documentView() else {
+            return;
+        };
+        self.help_view.layoutSubtreeIfNeeded();
+        let clip = scroll.contentView();
+        let width = clip.bounds().size.width;
+        if width > 0.0 {
+            doc.setFrameSize(objc2_foundation::NSSize::new(
+                width,
+                doc.fittingSize().height,
+            ));
+        }
+        doc.layoutSubtreeIfNeeded();
+        let y = help_scroll_y(
+            doc.frame().size.height,
+            clip.bounds().size.height,
+            clip.isFlipped(),
+        );
+        clip.scrollToPoint(NSPoint::new(0.0, y));
+        scroll.reflectScrolledClipView(&clip);
     }
 
     pub fn show_settings(&mut self) {
@@ -901,6 +933,17 @@ fn stretch(view: &NSView) {
     view.setContentHuggingPriority_forOrientation(1.0_f32, NSLayoutConstraintOrientation::Vertical);
 }
 
+fn hug_vertically(view: &NSView) {
+    view.setContentHuggingPriority_forOrientation(
+        750.0_f32,
+        NSLayoutConstraintOrientation::Vertical,
+    );
+    view.setContentCompressionResistancePriority_forOrientation(
+        1000.0_f32,
+        NSLayoutConstraintOrientation::Vertical,
+    );
+}
+
 fn spacer(stack: &NSStackView, height: f64, mtm: MainThreadMarker) {
     let gap = NSView::new(mtm);
     gap.heightAnchor()
@@ -915,10 +958,6 @@ fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
     document
         .leadingAnchor()
         .constraintEqualToAnchor(&clip.leadingAnchor())
-        .setActive(true);
-    document
-        .topAnchor()
-        .constraintEqualToAnchor(&clip.topAnchor())
         .setActive(true);
     document
         .widthAnchor()
@@ -942,7 +981,7 @@ fn panel_shell(
         .constraintEqualToAnchor_constant(&host.trailingAnchor(), -SHADOW_INSET)
         .setActive(true);
     card.topAnchor()
-        .constraintEqualToAnchor_constant(&host.topAnchor(), SHADOW_INSET)
+        .constraintEqualToAnchor_constant(&host.topAnchor(), SHADOW_INSET_TOP)
         .setActive(true);
     card.bottomAnchor()
         .constraintEqualToAnchor_constant(&host.bottomAnchor(), -SHADOW_INSET)
@@ -1022,6 +1061,8 @@ fn grouped_card(mtm: MainThreadMarker, rows: &[Retained<NSStackView>]) -> Retain
     card.setContentViewMargins(objc2_foundation::NSSize::new(0.0, 0.0));
     card.setContentView(Some(nv(&*body)));
     fill_width(nv(&*card));
+    hug_vertically(nv(&*body));
+    hug_vertically(nv(&*card));
     Retained::into_super(card)
 }
 
@@ -1093,7 +1134,7 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::labelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(grouped_copy_max_width());
+    field.setPreferredMaxLayoutWidth(switch_copy_max_width());
     field.setContentHuggingPriority_forOrientation(
         1.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
@@ -1101,6 +1142,10 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setContentCompressionResistancePriority_forOrientation(
         250.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
+    );
+    field.setContentCompressionResistancePriority_forOrientation(
+        750.0_f32,
+        NSLayoutConstraintOrientation::Vertical,
     );
     field
 }
@@ -1220,7 +1265,7 @@ fn control_row(
     row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
     row.setDistribution(NSStackViewDistribution::Fill);
     row.setAlignment(NSLayoutAttribute::CenterY);
-    row.setSpacing(10.0);
+    row.setSpacing(CONTROL_ROW_GAP);
     row.setEdgeInsets(NSEdgeInsets {
         top: 0.0,
         left: CARD_ROW_INSET_X,
@@ -1349,7 +1394,7 @@ fn help_step(
     index: &str,
     mtm: MainThreadMarker,
 ) -> Retained<NSStackView> {
-    let copy = column(mtm, 2.0, 0.0);
+    let copy = column(mtm, HELP_COPY_GAP, 0.0);
     copy.setAlignment(NSLayoutAttribute::Leading);
     arrange(&copy, title);
     arrange(&copy, detail);
@@ -1379,20 +1424,20 @@ fn help_note(copy: &NSTextField, symbol: &str, mtm: MainThreadMarker) -> Retaine
 }
 
 fn glyph_copy_row(glyph: &NSView, copy: &NSView, mtm: MainThreadMarker) -> Retained<NSStackView> {
-    let row = NSStackView::new(mtm);
-    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    row.setAlignment(NSLayoutAttribute::Top);
-    row.setDistribution(NSStackViewDistribution::Fill);
-    row.setSpacing(HELP_ROW_GAP);
-    row.setEdgeInsets(NSEdgeInsets {
-        top: HELP_ROW_PAD_Y,
+    let inner = NSStackView::new(mtm);
+    inner.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    inner.setAlignment(NSLayoutAttribute::Top);
+    inner.setDistribution(NSStackViewDistribution::Fill);
+    inner.setSpacing(HELP_ROW_GAP);
+    inner.setEdgeInsets(NSEdgeInsets {
+        top: 0.0,
         left: HELP_ROW_INSET,
-        bottom: HELP_ROW_PAD_Y,
+        bottom: 0.0,
         right: HELP_ROW_INSET,
     });
-    row.addArrangedSubview(glyph);
-    row.addArrangedSubview(copy);
-    fill_width(nv(&*row));
+    inner.addArrangedSubview(glyph);
+    inner.addArrangedSubview(copy);
+    fill_width(nv(&*inner));
     copy.setContentHuggingPriority_forOrientation(
         1.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
@@ -1401,7 +1446,14 @@ fn glyph_copy_row(glyph: &NSView, copy: &NSView, mtm: MainThreadMarker) -> Retai
         250.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
     );
-    pin_beside_glyph(nv(&*row), copy);
+    pin_beside_glyph(nv(&*inner), copy);
+
+    let row = column(mtm, 0.0, 0.0);
+    spacer(&row, HELP_ROW_PAD_Y, mtm);
+    arrange(&row, &inner);
+    spacer(&row, HELP_ROW_PAD_Y, mtm);
+    span_stack(&row, nv(&*inner));
+    fill_width(nv(&*row));
     row
 }
 

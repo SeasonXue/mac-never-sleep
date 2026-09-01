@@ -26,11 +26,22 @@ pub const CARD_HAIRLINE: f64 = 1.0;
 /// Space between the last menu block and 更多设置 / 退出. Not a stretch void.
 pub const FOOTER_GAP: f64 = 8.0;
 pub const PRIMARY_HEIGHT: f64 = 28.0;
+/// Language segmented control; same height as the main Start/End push.
+pub const LANGUAGE_HEIGHT: f64 = 28.0;
 pub const FOOTER_HEIGHT: f64 = 36.0;
+/// Regular `NSSwitch` column so captions wrap before the knob, not through it.
+pub const SWITCH_COL: f64 = 51.0;
+/// Gap between a settings/session caption and its control.
+pub const CONTROL_ROW_GAP: f64 = 10.0;
 /// Rounded panel chrome; matches the HTML-era `.panel` radius.
 pub const PANEL_CORNER: f64 = 10.0;
-/// Transparent window padding so the layer shadow can fade out around the card.
+/// Sides and bottom: room for the downward drop shadow to fade.
 pub const SHADOW_INSET: f64 = 40.0;
+/// Top gutter must stay small. `NSWindow` constrains the frame below the menu
+/// bar, so a 40pt top inset becomes a 40pt hole under the status item.
+pub const SHADOW_INSET_TOP: f64 = 8.0;
+/// Logical gap between the status item and the visible card (not the shadow gutter).
+pub const MENU_BAR_GAP: f64 = 4.0;
 pub const SHADOW_RADIUS: f64 = 18.0;
 /// Downward layer-shadow offset (Core Animation y-up, so the layer value is negative).
 pub const SHADOW_OFFSET_Y: f64 = 6.0;
@@ -45,8 +56,18 @@ pub const ACTIVE_FILL_RGB: [u8; 3] = [0x1c, 0x1c, 0x1e];
 pub const HELP_ROW_GLYPH: f64 = 22.0;
 pub const HELP_ROW_GAP: f64 = 10.0;
 pub const HELP_ROW_INSET: f64 = 12.0;
-/// Vertical padding inside How-to / Keep-in-mind rows (HTML-era `9px`).
-pub const HELP_ROW_PAD_Y: f64 = 9.0;
+/// Vertical padding inside How-to / Keep-in-mind rows. Keeps copy off the hairline.
+pub const HELP_ROW_PAD_Y: f64 = 16.0;
+/// Title-to-detail gap inside a How-to step.
+pub const HELP_COPY_GAP: f64 = 4.0;
+/// Gap from a How-to / Keep-in-mind header to its grouped card.
+pub const HELP_SECTION_GAP: f64 = 8.0;
+/// Kicker to lead; lead to “Get started”.
+pub const HELP_LEAD_GAP: f64 = 8.0;
+/// How-to card to Keep-in-mind header.
+pub const HELP_BLOCK_GAP: f64 = 16.0;
+/// Scroll-document bottom inset so the last note clears the rounded clip.
+pub const HELP_BODY_PAD_BOTTOM: f64 = 20.0;
 /// Extra stack space around a grouped-card hairline. Screenshot rows sit on the line.
 pub const CARD_SEPARATOR_GAP: f64 = 0.0;
 
@@ -69,7 +90,21 @@ pub fn window_width() -> f64 {
 }
 
 pub fn window_height() -> f64 {
-    panel_hug_height() + SHADOW_INSET * 2.0
+    panel_hug_height() + SHADOW_INSET_TOP + SHADOW_INSET
+}
+
+/// Convert a tray-icon physical coordinate into logical points.
+pub fn physical_to_logical(px: f64, scale: f64) -> f64 {
+    if scale <= 0.0 {
+        px
+    } else {
+        px / scale
+    }
+}
+
+/// Logical Y of the window's top-left so the **card** sits `MENU_BAR_GAP` below the tray.
+pub fn panel_window_y(tray_y: f64, tray_height: f64) -> f64 {
+    tray_y + tray_height + MENU_BAR_GAP - SHADOW_INSET_TOP
 }
 
 /// Packed main column: coin, status, button, 3-row card, chrome. No stretch void.
@@ -119,6 +154,23 @@ pub fn panel_inner_width() -> f64 {
 /// Wrapping width beside a 22pt glyph inside a grouped card.
 pub fn grouped_copy_max_width() -> f64 {
     panel_inner_width() - HELP_ROW_INSET * 2.0 - HELP_ROW_GLYPH - HELP_ROW_GAP
+}
+
+/// Wrapping width beside an `NSSwitch` in a session/settings row.
+pub fn switch_copy_max_width() -> f64 {
+    panel_inner_width() - CARD_ROW_INSET_X * 2.0 - SWITCH_COL - CONTROL_ROW_GAP
+}
+
+/// Clip-view Y that shows the How-to-use kicker.
+///
+/// Flipped clip views have origin at the top. Unflipped views have origin at
+/// the bottom, so `scrollToPoint(0, 0)` would land on Keep-in-mind instead.
+pub fn help_scroll_y(document_height: f64, clip_height: f64, clip_flipped: bool) -> f64 {
+    if clip_flipped {
+        0.0
+    } else {
+        (document_height - clip_height).max(0.0)
+    }
 }
 
 /// One wrapping How-to sentence: "按 ⌥⌘P，或点菜单…" / "Press ⌥⌘P or choose…".
@@ -591,6 +643,13 @@ mod tests {
         assert_eq!(CONTENT_INSET, 16.0);
         assert_eq!(PANEL_CORNER, 10.0);
         assert_eq!(SHADOW_INSET, 40.0);
+        assert_eq!(SHADOW_INSET_TOP, 8.0);
+        assert_eq!(MENU_BAR_GAP, 4.0);
+        assert_eq!(
+            SHADOW_INSET - SHADOW_INSET_TOP,
+            32.0,
+            "top gutter cannot be the full 40pt side inset; AppKit clamps that under the menu bar"
+        );
         assert_eq!(SHADOW_RADIUS, 18.0);
         assert_eq!(SHADOW_OFFSET_Y, 6.0);
         assert_eq!(SHADOW_OPACITY, 0.28);
@@ -617,7 +676,10 @@ mod tests {
             grouped_copy_max_width()
         );
         assert_eq!(window_width(), PANEL_WIDTH + SHADOW_INSET * 2.0);
-        assert_eq!(window_height(), PANEL_HEIGHT + SHADOW_INSET * 2.0);
+        assert_eq!(
+            window_height(),
+            PANEL_HEIGHT + SHADOW_INSET_TOP + SHADOW_INSET
+        );
         assert!(
             window_width() > PANEL_WIDTH,
             "the window is larger than the card so the shadow can fade around the edges"
@@ -634,6 +696,24 @@ mod tests {
     }
 
     #[test]
+    fn panel_window_y_puts_the_card_a_menu_gap_below_the_tray() {
+        assert_eq!(physical_to_logical(48.0, 2.0), 24.0);
+        assert_eq!(physical_to_logical(24.0, 1.0), 24.0);
+        assert_eq!(physical_to_logical(24.0, 0.0), 24.0);
+        let y = panel_window_y(0.0, 22.0);
+        assert_eq!(y, 22.0 + MENU_BAR_GAP - SHADOW_INSET_TOP);
+        assert_eq!(
+            y + SHADOW_INSET_TOP,
+            22.0 + MENU_BAR_GAP,
+            "visible card top is the tray bottom plus 4pt, not plus the 40pt side gutter"
+        );
+        assert_ne!(
+            SHADOW_INSET_TOP, SHADOW_INSET,
+            "a 40pt top gutter is clamped below the menu bar and reads as a hole under the logo"
+        );
+    }
+
+    #[test]
     fn grouped_menu_rows_hug_the_hairline() {
         assert_eq!(CARD_ROW_HEIGHT, 32.0);
         assert_eq!(CARD_ROW_INSET_X, 11.0);
@@ -644,9 +724,14 @@ mod tests {
             "screenshot rows sit on the 0.5pt hairline; extra stack gap doubles the menu spacing"
         );
         assert_eq!(
-            HELP_ROW_PAD_Y, 9.0,
-            "How-to / Keep-in-mind padding matches the HTML-era 9px, not 12px plus a separator gap"
+            HELP_ROW_PAD_Y, 16.0,
+            "16pt spacers keep How-to copy off the hairline; edgeInsets were collapsing"
         );
+        assert_eq!(HELP_COPY_GAP, 4.0);
+        assert_eq!(HELP_SECTION_GAP, 8.0);
+        assert_eq!(HELP_LEAD_GAP, 8.0);
+        assert_eq!(HELP_BLOCK_GAP, 16.0);
+        assert_eq!(HELP_BODY_PAD_BOTTOM, 20.0);
         assert_eq!(
             WARNING_SLOT, 35.0,
             "lid-on-battery warning is two 12pt lines plus status stack spacing"
@@ -699,7 +784,7 @@ mod tests {
         assert_eq!(HELP_ROW_GLYPH, 22.0);
         assert_eq!(HELP_ROW_GAP, 10.0);
         assert_eq!(HELP_ROW_INSET, 12.0);
-        assert_eq!(HELP_ROW_PAD_Y, 9.0);
+        assert_eq!(HELP_ROW_PAD_Y, 16.0);
         assert_eq!(CARD_SEPARATOR_GAP, 0.0);
         assert_eq!(panel_inner_width(), 288.0);
         assert_eq!(grouped_copy_max_width(), 232.0);
@@ -711,6 +796,44 @@ mod tests {
             join_help_step3("Press", "⌥⌘P", "or choose “End Standby” in the menu."),
             "Press ⌥⌘P or choose “End Standby” in the menu."
         );
+    }
+
+    #[test]
+    fn switch_captions_wrap_beside_the_knob() {
+        assert_eq!(SWITCH_COL, 51.0);
+        assert_eq!(CONTROL_ROW_GAP, 10.0);
+        assert_eq!(LANGUAGE_HEIGHT, PRIMARY_HEIGHT);
+        assert_eq!(switch_copy_max_width(), 205.0);
+        assert!(
+            switch_copy_max_width() < grouped_copy_max_width(),
+            "settings rows have a switch column, not the 22pt How-to glyph"
+        );
+        let t_zh = Tr::new(Lang::Zh);
+        let t_en = Tr::new(Lang::En);
+        assert!(
+            t_zh.lock_screen().contains("远程 GUI"),
+            "keep the remote-GUI warning; wrap it instead of truncating"
+        );
+        assert!(
+            t_en.lock_screen().contains("breaks remote GUI"),
+            "English lock copy stays the full product sentence"
+        );
+        assert!(
+            t_zh.lock_screen().chars().count() > 14,
+            "the parenthetical cannot fit one 205pt line of 13pt Chinese"
+        );
+    }
+
+    #[test]
+    fn help_scroll_y_shows_the_kicker() {
+        assert_eq!(help_scroll_y(600.0, 350.0, true), 0.0);
+        assert_eq!(help_scroll_y(600.0, 350.0, false), 250.0);
+        assert_eq!(
+            help_scroll_y(200.0, 350.0, false),
+            0.0,
+            "a short document stays at the origin instead of scrolling negative"
+        );
+        assert_eq!(help_scroll_y(200.0, 350.0, true), 0.0);
     }
 
     #[test]

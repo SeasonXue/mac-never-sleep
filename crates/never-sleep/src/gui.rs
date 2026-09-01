@@ -7,7 +7,7 @@ use never_sleep_core::{
     AppConfig, DurationPref, Engine, Input, Lang, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
     DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
 };
-use tao::dpi::{LogicalSize, PhysicalPosition};
+use tao::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use tao::event::{ElementState, Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy};
 use tao::keyboard::Key;
@@ -22,8 +22,9 @@ use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
-    dismiss_on_focus_loss, panel_placement, panel_state, suppress_tray_reopen, window_height,
-    window_width, PanelPlacement, PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH, SHADOW_INSET,
+    dismiss_on_focus_loss, panel_placement, panel_state, panel_window_y, physical_to_logical,
+    suppress_tray_reopen, window_height, window_width, PanelPlacement, PanelState, ToggleGate,
+    PANEL_HEIGHT, PANEL_WIDTH,
 };
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
@@ -124,33 +125,40 @@ impl Popover {
     }
 
     fn place_at(&self, rect: TrayRect) {
-        let scale = self.window.scale_factor();
-        let width = window_width() * scale;
-        let anchor_x = rect.position.x + f64::from(rect.size.width) / 2.0;
+        let monitors: Vec<_> = self.window.available_monitors().collect();
+        let monitor = monitors.iter().find(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            rect.position.x >= f64::from(position.x)
+                && rect.position.x <= f64::from(position.x) + f64::from(size.width)
+                && rect.position.y >= f64::from(position.y)
+                && rect.position.y <= f64::from(position.y) + f64::from(size.height)
+        });
+        let scale = monitor
+            .map(|m| m.scale_factor())
+            .filter(|s| *s > 0.0)
+            .unwrap_or_else(|| self.window.scale_factor().max(1.0));
+        let tray_x = physical_to_logical(rect.position.x, scale);
+        let tray_y = physical_to_logical(rect.position.y, scale);
+        let tray_w = physical_to_logical(f64::from(rect.size.width), scale);
+        let tray_h = physical_to_logical(f64::from(rect.size.height), scale);
+        let width = window_width();
+        let anchor_x = tray_x + tray_w / 2.0;
         let desired_x = anchor_x - width / 2.0;
-        let x = self
-            .window
-            .available_monitors()
-            .find(|monitor| {
-                let position = monitor.position();
-                let size = monitor.size();
-                anchor_x >= f64::from(position.x)
-                    && anchor_x <= f64::from(position.x) + f64::from(size.width)
-                    && rect.position.y >= f64::from(position.y)
-                    && rect.position.y <= f64::from(position.y) + f64::from(size.height)
-            })
+        let x = monitor
             .map(|monitor| {
                 let position = monitor.position();
                 let size = monitor.size();
-                let margin = 8.0 * scale;
-                let min_x = f64::from(position.x) + margin;
-                let max_x = f64::from(position.x) + f64::from(size.width) - width - margin;
+                let min_x = physical_to_logical(f64::from(position.x), scale) + 8.0;
+                let max_x = physical_to_logical(f64::from(position.x), scale)
+                    + physical_to_logical(f64::from(size.width), scale)
+                    - width
+                    - 8.0;
                 desired_x.clamp(min_x, max_x.max(min_x))
             })
             .unwrap_or(desired_x);
-        let y = rect.position.y + f64::from(rect.size.height) + 4.0 * scale - SHADOW_INSET * scale;
-        self.window
-            .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+        let y = panel_window_y(tray_y, tray_h);
+        self.window.set_outer_position(LogicalPosition::new(x, y));
     }
 
     fn center_on_screen(&self) {

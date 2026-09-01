@@ -436,8 +436,8 @@ mod tests {
             "lid-on-battery warning keeps a two-line height slot so pin_fill cannot clip it"
         );
         assert!(
-            include_str!("panel.rs").contains("panel_hug_height() + SHADOW_INSET"),
-            "macOS window_height must call panel_hug_height or clippy -D warnings flags dead_code"
+            include_str!("panel.rs").contains("SHADOW_INSET_TOP + SHADOW_INSET"),
+            "window height uses a short top gutter plus the 40pt bottom shadow inset"
         );
         assert!(
             src.contains("help_step(&help_step3_title") && src.contains("state.help_step3"),
@@ -523,6 +523,20 @@ mod tests {
         assert!(
             gui.contains("panel_placement"),
             "placement policy is shared with Linux-tested panel.rs"
+        );
+        assert!(
+            gui.contains("panel_window_y")
+                && gui.contains("physical_to_logical")
+                && gui.contains("LogicalPosition"),
+            "anchor in logical points so a hidden window's scale_factor 1.0 cannot leave a 40pt hole"
+        );
+        assert!(
+            include_str!("native_panel.rs").contains("SHADOW_INSET_TOP"),
+            "the card's top gutter must be the short inset, not the 40pt side shadow pad"
+        );
+        assert!(
+            !gui.contains("SHADOW_INSET * scale") && !gui.contains("4.0 * scale"),
+            "do not mix physical tray rects with the popover window's scale_factor"
         );
         assert!(
             !gui.contains("SelectPane"),
@@ -707,6 +721,46 @@ mod tests {
             src.contains("pin_document_width"),
             "the help document must be width-constrained to the clip view"
         );
+        assert!(
+            src.contains("HELP_ROW_PAD_Y")
+                && src.contains("HELP_COPY_GAP")
+                && src.contains("HELP_SECTION_GAP")
+                && src.contains("HELP_BODY_PAD_BOTTOM"),
+            "How-to row padding and section gaps are tokens so copy does not sit on the hairline"
+        );
+        let glyph_row = rust_fn_src(src, "glyph_copy_row");
+        assert!(
+            glyph_row.contains("spacer") && glyph_row.matches("HELP_ROW_PAD_Y").count() >= 2,
+            "How-to/Keep-in-mind padding must be real spacers above and below copy, not collapsing edgeInsets"
+        );
+        assert!(
+            !glyph_row.contains("bottom: HELP_ROW_PAD_Y"),
+            "vertical edgeInsets on the glyph row were collapsing against the hairline"
+        );
+        let pin = rust_fn_src(src, "pin_document_width");
+        assert!(
+            pin.contains("widthAnchor"),
+            "the help document must be width-constrained to the clip view"
+        );
+        assert!(
+            !pin.contains("topAnchor"),
+            "pinning document.top to clip.top fights scrolling and clips the kicker"
+        );
+        assert!(
+            src.contains("help_scroll_y") && src.contains("layoutSubtreeIfNeeded"),
+            "reopening How to use must layout, then scroll to the kicker"
+        );
+        let open = rust_fn_src(src, "open_help");
+        let show_at = open
+            .find("show_pane")
+            .expect("open_help must show How to use before scrolling");
+        let scroll_at = open
+            .find("scroll_help_to_top")
+            .expect("open_help must reset the clip after the pane is visible");
+        assert!(
+            show_at < scroll_at,
+            "scrollToPoint before show_pane uses a zero-height hidden document"
+        );
     }
 
     #[test]
@@ -719,6 +773,11 @@ mod tests {
         assert!(
             src.contains("row_caption"),
             "switch captions wrap instead of pushing the control off-screen"
+        );
+        let caption = rust_fn_src(src, "row_caption");
+        assert!(
+            caption.contains("switch_copy_max_width"),
+            "lock/lid captions wrap beside the switch, not the How-to glyph width"
         );
         assert!(
             src.contains("grouped_copy_max_width"),
@@ -735,6 +794,26 @@ mod tests {
         assert!(
             src.contains("NSTextAlignment::Left"),
             "detail copy is leading-aligned, not trailing"
+        );
+        assert!(
+            src.contains("settings_slack"),
+            "Settings leftover height is chrome under the card, not an empty grouped card"
+        );
+        assert!(
+            src.contains("settings_stack.setDistribution(NSStackViewDistribution::Fill)"),
+            "Fill gives leftover height to settings_slack; GravityAreas would pad around the whole sheet"
+        );
+        assert!(
+            src.contains("LANGUAGE_HEIGHT"),
+            "the language segmented control matches the 28pt primary push"
+        );
+        assert!(
+            src.contains("hug_vertically") || src.contains("750.0_f32"),
+            "grouped cards hug their rows instead of stretching into the slack"
+        );
+        assert!(
+            src.contains("CONTROL_ROW_GAP"),
+            "caption-to-switch spacing is the shared token, not a one-off 10pt"
         );
     }
 
