@@ -17,8 +17,10 @@ pub const CONTENT_INSET: f64 = 16.0;
 /// Rounded panel chrome; matches the HTML-era `.panel` radius.
 pub const PANEL_CORNER: f64 = 10.0;
 /// Transparent window padding so the layer shadow can fade out around the card.
-pub const SHADOW_INSET: f64 = 24.0;
+pub const SHADOW_INSET: f64 = 40.0;
 pub const SHADOW_RADIUS: f64 = 18.0;
+/// Downward layer-shadow offset (Core Animation y-up, so the layer value is negative).
+pub const SHADOW_OFFSET_Y: f64 = 6.0;
 pub const SHADOW_OPACITY: f32 = 0.28;
 /// Coin face swap duration (HTML-era `520ms` flip).
 pub const HERO_FLIP_SECS: f64 = 0.52;
@@ -464,9 +466,15 @@ mod tests {
         assert_eq!(CARD_RADIUS, 8.0);
         assert_eq!(CONTENT_INSET, 16.0);
         assert_eq!(PANEL_CORNER, 10.0);
-        assert_eq!(SHADOW_INSET, 24.0);
+        assert_eq!(SHADOW_INSET, 40.0);
         assert_eq!(SHADOW_RADIUS, 18.0);
+        assert_eq!(SHADOW_OFFSET_Y, 6.0);
         assert_eq!(SHADOW_OPACITY, 0.28);
+        assert_eq!(
+            SHADOW_INSET - SHADOW_RADIUS - SHADOW_OFFSET_Y,
+            16.0,
+            "window padding must outlast the blur so the shadow can fade before the window edge"
+        );
         assert_eq!(HERO_FLIP_SECS, 0.52);
         assert_eq!(PANEL_COLOR_SECS, 0.42);
         assert_eq!(panel_fill_rgb(false), [0xf5, 0xf5, 0xf7]);

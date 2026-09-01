@@ -4,7 +4,7 @@
 
 ## 窗口
 
-Accessory + 菜单栏 Extra。左键把 **320×480** 圆角卡片吸附在状态项下方；失焦、Escape、再点图标会隐藏面板，**不结束待命**。右键状态项菜单。不占 Dock。窗口比卡片大一圈（`SHADOW_INSET` 24pt），给四周柔和层阴影留出发光空间。
+Accessory + 菜单栏 Extra。左键把 **320×480** 圆角卡片吸附在状态项下方；失焦、Escape、再点图标会隐藏面板，**不结束待命**。右键状态项菜单。不占 Dock。窗口比卡片大一圈（`SHADOW_INSET` 40pt），给四周柔和层阴影留出发光空间。阴影画在卡片层上；待命时 Dark Aqua 只加在圆角内容上，窗口透明区保持透明，阴影不会被涂没。
 
 待命中面板铺上 `#1c1c1e`，未开启为 `#f5f5f7`，420ms 过渡。硬币是真的半圈翻转：月亮贴在背面（`rotation.y = π`），容器绕 Y 轴 0↔π；`CATransformLayer` + 中心锚点，透视 `m34`。第一次绘制先 `setHidden` 月亮，避免两面重合。系统「减少动态效果」时立刻换面。不要把手工 `CATransform3D` 塞进 `msg_send`，也不要用 `scale.x` 压扁。
 
@@ -36,7 +36,7 @@ Accessory + 菜单栏 Extra。左键把 **320×480** 圆角卡片吸附在状态
 | Token | 值 |
 | --- | --- |
 | `PANEL_WIDTH` / `PANEL_HEIGHT` | 320 / 480 |
-| `SHADOW_INSET` / `PANEL_CORNER` | 24 / 10 |
+| `SHADOW_INSET` / `PANEL_CORNER` | 40 / 10 |
 | `HERO_SIZE` / `HERO_IMAGE` | 124 / 104 |
 | `CARD_RADIUS` | 8 |
 | `CONTENT_INSET` | 16 |

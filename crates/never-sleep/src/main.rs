@@ -321,6 +321,22 @@ mod tests {
             "the flip rotates around the coin center, not the default (0,0) corner"
         );
         assert!(
+            src.contains("setContentViewMargins") && src.contains("center_square"),
+            "the 104pt faces sit in the middle of the 124pt circle; NSBox must not add extra margins"
+        );
+        assert!(
+            src.contains("clip.setAppearance") || src.contains("self.clip.setAppearance"),
+            "Dark Aqua belongs on the rounded chrome, not the whole window"
+        );
+        assert!(
+            !src.contains("window.setAppearance"),
+            "window Dark Aqua paints the shadow gutter opaque and the drop shadow vanishes"
+        );
+        assert!(
+            src.contains("setClipsToBounds(false)"),
+            "the host must not clip the card shadow at the window edge"
+        );
+        assert!(
             !src.contains("transform.scale.x") && !src.contains("CATransition"),
             "scale.x squash is not a half-turn that reveals the back; fade is not a flip"
         );

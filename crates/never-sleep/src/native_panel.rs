@@ -32,7 +32,8 @@ use crate::panel::{
     panel_fill_rgb, panel_inner_width, preferred_glass, DurationKey, GlassKind, PanelState,
     PanelView, SidebarItem, CARD_RADIUS, CARD_SEPARATOR_GAP, CONTENT_INSET, HELP_ROW_GAP,
     HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE,
-    PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET, SHADOW_OPACITY, SHADOW_RADIUS,
+    IDLE_FILL_RGB, PANEL_COLOR_SECS, PANEL_CORNER, SHADOW_INSET, SHADOW_OFFSET_Y, SHADOW_OPACITY,
+    SHADOW_RADIUS,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -136,8 +137,8 @@ impl PanelTarget {
 }
 
 struct FlipDoneIvars {
-    sun: Retained<NSView>,
-    moon: Retained<NSView>,
+    sun: Retained<CALayer>,
+    moon: Retained<CALayer>,
     showing_moon: Cell<bool>,
 }
 
@@ -163,7 +164,7 @@ define_class!(
 );
 
 impl CoinFlipDone {
-    fn new(sun: &NSView, moon: &NSView, mtm: MainThreadMarker) -> Retained<Self> {
+    fn new(sun: &CALayer, moon: &CALayer, mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(FlipDoneIvars {
             sun: sun.retain(),
             moon: moon.retain(),
@@ -199,9 +200,11 @@ impl CoinFlipDone {
 pub struct NativePanel {
     _target: Retained<PanelTarget>,
     wash: Retained<NSView>,
+    clip: Retained<NSView>,
     coin: Retained<NSView>,
-    sun_face: Retained<NSView>,
-    moon_face: Retained<NSView>,
+    rotator: Retained<CALayer>,
+    sun_face: Retained<CALayer>,
+    moon_face: Retained<CALayer>,
     flip_done: Retained<CoinFlipDone>,
     main_view: Retained<NSView>,
     settings_view: Retained<NSView>,
@@ -270,10 +273,15 @@ impl NativePanel {
 
         let host = unsafe { &*window.ns_view().cast::<NSView>() };
         host.setWantsLayer(true);
+        host.setClipsToBounds(false);
+        if let Some(layer) = backing_layer(host) {
+            layer.setMasksToBounds(false);
+            layer.setBackgroundColor(Some(&cg_color(&NSColor::clearColor())));
+        }
 
         let glass_ok = AnyClass::get(c"NSGlassEffectView").is_some();
         let kind = preferred_glass(glass_ok);
-        let (root, wash) = panel_shell(host, mtm, kind);
+        let (root, wash, clip) = panel_shell(host, mtm, kind);
 
         let main_view = NSView::new(mtm);
         let settings_view = NSView::new(mtm);
@@ -289,6 +297,7 @@ impl NativePanel {
         coin_box.setBorderWidth(0.5);
         coin_box.setBorderColor(&NSColor::separatorColor());
         coin_box.setFillColor(&NSColor::controlBackgroundColor());
+        coin_box.setContentViewMargins(objc2_foundation::NSSize::new(0.0, 0.0));
         nv(&*coin_box)
             .widthAnchor()
             .constraintEqualToConstant(HERO_SIZE)
@@ -298,21 +307,14 @@ impl NativePanel {
             .constraintEqualToConstant(HERO_SIZE)
             .setActive(true);
 
-        let coin_body = NSStackView::new(mtm);
-        coin_body.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-        coin_body.setAlignment(NSLayoutAttribute::CenterX);
-        coin_body.setEdgeInsets(NSEdgeInsets {
-            top: (HERO_SIZE - HERO_IMAGE) / 2.0,
-            left: 0.0,
-            bottom: (HERO_SIZE - HERO_IMAGE) / 2.0,
-            right: 0.0,
-        });
-        let (coin, sun_face, moon_face) = coin_stack(&sun, &moon, mtm);
-        arrange(&coin_body, &coin);
-        if let Some(layer) = backing_layer(nv(&*coin_body)) {
+        let well = NSView::new(mtm);
+        well.setWantsLayer(true);
+        let (coin, rotator, sun_face, moon_face) = coin_stack(&sun, &moon, mtm);
+        center_square(&well, &coin);
+        if let Some(layer) = backing_layer(&well) {
             apply_perspective(&layer);
         }
-        coin_box.setContentView(Some(nv(&*coin_body)));
+        coin_box.setContentView(Some(&well));
 
         let hero = unsafe {
             NSButton::buttonWithTitle_target_action(
@@ -551,7 +553,9 @@ impl NativePanel {
         let panel = Self {
             _target: target,
             wash,
+            clip,
             coin,
+            rotator,
             sun_face,
             moon_face,
             flip_done,
@@ -743,23 +747,26 @@ impl NativePanel {
         set_fill_color(&self.wash, panel_fill_rgb(active), color_secs);
         set_coin_flip(
             &self.coin,
+            &self.rotator,
             &self.sun_face,
             &self.moon_face,
             &self.flip_done,
             hero_shows_moon(active),
             flip_secs,
         );
-        if let Some(window) = self.wash.window() {
-            let name = unsafe {
-                if active {
-                    NSAppearanceNameDarkAqua
-                } else {
-                    NSAppearanceNameAqua
-                }
-            };
-            if let Some(appearance) = NSAppearance::appearanceNamed(name) {
-                window.setAppearance(Some(&appearance));
+        let name = unsafe {
+            if active {
+                NSAppearanceNameDarkAqua
+            } else {
+                NSAppearanceNameAqua
             }
+        };
+        if let Some(appearance) = NSAppearance::appearanceNamed(name) {
+            self.clip.setAppearance(Some(&appearance));
+        }
+        if let Some(window) = self.wash.window() {
+            window.setOpaque(false);
+            window.setBackgroundColor(Some(&NSColor::clearColor()));
         }
     }
 }
@@ -811,6 +818,19 @@ fn pin_fill(parent: &NSView, child: &NSView) {
         .setActive(true);
 }
 
+fn center_square(parent: &NSView, child: &NSView) {
+    child.setTranslatesAutoresizingMaskIntoConstraints(false);
+    parent.addSubview(child);
+    child
+        .centerXAnchor()
+        .constraintEqualToAnchor(&parent.centerXAnchor())
+        .setActive(true);
+    child
+        .centerYAnchor()
+        .constraintEqualToAnchor(&parent.centerYAnchor())
+        .setActive(true);
+}
+
 fn fill_width(view: &NSView) {
     view.setContentHuggingPriority_forOrientation(
         1.0_f32,
@@ -859,7 +879,7 @@ fn panel_shell(
     host: &NSView,
     mtm: MainThreadMarker,
     kind: GlassKind,
-) -> (Retained<NSView>, Retained<NSView>) {
+) -> (Retained<NSView>, Retained<NSView>, Retained<NSView>) {
     let card = NSView::new(mtm);
     card.setWantsLayer(true);
     card.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -891,7 +911,7 @@ fn panel_shell(
     wash.setWantsLayer(true);
     pin_fill(&root, &wash);
     set_fill_color(&wash, panel_fill_rgb(false), 0.0);
-    (root, wash)
+    (root, wash, clip)
 }
 
 fn panel_chrome(host: &NSView, mtm: MainThreadMarker, kind: GlassKind) -> Retained<NSView> {
@@ -1327,14 +1347,13 @@ fn coin_stack(
     sun: &NSImage,
     moon: &NSImage,
     mtm: MainThreadMarker,
-) -> (Retained<NSView>, Retained<NSView>, Retained<NSView>) {
+) -> (
+    Retained<NSView>,
+    Retained<CALayer>,
+    Retained<CALayer>,
+    Retained<CALayer>,
+) {
     let coin = NSView::new(mtm);
-    if let Some(cls) = AnyClass::get(c"CATransformLayer") {
-        unsafe {
-            let layer: Retained<AnyObject> = msg_send![cls, layer];
-            let _: () = msg_send![&*coin, setLayer: &*layer];
-        }
-    }
     coin.setWantsLayer(true);
     nv(&*coin)
         .widthAnchor()
@@ -1344,80 +1363,63 @@ fn coin_stack(
         .heightAnchor()
         .constraintEqualToConstant(HERO_IMAGE)
         .setActive(true);
-    let sun_face = coin_face(sun, mtm);
-    let moon_face = coin_face(moon, mtm);
-    pin_fill(&coin, nv(&*sun_face));
-    pin_fill(&coin, nv(&*moon_face));
-    if let Some(layer) = backing_layer(&sun_face) {
-        layer.setDoubleSided(false);
-        set_anchor_in_place(&sun_face);
-    }
-    if let Some(layer) = backing_layer(&moon_face) {
-        layer.setDoubleSided(false);
-        set_anchor_in_place(&moon_face);
-        set_rotation_y(&layer, std::f64::consts::PI, std::f64::consts::PI, 0.0);
-    }
-    set_anchor_in_place(&coin);
+    let rotator = transform_layer();
+    let sun_face = face_layer(sun);
+    let moon_face = face_layer(moon);
+    set_rotation_y(&moon_face, std::f64::consts::PI, std::f64::consts::PI, 0.0);
     moon_face.setHidden(true);
-    (coin, sun_face, moon_face)
-}
-
-fn coin_face(image: &NSImage, mtm: MainThreadMarker) -> Retained<NSView> {
-    let face = NSView::new(mtm);
-    face.setWantsLayer(true);
-    face.setFrameSize(objc2_foundation::NSSize::new(HERO_IMAGE, HERO_IMAGE));
-    nv(&*face)
-        .widthAnchor()
-        .constraintEqualToConstant(HERO_IMAGE)
-        .setActive(true);
-    nv(&*face)
-        .heightAnchor()
-        .constraintEqualToConstant(HERO_IMAGE)
-        .setActive(true);
-    if let Some(layer) = backing_layer(&face) {
-        unsafe {
-            let _: () = msg_send![&*layer, setContents: &*image];
-            let _: () = msg_send![&*layer, setContentsGravity: &*ns("resizeAspect")];
-        }
-        layer.setDoubleSided(false);
-        set_anchor_in_place(&face);
+    rotator.addSublayer(&sun_face);
+    rotator.addSublayer(&moon_face);
+    if let Some(host) = backing_layer(&coin) {
+        apply_perspective(&host);
+        host.addSublayer(&rotator);
     }
-    face
+    layout_coin_layers(&coin, &rotator, &sun_face, &moon_face);
+    (coin, rotator, sun_face, moon_face)
 }
 
-fn rest_coin_faces(sun: &NSView, moon: &NSView, showing_moon: bool) {
+fn transform_layer() -> Retained<CALayer> {
+    let cls = AnyClass::get(c"CATransformLayer").unwrap_or_else(CALayer::class);
+    unsafe { msg_send![cls, layer] }
+}
+
+fn face_layer(image: &NSImage) -> Retained<CALayer> {
+    let layer: Retained<CALayer> = unsafe { msg_send![CALayer::class(), layer] };
+    unsafe {
+        let _: () = msg_send![&*layer, setContents: &*image];
+        let _: () = msg_send![&*layer, setContentsGravity: &*ns("resizeAspect")];
+        let _: () = msg_send![&*layer, setContentsScale: 2.0];
+    }
+    layer.setDoubleSided(false);
+    layer
+}
+
+fn rest_coin_faces(sun: &CALayer, moon: &CALayer, showing_moon: bool) {
     sun.setHidden(showing_moon);
     moon.setHidden(!showing_moon);
 }
 
 fn set_coin_flip(
     coin: &NSView,
-    sun: &NSView,
-    moon: &NSView,
+    rotator: &CALayer,
+    sun: &CALayer,
+    moon: &CALayer,
     flip_done: &CoinFlipDone,
     showing_moon: bool,
     duration: f64,
 ) {
-    if let Some(parent) = coin.superview() {
-        parent.layoutSubtreeIfNeeded();
-    }
-    set_anchor_in_place(coin);
-    set_anchor_in_place(sun);
-    set_anchor_in_place(moon);
-    let Some(layer) = backing_layer(coin) else {
-        rest_coin_faces(sun, moon, showing_moon);
-        return;
-    };
+    coin.layoutSubtreeIfNeeded();
+    layout_coin_layers(coin, rotator, sun, moon);
     let to = hero_flip_radians(showing_moon);
     if duration <= 0.0 {
         flip_done.cancel();
         rest_coin_faces(sun, moon, showing_moon);
-        set_rotation_y(&layer, to, to, 0.0);
+        set_rotation_y(rotator, to, to, 0.0);
         return;
     }
     sun.setHidden(false);
     moon.setHidden(false);
-    set_rotation_y(&layer, hero_flip_radians(!showing_moon), to, duration);
+    set_rotation_y(rotator, hero_flip_radians(!showing_moon), to, duration);
     flip_done.schedule(showing_moon, duration);
 }
 
@@ -1451,25 +1453,27 @@ fn set_rotation_y(layer: &CALayer, from: f64, to: f64, duration: f64) {
     }
 }
 
-fn set_anchor_in_place(view: &NSView) {
-    let Some(layer) = backing_layer(view) else {
-        return;
-    };
-    let frame = view.frame();
-    let width = if frame.size.width > 0.0 {
-        frame.size.width
+fn layout_coin_layers(coin: &NSView, rotator: &CALayer, sun: &CALayer, moon: &CALayer) {
+    let bounds = coin.bounds();
+    let size = if bounds.size.width > 0.0 {
+        bounds.size.width.min(bounds.size.height)
     } else {
         HERO_IMAGE
     };
-    let height = if frame.size.height > 0.0 {
-        frame.size.height
-    } else {
-        HERO_IMAGE
-    };
+    place_square_layer(rotator, size);
+    place_square_layer(sun, size);
+    place_square_layer(moon, size);
+}
+
+fn place_square_layer(layer: &CALayer, size: f64) {
+    let bounds = objc2_foundation::NSRect::new(
+        objc2_foundation::NSPoint::new(0.0, 0.0),
+        objc2_foundation::NSSize::new(size, size),
+    );
     let anchor = objc2_foundation::NSPoint::new(0.5, 0.5);
-    let pos =
-        objc2_foundation::NSPoint::new(frame.origin.x + width / 2.0, frame.origin.y + height / 2.0);
+    let pos = objc2_foundation::NSPoint::new(size / 2.0, size / 2.0);
     unsafe {
+        let _: () = msg_send![layer, setBounds: bounds];
         let _: () = msg_send![layer, setAnchorPoint: anchor];
         let _: () = msg_send![layer, setPosition: pos];
     }
@@ -1508,10 +1512,13 @@ fn decorate_card_shadow(card: &NSView) {
     };
     layer_set_corner_radius(&layer, PANEL_CORNER);
     layer.setMasksToBounds(false);
+    layer.setBackgroundColor(Some(&rgb_color(IDLE_FILL_RGB)));
     layer.setShadowOpacity(SHADOW_OPACITY);
     layer_set_shadow_radius(&layer, SHADOW_RADIUS);
-    layer_set_shadow_offset(&layer, 0.0, -8.0);
-    layer.setShadowColor(Some(&cg_color(&NSColor::blackColor())));
+    layer_set_shadow_offset(&layer, 0.0, -SHADOW_OFFSET_Y);
+    layer.setShadowColor(Some(&cg_color(&NSColor::colorWithRed_green_blue_alpha(
+        0.0, 0.0, 0.0, 1.0,
+    ))));
 }
 
 fn backing_layer(view: &NSView) -> Option<Retained<CALayer>> {
