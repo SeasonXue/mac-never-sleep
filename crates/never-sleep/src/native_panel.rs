@@ -4,19 +4,26 @@ use std::ops::Deref;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
-use objc2::{define_class, msg_send, sel, AllocAnyThread, DefinedClass, MainThreadOnly};
+use objc2::{define_class, msg_send, sel, AllocAnyThread, ClassType, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSBox, NSBoxType, NSButton,
-    NSCellImagePosition, NSColor, NSControlStateValueOff, NSControlStateValueOn, NSFont,
-    NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView,
-    NSLayoutAttribute, NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView,
-    NSSegmentSwitchTracking, NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch,
-    NSTextAlignment, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
+    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSAutoresizingMaskOptions,
+    NSBezelStyle, NSBorderType, NSBox, NSBoxType, NSButton, NSCellImagePosition, NSColor,
+    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSGlassEffectView,
+    NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
+    NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView, NSSegmentSwitchTracking,
+    NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment,
+    NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
     NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
     NSWindow,
 };
+use objc2_core_graphics::CGColor;
 use objc2_foundation::{
-    MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString,
+    MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString, NSUserDefaults,
+    NSValue,
+};
+use objc2_quartz_core::{
+    CABasicAnimation, CALayer, CAMediaTimingFunction, CATransaction, CATransform3D,
+    CATransform3DMakeRotation, NSValueCATransform3DAdditions,
 };
 use tao::event_loop::EventLoopProxy;
 use tao::platform::macos::WindowExtMacOS;
@@ -24,8 +31,10 @@ use tao::window::Window;
 
 use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
-    preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem, CARD_RADIUS,
-    CONTENT_INSET, HERO_IMAGE, HERO_SIZE,
+    hero_flip_radians, hero_flips, motion_duration_secs, panel_fill_rgb, preferred_glass,
+    DurationKey, GlassKind, PanelState, PanelView, SidebarItem, CARD_RADIUS, CONTENT_INSET,
+    HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE, PANEL_COLOR_SECS, PANEL_CORNER, PANEL_WIDTH,
+    SHADOW_INSET, SHADOW_OPACITY, SHADOW_RADIUS,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -130,12 +139,14 @@ impl PanelTarget {
 
 pub struct NativePanel {
     _target: Retained<PanelTarget>,
+    wash: Retained<NSView>,
+    coin: Retained<NSView>,
     main_view: Retained<NSView>,
     settings_view: Retained<NSView>,
     help_view: Retained<NSView>,
-    glyph: Retained<NSImageView>,
     sun: Retained<NSImage>,
     moon: Retained<NSImage>,
+    last_active: Option<bool>,
     status_title: Retained<NSTextField>,
     summary: Retained<NSTextField>,
     warning: Retained<NSTextField>,
@@ -197,13 +208,14 @@ impl NativePanel {
         let ns_window = unsafe { &*window.ns_window().cast::<NSWindow>() };
         ns_window.setOpaque(false);
         ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
+        ns_window.setHasShadow(false);
 
         let host = unsafe { &*window.ns_view().cast::<NSView>() };
         host.setWantsLayer(true);
 
         let glass_ok = AnyClass::get(c"NSGlassEffectView").is_some();
         let kind = preferred_glass(glass_ok);
-        let root = panel_chrome(host, mtm, kind);
+        let (root, wash) = panel_shell(host, mtm, kind);
 
         let main_view = NSView::new(mtm);
         let settings_view = NSView::new(mtm);
@@ -212,34 +224,23 @@ impl NativePanel {
         pin_fill(&root, &settings_view);
         pin_fill(&root, &help_view);
 
-        let coin = NSBox::new(mtm);
-        coin.setBoxType(NSBoxType::Custom);
-        coin.setTitlePosition(NSTitlePosition::NoTitle);
-        coin.setCornerRadius(HERO_SIZE / 2.0);
-        coin.setBorderWidth(0.5);
-        coin.setBorderColor(&NSColor::separatorColor());
-        coin.setFillColor(&NSColor::controlBackgroundColor());
-        nv(&*coin)
+        let coin_box = NSBox::new(mtm);
+        coin_box.setBoxType(NSBoxType::Custom);
+        coin_box.setTitlePosition(NSTitlePosition::NoTitle);
+        coin_box.setCornerRadius(HERO_SIZE / 2.0);
+        coin_box.setBorderWidth(0.5);
+        coin_box.setBorderColor(&NSColor::separatorColor());
+        coin_box.setFillColor(&NSColor::controlBackgroundColor());
+        nv(&*coin_box)
             .widthAnchor()
             .constraintEqualToConstant(HERO_SIZE)
             .setActive(true);
-        nv(&*coin)
+        nv(&*coin_box)
             .heightAnchor()
             .constraintEqualToConstant(HERO_SIZE)
             .setActive(true);
 
-        let glyph = NSImageView::new(mtm);
-        glyph.setImage(Some(&sun));
-        glyph.setEditable(false);
-        glyph.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
-        nv(&*glyph)
-            .widthAnchor()
-            .constraintEqualToConstant(HERO_IMAGE)
-            .setActive(true);
-        nv(&*glyph)
-            .heightAnchor()
-            .constraintEqualToConstant(HERO_IMAGE)
-            .setActive(true);
+        let coin = coin_flip(&sun, &moon, mtm);
         let coin_body = NSStackView::new(mtm);
         coin_body.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
         coin_body.setAlignment(NSLayoutAttribute::CenterX);
@@ -249,8 +250,8 @@ impl NativePanel {
             bottom: (HERO_SIZE - HERO_IMAGE) / 2.0,
             right: 0.0,
         });
-        arrange(&coin_body, &glyph);
-        coin.setContentView(Some(nv(&*coin_body)));
+        arrange(&coin_body, &coin);
+        coin_box.setContentView(Some(nv(&*coin_body)));
 
         let hero = unsafe {
             NSButton::buttonWithTitle_target_action(
@@ -270,7 +271,7 @@ impl NativePanel {
             .heightAnchor()
             .constraintEqualToConstant(HERO_SIZE)
             .setActive(true);
-        pin_fill(nv(&*hero), nv(&*coin));
+        pin_fill(nv(&*hero), nv(&*coin_box));
 
         let status_title = heading(mtm, 17.0);
         status_title.setAlignment(NSTextAlignment::Center);
@@ -309,18 +310,17 @@ impl NativePanel {
         let quit_main = text_button(&target, sel!(quit:), mtm);
 
         let status = column(mtm, 3.0, 0.0);
-        status.setAlignment(NSLayoutAttribute::Width);
+        status.setAlignment(NSLayoutAttribute::CenterX);
         arrange(&status, &status_title);
         arrange(&status, &summary);
-        fill_width(nv(&*status));
 
         let hero_wrap = column(mtm, 0.0, 0.0);
         hero_wrap.setAlignment(NSLayoutAttribute::CenterX);
         arrange(&hero_wrap, &hero);
-        fill_width(nv(&*hero_wrap));
 
+        let footer = chrome_bar(&more, None, Some(&quit_main), mtm);
         let main_stack = column(mtm, 0.0, CONTENT_INSET);
-        main_stack.setAlignment(NSLayoutAttribute::Width);
+        main_stack.setAlignment(NSLayoutAttribute::CenterX);
         arrange(&main_stack, &hero_wrap);
         spacer(&main_stack, 12.0, mtm);
         arrange(&main_stack, &status);
@@ -333,8 +333,14 @@ impl NativePanel {
         let footer_space = NSView::new(mtm);
         stretch(&footer_space);
         arrange(&main_stack, &footer_space);
-        arrange(&main_stack, &chrome_bar(&more, None, Some(&quit_main), mtm));
+        arrange(&main_stack, &footer);
         pin_fill(&main_view, nv(&*main_stack));
+        span_stack(&main_stack, nv(&*hero_wrap));
+        span_stack(&main_stack, nv(&*status));
+        span_stack(&main_stack, nv(&*warning));
+        span_stack(&main_stack, nv(&*primary));
+        span_stack(&main_stack, nv(&*session_card));
+        span_stack(&main_stack, nv(&*footer));
 
         let back = icon_button(&target, sel!(back:), "chevron.left", mtm);
         let settings_title = heading(mtm, 13.0);
@@ -376,9 +382,11 @@ impl NativePanel {
         let help_button = text_button(&target, sel!(help:), mtm);
         let quit_settings = text_button(&target, sel!(quit:), mtm);
 
+        let settings_head = sheet_head(&back, &settings_title, mtm);
+        let settings_footer = chrome_bar(&help_button, None, Some(&quit_settings), mtm);
         let settings_stack = column(mtm, 0.0, CONTENT_INSET);
-        settings_stack.setAlignment(NSLayoutAttribute::Width);
-        arrange(&settings_stack, &sheet_head(&back, &settings_title, mtm));
+        settings_stack.setAlignment(NSLayoutAttribute::Leading);
+        arrange(&settings_stack, &settings_head);
         spacer(&settings_stack, 8.0, mtm);
         arrange(&settings_stack, &settings_card);
         spacer(&settings_stack, 12.0, mtm);
@@ -386,11 +394,12 @@ impl NativePanel {
         let settings_space = NSView::new(mtm);
         stretch(&settings_space);
         arrange(&settings_stack, &settings_space);
-        arrange(
-            &settings_stack,
-            &chrome_bar(&help_button, None, Some(&quit_settings), mtm),
-        );
+        arrange(&settings_stack, &settings_footer);
         pin_fill(&settings_view, nv(&*settings_stack));
+        span_stack(&settings_stack, nv(&*settings_head));
+        span_stack(&settings_stack, nv(&*settings_card));
+        span_stack(&settings_stack, nv(&*language));
+        span_stack(&settings_stack, nv(&*settings_footer));
 
         let help_back = icon_button(&target, sel!(back:), "chevron.left", mtm);
         let help_title = heading(mtm, 13.0);
@@ -441,7 +450,7 @@ impl NativePanel {
         );
 
         let help_body = column(mtm, 0.0, 0.0);
-        help_body.setAlignment(NSLayoutAttribute::Width);
+        help_body.setAlignment(NSLayoutAttribute::Leading);
         help_body.setEdgeInsets(NSEdgeInsets {
             top: 0.0,
             left: 0.0,
@@ -459,6 +468,10 @@ impl NativePanel {
         arrange(&help_body, &help_notes);
         spacer(&help_body, 6.0, mtm);
         arrange(&help_body, &notes_card);
+        span_stack(&help_body, nv(&*help_kicker));
+        span_stack(&help_body, nv(&*help_lead));
+        span_stack(&help_body, nv(&*how_card));
+        span_stack(&help_body, nv(&*notes_card));
 
         let scroll = NSScrollView::new(mtm);
         scroll.setHasVerticalScroller(true);
@@ -469,21 +482,26 @@ impl NativePanel {
         pin_document_width(&scroll, nv(&*help_body));
         stretch(nv(&*scroll));
 
+        let help_head = sheet_head(&help_back, &help_title, mtm);
         let help_stack = column(mtm, 0.0, CONTENT_INSET);
-        help_stack.setAlignment(NSLayoutAttribute::Width);
-        arrange(&help_stack, &sheet_head(&help_back, &help_title, mtm));
+        help_stack.setAlignment(NSLayoutAttribute::Leading);
+        arrange(&help_stack, &help_head);
         spacer(&help_stack, 8.0, mtm);
         arrange(&help_stack, &scroll);
         pin_fill(&help_view, nv(&*help_stack));
+        span_stack(&help_stack, nv(&*help_head));
+        span_stack(&help_stack, nv(&*scroll));
 
         let panel = Self {
             _target: target,
+            wash,
+            coin,
             main_view,
             settings_view,
             help_view,
-            glyph,
             sun,
             moon,
+            last_active: None,
             status_title,
             summary,
             warning,
@@ -533,12 +551,14 @@ impl NativePanel {
             current: PanelView::Main,
         };
         panel.apply_view();
+        panel.set_active(false, false);
         Ok(panel)
     }
 
     pub fn apply(&mut self, state: &PanelState) {
-        self.glyph
-            .setImage(Some(if state.active { &self.moon } else { &self.sun }));
+        let animate = self.last_active.is_some_and(|was| was != state.active);
+        self.set_active(state.active, animate);
+        self.last_active = Some(state.active);
         set_text(&self.status_title, &state.status_title);
         set_text(&self.summary, &state.summary);
         set_text(&self.warning, &state.warning);
@@ -654,6 +674,32 @@ impl NativePanel {
             .setHidden(self.current != PanelView::Settings);
         self.help_view.setHidden(self.current != PanelView::Help);
     }
+
+    fn set_active(&self, active: bool, animate: bool) {
+        let reduce = reduce_motion();
+        let color_secs = if animate {
+            motion_duration_secs(reduce, PANEL_COLOR_SECS)
+        } else {
+            0.0
+        };
+        let flip_secs = if animate && hero_flips(reduce) {
+            HERO_FLIP_SECS
+        } else {
+            0.0
+        };
+        set_fill_color(&self.wash, panel_fill_rgb(active), color_secs);
+        set_coin_flip(&self.coin, active, flip_secs);
+        if let Some(window) = self.wash.window() {
+            let name = if active {
+                NSAppearanceNameDarkAqua
+            } else {
+                NSAppearanceNameAqua
+            };
+            if let Some(appearance) = NSAppearance::appearanceNamed(name) {
+                window.setAppearance(Some(&appearance));
+            }
+        }
+    }
 }
 
 fn as_any(obj: &PanelTarget) -> &AnyObject {
@@ -710,6 +756,14 @@ fn fill_width(view: &NSView) {
     );
 }
 
+fn span_stack(stack: &NSStackView, child: &NSView) {
+    let inset = stack.edgeInsets();
+    child
+        .widthAnchor()
+        .constraintEqualToAnchor_constant(&stack.widthAnchor(), -(inset.left + inset.right))
+        .setActive(true);
+}
+
 fn stretch(view: &NSView) {
     view.setContentHuggingPriority_forOrientation(1.0_f32, NSLayoutConstraintOrientation::Vertical);
 }
@@ -739,19 +793,58 @@ fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
         .setActive(true);
 }
 
+fn panel_shell(
+    host: &NSView,
+    mtm: MainThreadMarker,
+    kind: GlassKind,
+) -> (Retained<NSView>, Retained<NSView>) {
+    let card = NSView::new(mtm);
+    card.setWantsLayer(true);
+    card.setTranslatesAutoresizingMaskIntoConstraints(false);
+    host.addSubview(&card);
+    card.leadingAnchor()
+        .constraintEqualToAnchor_constant(&host.leadingAnchor(), SHADOW_INSET)
+        .setActive(true);
+    card.trailingAnchor()
+        .constraintEqualToAnchor_constant(&host.trailingAnchor(), -SHADOW_INSET)
+        .setActive(true);
+    card.topAnchor()
+        .constraintEqualToAnchor_constant(&host.topAnchor(), SHADOW_INSET)
+        .setActive(true);
+    card.bottomAnchor()
+        .constraintEqualToAnchor_constant(&host.bottomAnchor(), -SHADOW_INSET)
+        .setActive(true);
+    decorate_card_shadow(&card);
+
+    let clip = NSView::new(mtm);
+    clip.setWantsLayer(true);
+    pin_fill(&card, &clip);
+    if let Some(layer) = backing_layer(&clip) {
+        layer.setCornerRadius(PANEL_CORNER);
+        layer.setMasksToBounds(true);
+    }
+
+    let root = panel_chrome(&clip, mtm, kind);
+    let wash = NSView::new(mtm);
+    wash.setWantsLayer(true);
+    pin_fill(&root, &wash);
+    set_fill_color(&wash, panel_fill_rgb(false), 0.0);
+    (root, wash)
+}
+
 fn panel_chrome(host: &NSView, mtm: MainThreadMarker, kind: GlassKind) -> Retained<NSView> {
     match kind {
         GlassKind::LiquidGlass => {
             let glass = NSGlassEffectView::new(mtm);
             glass.setStyle(NSGlassEffectViewStyle::Regular);
-            glass.setCornerRadius(10.0);
+            glass.setCornerRadius(PANEL_CORNER);
             let content = NSView::new(mtm);
             content.setAutoresizingMask(
                 NSAutoresizingMaskOptions::ViewWidthSizable
                     | NSAutoresizingMaskOptions::ViewHeightSizable,
             );
             glass.setContentView(Some(&content));
-            fill_host(host, nv(&*glass));
+            pin_fill(host, nv(&*glass));
             content
         }
         GlassKind::Vibrancy => {
@@ -760,20 +853,12 @@ fn panel_chrome(host: &NSView, mtm: MainThreadMarker, kind: GlassKind) -> Retain
             visual.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
             visual.setState(NSVisualEffectState::Active);
             visual.setWantsLayer(true);
-            fill_host(host, nv(&*visual));
+            pin_fill(host, nv(&*visual));
             let content = NSView::new(mtm);
             pin_fill(nv(&*visual), &content);
             content
         }
     }
-}
-
-fn fill_host(host: &NSView, child: &NSView) {
-    child.setFrame(host.bounds());
-    child.setAutoresizingMask(
-        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
-    );
-    host.addSubview(child);
 }
 
 fn grouped_card(mtm: MainThreadMarker, rows: &[Retained<NSStackView>]) -> Retained<NSView> {
@@ -838,7 +923,7 @@ fn wrap(mtm: MainThreadMarker, size: f64) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(size)));
     field.setTextColor(Some(&NSColor::secondaryLabelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(320.0 - CONTENT_INSET * 2.0);
+    field.setPreferredMaxLayoutWidth(PANEL_WIDTH - CONTENT_INSET * 2.0);
     field
 }
 
@@ -1185,4 +1270,153 @@ fn help_note(copy: &NSTextField, symbol: &str, mtm: MainThreadMarker) -> Retaine
     arrange(&row, copy);
     fill_width(nv(&*row));
     row
+}
+
+fn coin_flip(sun: &NSImage, moon: &NSImage, mtm: MainThreadMarker) -> Retained<NSView> {
+    let coin = NSView::new(mtm);
+    coin.setWantsLayer(true);
+    nv(&*coin)
+        .widthAnchor()
+        .constraintEqualToConstant(HERO_IMAGE)
+        .setActive(true);
+    nv(&*coin)
+        .heightAnchor()
+        .constraintEqualToConstant(HERO_IMAGE)
+        .setActive(true);
+    let sun_face = coin_face(sun, mtm);
+    let moon_face = coin_face(moon, mtm);
+    pin_fill(&coin, nv(&*sun_face));
+    pin_fill(&coin, nv(&*moon_face));
+    if let Some(layer) = backing_layer(&coin) {
+        let mut perspective = identity_transform();
+        perspective.m34 = -1.0 / 760.0;
+        layer.setSublayerTransform(perspective);
+    }
+    if let Some(layer) = backing_layer(nv(&*sun_face)) {
+        layer.setDoubleSided(false);
+    }
+    if let Some(layer) = backing_layer(nv(&*moon_face)) {
+        layer.setDoubleSided(false);
+        layer.setTransform(CATransform3DMakeRotation(
+            std::f64::consts::PI,
+            0.0,
+            1.0,
+            0.0,
+        ));
+    }
+    coin
+}
+
+fn coin_face(image: &NSImage, mtm: MainThreadMarker) -> Retained<NSImageView> {
+    let face = NSImageView::new(mtm);
+    face.setImage(Some(image));
+    face.setEditable(false);
+    face.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+    face.setWantsLayer(true);
+    face
+}
+
+fn decorate_card_shadow(card: &NSView) {
+    let Some(layer) = backing_layer(card) else {
+        return;
+    };
+    layer.setCornerRadius(PANEL_CORNER);
+    layer.setMasksToBounds(false);
+    layer.setShadowOpacity(SHADOW_OPACITY);
+    layer.setShadowRadius(SHADOW_RADIUS);
+    layer.setShadowOffset(objc2_foundation::NSSize::new(0.0, -8.0));
+    layer.setShadowColor(Some(&cg_color(&NSColor::blackColor())));
+}
+
+fn backing_layer(view: &NSView) -> Option<Retained<CALayer>> {
+    view.setWantsLayer(true);
+    unsafe { msg_send![view, layer] }
+}
+
+fn set_fill_color(view: &NSView, rgb: [u8; 3], duration: f64) {
+    let Some(layer) = backing_layer(view) else {
+        return;
+    };
+    let color = rgb_color(rgb);
+    unsafe {
+        let _: () = msg_send![CATransaction::class(), begin];
+        let _: () = msg_send![CATransaction::class(), setAnimationDuration: duration];
+        let _: () = msg_send![CATransaction::class(), setDisableActions: duration <= 0.0];
+        layer.setBackgroundColor(Some(&color));
+        let _: () = msg_send![CATransaction::class(), commit];
+    }
+}
+
+fn set_coin_flip(coin: &NSView, active: bool, duration: f64) {
+    let Some(layer) = backing_layer(coin) else {
+        return;
+    };
+    let to = CATransform3DMakeRotation(hero_flip_radians(active), 0.0, 1.0, 0.0);
+    if duration > 0.0 {
+        let from = CATransform3DMakeRotation(hero_flip_radians(!active), 0.0, 1.0, 0.0);
+        let anim: Retained<CABasicAnimation> = unsafe {
+            msg_send![CABasicAnimation::class(), animationWithKeyPath: &*ns("transform")]
+        };
+        anim.setDuration(duration);
+        let from_val = unsafe { NSValue::valueWithCATransform3D(from) };
+        let to_val = unsafe { NSValue::valueWithCATransform3D(to) };
+        unsafe {
+            anim.setFromValue(Some(value_obj(&from_val)));
+            anim.setToValue(Some(value_obj(&to_val)));
+        }
+        let timing: Retained<CAMediaTimingFunction> = unsafe {
+            msg_send![
+                CAMediaTimingFunction::class(),
+                functionWithControlPoints: 0.22f32,
+                c1y: 0.78f32,
+                c2x: 0.18f32,
+                c2y: 1.12f32
+            ]
+        };
+        anim.setTimingFunction(Some(&timing));
+        layer.addAnimation_forKey(&anim, Some(&ns("flip")));
+    }
+    layer.setTransform(to);
+}
+
+fn value_obj(value: &NSValue) -> &AnyObject {
+    unsafe { &*(core::ptr::from_ref(value).cast::<AnyObject>()) }
+}
+
+fn rgb_color(rgb: [u8; 3]) -> Retained<CGColor> {
+    cg_color(&NSColor::colorWithRed_green_blue_alpha(
+        f64::from(rgb[0]) / 255.0,
+        f64::from(rgb[1]) / 255.0,
+        f64::from(rgb[2]) / 255.0,
+        1.0,
+    ))
+}
+
+fn cg_color(color: &NSColor) -> Retained<CGColor> {
+    unsafe { msg_send![color, CGColor] }
+}
+
+fn reduce_motion() -> bool {
+    NSUserDefaults::standardUserDefaults().boolForKey(&ns("AppleReduceMotion"))
+}
+
+fn identity_transform() -> CATransform3D {
+    CATransform3D {
+        m11: 1.0,
+        m12: 0.0,
+        m13: 0.0,
+        m14: 0.0,
+        m21: 0.0,
+        m22: 1.0,
+        m23: 0.0,
+        m24: 0.0,
+        m31: 0.0,
+        m32: 0.0,
+        m33: 1.0,
+        m34: 0.0,
+        m41: 0.0,
+        m42: 0.0,
+        m43: 0.0,
+        m44: 1.0,
+    }
 }

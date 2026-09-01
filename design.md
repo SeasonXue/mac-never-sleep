@@ -1,12 +1,12 @@
 # Never Sleep — macOS UI
 
-对照 `docs/screenshots`：紧凑菜单栏面板。系统骨架 + 拟人太阳/月亮。不是侧边栏工具窗。
+对照 `docs/screenshots`：紧凑菜单栏弹出面板。系统骨架 + 拟人太阳/月亮。不是侧边栏工具窗。
 
 ## 窗口
 
-Accessory + 菜单栏 Extra。左键显示/隐藏面板；右键状态项菜单。不占 Dock。不吸附图标。失焦不关。Escape / 关面板不结束待命。
+Accessory + 菜单栏 Extra。左键把 **320×480** 圆角卡片吸附在状态项下方；失焦、Escape、再点图标会隐藏面板，**不结束待命**。右键状态项菜单。不占 Dock。窗口比卡片大一圈（`SHADOW_INSET` 24pt），给四周柔和层阴影留出发光空间。
 
-尺寸 **320×480**，圆角 10，无标题栏。首次打开居中。
+待命中面板铺上 `#1c1c1e`，未开启为 `#f5f5f7`，420ms 过渡。硬币 `rotateY` 翻转 520ms；系统「减少动态效果」时立刻换图。
 
 ## 三页（截图）
 
@@ -29,13 +29,15 @@ Accessory + 菜单栏 Extra。左键显示/隐藏面板；右键状态项菜单�
 
 ## 材质
 
-玻璃只包外壳（`NSGlassEffectView` / `NSVisualEffectMaterial::Popover`）。卡片、正文、开关用 `controlBackgroundColor` / 系统语义色。
+玻璃只包外壳（`NSGlassEffectView` / `NSVisualEffectMaterial::Popover`）。卡片、正文、开关用 `controlBackgroundColor` / 系统语义色。待命时切到 Dark Aqua，让分组卡和开关跟着重色面板走。
 
 ## Token（`panel.rs`）
 
 | Token | 值 |
 | --- | --- |
 | `PANEL_WIDTH` / `PANEL_HEIGHT` | 320 / 480 |
+| `SHADOW_INSET` / `PANEL_CORNER` | 24 / 10 |
 | `HERO_SIZE` / `HERO_IMAGE` | 124 / 104 |
 | `CARD_RADIUS` | 8 |
 | `CONTENT_INSET` | 16 |
+| `HERO_FLIP_SECS` / `PANEL_COLOR_SECS` | 0.52 / 0.42 |

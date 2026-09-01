@@ -7,22 +7,74 @@ use never_sleep_core::{AppConfig, DurationPref, Lang, ViewModel, DEFAULT_HOTKEY_
 /// Ignore a second Start/End click that AppKit queued from the same press.
 pub const TOGGLE_COOLDOWN_MS: u64 = 400;
 
-/// Compact menu-bar panel matching `docs/screenshots` (not glued to the icon).
+/// Compact menu-bar popover matching `docs/screenshots`.
 pub const PANEL_WIDTH: f64 = 320.0;
 pub const PANEL_HEIGHT: f64 = 480.0;
 pub const HERO_SIZE: f64 = 124.0;
 pub const HERO_IMAGE: f64 = 104.0;
 pub const CARD_RADIUS: f64 = 8.0;
 pub const CONTENT_INSET: f64 = 16.0;
+/// Rounded panel chrome; matches the HTML-era `.panel` radius.
+pub const PANEL_CORNER: f64 = 10.0;
+/// Transparent window padding so the layer shadow can fade out around the card.
+pub const SHADOW_INSET: f64 = 24.0;
+pub const SHADOW_RADIUS: f64 = 18.0;
+pub const SHADOW_OPACITY: f32 = 0.28;
+/// Coin `rotateY` duration (HTML `520ms cubic-bezier(.22, .78, .18, 1.12)`).
+pub const HERO_FLIP_SECS: f64 = 0.52;
+/// Idle `#f5f5f7` ↔ active `#1c1c1e` wash (HTML `420ms`).
+pub const PANEL_COLOR_SECS: f64 = 0.42;
+pub const IDLE_FILL_RGB: [u8; 3] = [0xf5, 0xf5, 0xf7];
+pub const ACTIVE_FILL_RGB: [u8; 3] = [0x1c, 0x1c, 0x1e];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelPlacement {
-    /// Titled utility window. Menu-bar click shows or hides it.
-    Independent,
+    /// Anchored under the status item; hide when the panel loses key focus.
+    MenuBar,
 }
 
 pub fn panel_placement() -> PanelPlacement {
-    PanelPlacement::Independent
+    PanelPlacement::MenuBar
+}
+
+pub fn dismiss_on_focus_loss() -> bool {
+    matches!(panel_placement(), PanelPlacement::MenuBar)
+}
+
+pub fn window_width() -> f64 {
+    PANEL_WIDTH + SHADOW_INSET * 2.0
+}
+
+pub fn window_height() -> f64 {
+    PANEL_HEIGHT + SHADOW_INSET * 2.0
+}
+
+pub fn panel_fill_rgb(active: bool) -> [u8; 3] {
+    if active {
+        ACTIVE_FILL_RGB
+    } else {
+        IDLE_FILL_RGB
+    }
+}
+
+pub fn hero_flip_radians(active: bool) -> f64 {
+    if active {
+        std::f64::consts::PI
+    } else {
+        0.0
+    }
+}
+
+pub fn hero_flips(reduce_motion: bool) -> bool {
+    !reduce_motion
+}
+
+pub fn motion_duration_secs(reduce_motion: bool, full_secs: f64) -> f64 {
+    if reduce_motion {
+        0.0
+    } else {
+        full_secs
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,11 +432,44 @@ mod tests {
         assert_eq!(HERO_IMAGE, 104.0);
         assert_eq!(CARD_RADIUS, 8.0);
         assert_eq!(CONTENT_INSET, 16.0);
+        assert_eq!(PANEL_CORNER, 10.0);
+        assert_eq!(SHADOW_INSET, 24.0);
+        assert_eq!(SHADOW_RADIUS, 18.0);
+        assert_eq!(SHADOW_OPACITY, 0.28);
+        assert_eq!(HERO_FLIP_SECS, 0.52);
+        assert_eq!(PANEL_COLOR_SECS, 0.42);
+        assert_eq!(panel_fill_rgb(false), [0xf5, 0xf5, 0xf7]);
+        assert_eq!(panel_fill_rgb(true), [0x1c, 0x1c, 0x1e]);
+        assert_eq!(hero_flip_radians(false), 0.0);
+        assert_eq!(hero_flip_radians(true), std::f64::consts::PI);
+        assert_eq!(window_width(), PANEL_WIDTH + SHADOW_INSET * 2.0);
+        assert_eq!(window_height(), PANEL_HEIGHT + SHADOW_INSET * 2.0);
+        assert!(
+            window_width() > PANEL_WIDTH,
+            "the window is larger than the card so the shadow can fade around the edges"
+        );
     }
 
     #[test]
-    fn panel_placement_is_an_independent_window() {
-        assert_eq!(panel_placement(), PanelPlacement::Independent);
+    fn panel_placement_anchors_under_the_menu_bar() {
+        assert_eq!(panel_placement(), PanelPlacement::MenuBar);
+        assert!(
+            dismiss_on_focus_loss(),
+            "a menu-bar popover must hide when it loses key focus"
+        );
+    }
+
+    #[test]
+    fn hero_flip_and_color_respect_reduce_motion() {
+        assert!(hero_flips(false));
+        assert!(!hero_flips(true));
+        assert_eq!(motion_duration_secs(false, HERO_FLIP_SECS), HERO_FLIP_SECS);
+        assert_eq!(motion_duration_secs(true, HERO_FLIP_SECS), 0.0);
+        assert_eq!(
+            motion_duration_secs(false, PANEL_COLOR_SECS),
+            PANEL_COLOR_SECS
+        );
+        assert_eq!(motion_duration_secs(true, PANEL_COLOR_SECS), 0.0);
     }
 
     #[test]

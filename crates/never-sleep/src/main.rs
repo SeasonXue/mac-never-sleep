@@ -297,6 +297,26 @@ mod tests {
             "status copy is centered like the screenshots"
         );
         assert!(
+            src.contains("span_stack"),
+            "page stacks pin children to the card width so the coin cannot hug trailing"
+        );
+        assert!(
+            src.contains("CATransform3DMakeRotation"),
+            "the sun/moon coin flips with a rotateY animation"
+        );
+        assert!(
+            src.contains("setShadowRadius"),
+            "the rounded card casts a soft layer shadow around the panel"
+        );
+        assert!(
+            src.contains("set_fill_color"),
+            "idle and active panel fills cross-fade"
+        );
+        assert!(
+            src.contains("AppleReduceMotion"),
+            "Reduce Motion skips the coin flip"
+        );
+        assert!(
             src.contains("NSBezelStyle::Push"),
             "the primary action is a standard push button"
         );
@@ -333,16 +353,16 @@ mod tests {
             "screenshots are a rounded panel, not a titled Settings window"
         );
         assert!(
-            !gui.contains("with_always_on_top(true)"),
-            "the panel is not pinned above other apps"
+            gui.contains("with_always_on_top(true)"),
+            "a menu-bar popover stays above the desktop while it is open"
         );
         assert!(
-            !gui.contains("toggle_at"),
-            "do not glue the window to the status item"
+            gui.contains("toggle_at"),
+            "left-click anchors the panel under the status item"
         );
         assert!(
-            !gui.contains("Focused(false)"),
-            "losing key status must not dismiss the panel"
+            gui.contains("Focused(false)"),
+            "losing key status dismisses the panel without ending standby"
         );
         assert!(
             gui.contains("panel_placement"),

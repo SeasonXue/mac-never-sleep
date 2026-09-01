@@ -38,10 +38,25 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
   "NSCoder",
   "NSAttributedString",
   "NSNotification",
+  "NSUserDefaults",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CGColor",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "objc2-core-graphics",
+  "CALayer",
+  "CAAnimation",
+  "CAMediaTiming",
+  "CATransaction",
 ] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
   "std",
   "objc2-core-foundation",
+  "objc2-core-graphics",
+  "objc2-quartz-core",
   "NSResponder",
   "NSView",
   "NSWindow",

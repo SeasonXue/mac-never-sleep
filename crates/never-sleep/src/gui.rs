@@ -22,7 +22,8 @@ use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
-    panel_placement, panel_state, PanelPlacement, PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH,
+    dismiss_on_focus_loss, panel_placement, panel_state, window_height, window_width,
+    PanelPlacement, PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH, SHADOW_INSET,
 };
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
@@ -53,7 +54,7 @@ struct Popover {
     window: Window,
     ui: native_panel::NativePanel,
     visible: bool,
-    placed: bool,
+    last_tray: Option<TrayRect>,
     last: Option<PanelState>,
 }
 
@@ -64,14 +65,14 @@ impl Popover {
     ) -> Result<Self, String> {
         let window = WindowBuilder::new()
             .with_title("Never Sleep")
-            .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
+            .with_inner_size(LogicalSize::new(window_width(), window_height()))
             .with_resizable(false)
             .with_decorations(false)
             .with_transparent(true)
             .with_visible(false)
-            .with_always_on_top(false)
-            .with_has_shadow(true)
-            .with_movable_by_window_background(true)
+            .with_always_on_top(true)
+            .with_has_shadow(false)
+            .with_movable_by_window_background(false)
             .build(event_loop)
             .map_err(|e| format!("panel window: {e}"))?;
 
@@ -81,27 +82,66 @@ impl Popover {
             window,
             ui,
             visible: false,
-            placed: false,
+            last_tray: None,
             last: None,
         })
     }
 
-    fn toggle_visible(&mut self) {
+    fn toggle_at(&mut self, rect: TrayRect) {
+        self.last_tray = Some(rect);
         if self.visible {
             self.hide();
-        } else {
-            self.show();
+            return;
         }
+        self.place_at(rect);
+        self.window.set_visible(true);
+        self.window.set_focus();
+        self.visible = true;
     }
 
     fn show(&mut self) {
-        if !self.placed && panel_placement() == PanelPlacement::Independent {
-            self.center_on_screen();
-            self.placed = true;
+        match panel_placement() {
+            PanelPlacement::MenuBar => {
+                if let Some(rect) = self.last_tray {
+                    self.place_at(rect);
+                } else {
+                    self.center_on_screen();
+                }
+            }
         }
         self.window.set_visible(true);
         self.window.set_focus();
         self.visible = true;
+    }
+
+    fn place_at(&self, rect: TrayRect) {
+        let scale = self.window.scale_factor();
+        let width = window_width() * scale;
+        let anchor_x = rect.position.x + f64::from(rect.size.width) / 2.0;
+        let desired_x = anchor_x - width / 2.0;
+        let x = self
+            .window
+            .available_monitors()
+            .find(|monitor| {
+                let position = monitor.position();
+                let size = monitor.size();
+                anchor_x >= f64::from(position.x)
+                    && anchor_x <= f64::from(position.x) + f64::from(size.width)
+                    && rect.position.y >= f64::from(position.y)
+                    && rect.position.y <= f64::from(position.y) + f64::from(size.height)
+            })
+            .map(|monitor| {
+                let position = monitor.position();
+                let size = monitor.size();
+                let margin = 8.0 * scale;
+                let min_x = f64::from(position.x) + margin;
+                let max_x = f64::from(position.x) + f64::from(size.width) - width - margin;
+                desired_x.clamp(min_x, max_x.max(min_x))
+            })
+            .unwrap_or(desired_x);
+        let y = rect.position.y + f64::from(rect.size.height) + 4.0 * scale - SHADOW_INSET * scale;
+        self.window
+            .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
     }
 
     fn center_on_screen(&self) {
@@ -314,7 +354,7 @@ pub fn run() {
                     platform.as_mut(),
                 );
             }
-            Event::UserEvent(UserEvent::Tray(_rect)) => {
+            Event::UserEvent(UserEvent::Tray(rect)) => {
                 refresh_ui(
                     &handles,
                     &mut tray,
@@ -324,7 +364,7 @@ pub fn run() {
                     platform.as_mut(),
                 );
                 if let Some(panel) = popover.as_mut() {
-                    panel.toggle_visible();
+                    panel.toggle_at(rect);
                 }
             }
             Event::UserEvent(UserEvent::Ui(command)) => {
@@ -354,6 +394,19 @@ pub fn run() {
                 if let Some(popover) = popover.as_mut() {
                     if popover.window.id() == window_id {
                         popover.hide();
+                    }
+                }
+            }
+            Event::WindowEvent {
+                window_id,
+                event: WindowEvent::Focused(false),
+                ..
+            } => {
+                if dismiss_on_focus_loss() {
+                    if let Some(popover) = popover.as_mut() {
+                        if popover.window.id() == window_id {
+                            popover.hide();
+                        }
                     }
                 }
             }

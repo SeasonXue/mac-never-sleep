@@ -39,7 +39,7 @@ Before editing `native_panel.rs` or popover wiring in `gui.rs`:
 
 1. `git fetch origin main` and start from (or merge) the **latest remote** `main`. Cloud snapshots are often behind; do not skip this for UI work.
 2. Do not run a second agent on the panel while another panel PR is still open. Land or rebase the first.
-3. Keep `PanelView::Main` / `Settings` / `Help`. Match `docs/screenshots` (centered coin, grouped card, More Settings | Quit). Glass belongs on the **panel chrome**; cards stay opaque. Do not glue the panel to the status item or gray out End Standby.
+3. Keep `PanelView::Main` / `Settings` / `Help`. Match `docs/screenshots` (centered coin, grouped card, More Settings | Quit). Glass belongs on the **panel chrome**; cards stay opaque. Anchor under the status item and hide on focus loss. Do not gray out End Standby.
 4. After merging `main` into an in-flight UI PR, re-apply only the intended delta.
 
 ## Toolchain
