@@ -8,7 +8,7 @@ The UI is **English by default**, with Simplified Chinese when the system langua
 
 ## A look at the app
 
-One left-click on the menu-bar sun opens a compact panel (coin, status, Start pill). Press **Start Screen-Off Standby** — the coin flips to a moon, an elapsed clock appears, and the display goes dark about 1.5 seconds later. **End Standby** stays clickable; **Sleep Display Now** darkens the panel immediately without ending the session. Close the panel or click the icon again to hide it. More Settings holds duration, screen-off, and the other toggles.
+One left-click on the menu-bar sun opens a compact panel (coin, status, Start pill). Press **Start Screen-Off Standby** — the coin flips to a moon, a timer appears (elapsed, or a remaining countdown when a duration is set), and the display goes dark about 1.5 seconds later. **End Standby** stays clickable; **Sleep Display Now** darkens the panel immediately without ending the session. Close the panel or click the icon again to hide it. More Settings holds duration, screen-off, and the other toggles.
 
 <table>
   <tr>

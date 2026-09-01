@@ -79,13 +79,15 @@ pub struct ViewModel {
     pub user_present: bool,
     /// Elapsed seconds in the current session; `None` while idle.
     pub elapsed_secs: Option<u64>,
+    /// Remaining whole seconds when a deadline is set; `None` while idle or indefinite.
+    pub remaining_secs: Option<u64>,
 }
 
 pub fn build_view_model(
     cfg: &AppConfig,
     active: bool,
     started_ms: Option<u64>,
-    deadline_unix: Option<i64>,
+    remaining_secs: Option<u64>,
     host: &HostSnapshot,
     last_stop: Option<&str>,
     display_asleep: bool,
@@ -105,8 +107,8 @@ pub fn build_view_model(
         }
     }
 
-    let elapsed = started_ms.map(|s| host.monotonic_ms.saturating_sub(s) / 1000);
-    let remaining = deadline_unix.map(|d| d.saturating_sub(host.unix_secs) as u64);
+    let elapsed = started_ms.map(|s| crate::elapsed_secs(s, host.monotonic_ms));
+    let remaining = remaining_secs;
 
     let status_line = if active {
         match elapsed {
@@ -194,6 +196,7 @@ pub fn build_view_model(
         display_asleep,
         user_present: host.user_present(cfg.user_idle_resleep_ms),
         elapsed_secs: if active { elapsed } else { None },
+        remaining_secs: if active { remaining } else { None },
     }
 }
 
@@ -282,6 +285,7 @@ mod tests {
         assert!(!view.display_asleep);
         assert!(view.user_present);
         assert_eq!(view.elapsed_secs, None);
+        assert_eq!(view.remaining_secs, None);
     }
 
     #[test]
@@ -291,7 +295,17 @@ mod tests {
         h.monotonic_ms = 66_000;
         let view = build_view_model(&cfg, true, Some(1_000), None, &h, None, false);
         assert_eq!(view.elapsed_secs, Some(65));
+        assert_eq!(view.remaining_secs, None);
         assert_eq!(view.primary_action, cfg.tr().end_standby());
+    }
+
+    #[test]
+    fn remaining_secs_surface_on_the_view() {
+        let cfg = AppConfig::default();
+        let view = build_view_model(&cfg, true, Some(5_000), Some(3_598), &host(), None, false);
+        assert_eq!(view.elapsed_secs, Some(0));
+        assert_eq!(view.remaining_secs, Some(3_598));
+        assert!(view.remaining_label.is_some());
     }
 
     #[test]

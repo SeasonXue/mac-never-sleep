@@ -71,6 +71,33 @@ pub fn format_clock(secs: u64) -> String {
     }
 }
 
+/// Countdown clock that keeps the hour column so 1:00:00 does not jump to 59:59.
+pub fn format_countdown(secs: u64) -> String {
+    let hours = secs / 3600;
+    let mins = (secs % 3600) / 60;
+    let rem = secs % 60;
+    format!("{hours}:{mins:02}:{rem:02}")
+}
+
+/// Milliseconds left in a timed session, measured on the monotonic clock.
+///
+/// `deadline_unix - started_unix` is the planned length. Subtracting elapsed
+/// monotonic time keeps the UI from skipping seconds when `unix_secs` truncates
+/// or the wall clock steps.
+pub fn remaining_ms(deadline_unix: i64, started_unix: i64, started_ms: u64, now_ms: u64) -> u64 {
+    let duration_ms = deadline_unix.saturating_sub(started_unix).max(0) as u64 * 1_000;
+    duration_ms.saturating_sub(now_ms.saturating_sub(started_ms))
+}
+
+/// Whole seconds shown on a countdown. Holds the current second until it fully elapses.
+pub fn countdown_secs(remaining_ms: u64) -> u64 {
+    remaining_ms.div_ceil(1_000)
+}
+
+pub fn elapsed_secs(started_ms: u64, now_ms: u64) -> u64 {
+    now_ms.saturating_sub(started_ms) / 1_000
+}
+
 fn format_duration_en(secs: u64) -> String {
     if secs < 60 {
         return format!("{secs} sec");
@@ -195,5 +222,43 @@ mod tests {
         let now_unix = 8 * 3600;
         let next = next_until_unix_secs(now_unix, offset, 8, 0);
         assert_eq!(next - now_unix, 86_400);
+    }
+
+    #[test]
+    fn remaining_ms_follows_monotonic_not_wall_clock() {
+        let started_unix = 1_700_000_000;
+        let started_ms = 5_000;
+        let deadline = started_unix + 3_600;
+        // Wall clock jumped 5s; monotonic only advanced 2s.
+        let remaining = remaining_ms(deadline, started_unix, started_ms, started_ms + 2_000);
+        assert_eq!(remaining, 3_598_000);
+        assert_eq!(countdown_secs(remaining), 3_598);
+        assert_eq!(
+            elapsed_secs(started_ms, started_ms + 2_000) + countdown_secs(remaining),
+            3_600,
+            "elapsed + remaining must stay on the chosen duration"
+        );
+    }
+
+    #[test]
+    fn countdown_secs_holds_the_second_until_it_elapses() {
+        assert_eq!(countdown_secs(0), 0);
+        assert_eq!(countdown_secs(1), 1);
+        assert_eq!(countdown_secs(1_000), 1);
+        assert_eq!(countdown_secs(1_001), 2);
+        assert_eq!(countdown_secs(3_600_000), 3_600);
+        assert_eq!(
+            countdown_secs(3_599_001),
+            3_600,
+            "the opening 1:00:00 must last a full second"
+        );
+        assert_eq!(countdown_secs(3_599_000), 3_599);
+    }
+
+    #[test]
+    fn format_countdown_keeps_the_hour_column() {
+        assert_eq!(format_countdown(3_600), "1:00:00");
+        assert_eq!(format_countdown(3_599), "0:59:59");
+        assert_eq!(format_countdown(5), "0:00:05");
     }
 }

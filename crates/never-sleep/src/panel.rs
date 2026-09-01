@@ -3,7 +3,8 @@
 use std::time::{Duration, Instant};
 
 use never_sleep_core::{
-    format_clock, AppConfig, DurationPref, Lang, Tr, ViewModel, DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
+    format_clock, format_countdown, AppConfig, DurationPref, Lang, Tr, ViewModel,
+    DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
 };
 
 /// Ignore a second Start/End click that AppKit queued from the same press.
@@ -59,6 +60,7 @@ pub const HERO_FLIP_SECS: f64 = 0.52;
 /// Idle `#f5f5f7` ↔ active `#1c1c1e` wash (HTML `420ms`).
 pub const PANEL_COLOR_SECS: f64 = 0.42;
 /// UI clock tick while a session is running. Idle keeps `HEARTBEAT_MS`.
+/// The GUI should use `panel_clock_delay_ms` so wakes land on second boundaries.
 pub const PANEL_TICK_ACTIVE_MS: u64 = 1_000;
 pub const IDLE_FILL_RGB: [u8; 3] = [0xf5, 0xf5, 0xf7];
 pub const ACTIVE_FILL_RGB: [u8; 3] = [0x1c, 0x1c, 0x1e];
@@ -223,13 +225,56 @@ pub fn motion_duration_secs(reduce_motion: bool, full_secs: f64) -> f64 {
     }
 }
 
+/// Event-loop wait so the session clock changes on a whole second, not a sliding 1s interval.
+pub fn panel_clock_delay_ms(active: bool, remaining_ms: Option<u64>, elapsed_ms: u64) -> u64 {
+    if !active {
+        HEARTBEAT_MS
+    } else if let Some(remaining) = remaining_ms {
+        next_countdown_delay_ms(remaining)
+    } else {
+        next_elapsed_delay_ms(elapsed_ms)
+    }
+}
+
+/// Milliseconds until a ceil-countdown digit should change.
+pub fn next_countdown_delay_ms(remaining_ms: u64) -> u64 {
+    match remaining_ms % 1_000 {
+        0 => PANEL_TICK_ACTIVE_MS,
+        phase => phase,
+    }
+}
+
+/// Milliseconds until a floor-elapsed digit should change.
+pub fn next_elapsed_delay_ms(elapsed_ms: u64) -> u64 {
+    match elapsed_ms % 1_000 {
+        0 => PANEL_TICK_ACTIVE_MS,
+        phase => 1_000 - phase,
+    }
+}
+
+/// True when only the session clock label changed, so AppKit can skip a full relayout.
+pub fn panel_clock_only_changed(prev: &PanelState, next: &PanelState) -> bool {
+    if prev.elapsed_clock == next.elapsed_clock {
+        return false;
+    }
+    let mut stripped = next.clone();
+    stripped.elapsed_clock = prev.elapsed_clock.clone();
+    stripped == *prev
+}
+
+pub fn session_clock_label(vm: &ViewModel) -> String {
+    if !vm.active {
+        String::new()
+    } else if let Some(remaining) = vm.remaining_secs {
+        format_countdown(remaining)
+    } else {
+        format_clock(vm.elapsed_secs.unwrap_or(0))
+    }
+}
+
 /// Event-loop wait while a session is running so the elapsed clock ticks every second.
 pub fn panel_tick_ms(active: bool) -> u64 {
-    if active {
-        PANEL_TICK_ACTIVE_MS
-    } else {
-        HEARTBEAT_MS
-    }
+    panel_clock_delay_ms(active, None, 0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -480,11 +525,7 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
         .into(),
         summary: panel_summary(vm, t),
         primary_action: vm.primary_action.clone(),
-        elapsed_clock: if vm.active {
-            format_clock(vm.elapsed_secs.unwrap_or(0))
-        } else {
-            String::new()
-        },
+        elapsed_clock: session_clock_label(vm),
         show_elapsed: vm.active,
         sleep_now_label: t.sleep_display_now_action().into(),
         show_sleep_now: vm.active,
@@ -965,6 +1006,18 @@ mod tests {
             panel_tick_ms(true) < panel_tick_ms(false),
             "the elapsed clock must tick faster than the idle power heartbeat"
         );
+        assert_eq!(
+            panel_clock_delay_ms(true, Some(3_599_250), 1_000),
+            250,
+            "countdown wakes when remaining_ms hits the next whole second"
+        );
+        assert_eq!(panel_clock_delay_ms(true, Some(3_599_000), 1_000), 1_000);
+        assert_eq!(
+            panel_clock_delay_ms(true, None, 1_250),
+            750,
+            "elapsed wakes at the next whole second of monotonic time"
+        );
+        assert_eq!(panel_clock_delay_ms(false, None, 0), HEARTBEAT_MS);
     }
 
     #[test]
@@ -1131,5 +1184,27 @@ mod tests {
         );
         assert!(state.show_sleep_now);
         assert_eq!(state.sleep_now_label, t.sleep_display_now_action());
+    }
+
+    #[test]
+    fn timed_session_shows_remaining_countdown() {
+        let cfg = AppConfig {
+            duration: DurationPref::Hours { hours: 1 },
+            ..AppConfig::default()
+        };
+        let mut engine = Engine::new(cfg);
+        let mut h = host();
+        let _ = engine.handle(never_sleep_core::Input::Start, &h);
+        let started = panel_state(&engine.config, &engine.view(&h));
+        assert_eq!(started.elapsed_clock, "1:00:00");
+        h.monotonic_ms += 5_000;
+        h.unix_secs += 8;
+        let later = panel_state(&engine.config, &engine.view(&h));
+        assert_eq!(
+            later.elapsed_clock, "0:59:55",
+            "countdown follows monotonic time, not a jumped wall clock"
+        );
+        assert!(panel_clock_only_changed(&started, &later));
+        assert!(!panel_clock_only_changed(&started, &started));
     }
 }

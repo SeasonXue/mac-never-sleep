@@ -13,7 +13,8 @@ mod status;
 
 pub use config::{parse_duration_pref, parse_duration_pref_in, AppConfig, DurationPref};
 pub use duration::{
-    deadline_unix_secs, format_clock, format_duration, next_until_unix_secs, next_until_wallclock,
+    countdown_secs, deadline_unix_secs, elapsed_secs, format_clock, format_countdown,
+    format_duration, next_until_unix_secs, next_until_wallclock, remaining_ms,
 };
 pub use engine::{Effect, Engine, Input, PowerPlan, StopReason};
 pub use i18n::{

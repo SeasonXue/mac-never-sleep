@@ -1,5 +1,7 @@
 use crate::config::AppConfig;
-use crate::duration::{deadline_unix_secs, format_duration};
+use crate::duration::{
+    countdown_secs, deadline_unix_secs, elapsed_secs, format_duration, remaining_ms,
+};
 use crate::i18n::{Lang, Tr};
 use crate::status::{build_view_model, HostSnapshot, JsonStatus, ViewModel};
 use crate::DurationPref;
@@ -116,8 +118,8 @@ impl StopReason {
 #[derive(Debug, Clone)]
 struct Session {
     started_ms: u64,
-    _started_unix: i64,
-    _duration: DurationPref,
+    started_unix: i64,
+    duration: DurationPref,
     deadline_unix: Option<i64>,
     initial_display_off_sent: bool,
     last_sleep_display_ms: Option<u64>,
@@ -182,8 +184,8 @@ impl Engine {
             deadline_unix_secs(host.unix_secs, host.utc_offset_secs, host.unix_secs, pref);
         self.session = Some(Session {
             started_ms: host.monotonic_ms,
-            _started_unix: host.unix_secs,
-            _duration: pref,
+            started_unix: host.unix_secs,
+            duration: pref,
             deadline_unix: deadline,
             initial_display_off_sent: false,
             last_sleep_display_ms: None,
@@ -292,8 +294,24 @@ impl Engine {
             }
         }
         if let Some(deadline) = session.deadline_unix {
-            if host.unix_secs >= deadline {
-                return Some(StopReason::DurationElapsed);
+            match session.duration {
+                DurationPref::Hours { .. } => {
+                    if remaining_ms(
+                        deadline,
+                        session.started_unix,
+                        session.started_ms,
+                        host.monotonic_ms,
+                    ) == 0
+                    {
+                        return Some(StopReason::DurationElapsed);
+                    }
+                }
+                DurationPref::UntilLocal { .. } => {
+                    if host.unix_secs >= deadline {
+                        return Some(StopReason::DurationElapsed);
+                    }
+                }
+                DurationPref::Indefinite => {}
             }
         }
         None
@@ -337,8 +355,18 @@ impl Engine {
     }
 
     pub fn view(&self, host: &HostSnapshot) -> ViewModel {
-        let (started, deadline) = match &self.session {
-            Some(s) => (Some(s.started_ms), s.deadline_unix),
+        let (started, remaining) = match &self.session {
+            Some(s) => (
+                Some(s.started_ms),
+                s.deadline_unix.map(|deadline| {
+                    countdown_secs(remaining_ms(
+                        deadline,
+                        s.started_unix,
+                        s.started_ms,
+                        host.monotonic_ms,
+                    ))
+                }),
+            ),
             None => (None, None),
         };
         let last_stop = self
@@ -348,19 +376,40 @@ impl Engine {
             &self.config,
             self.is_active(),
             started,
-            deadline,
+            remaining,
             host,
             last_stop.as_deref(),
             self.display_asleep(host),
         )
     }
 
+    /// Elapsed milliseconds and optional remaining milliseconds for the UI clock.
+    pub fn session_times(&self, host: &HostSnapshot) -> Option<(u64, Option<u64>)> {
+        let session = self.session.as_ref()?;
+        let elapsed = host.monotonic_ms.saturating_sub(session.started_ms);
+        let remaining = session.deadline_unix.map(|deadline| {
+            remaining_ms(
+                deadline,
+                session.started_unix,
+                session.started_ms,
+                host.monotonic_ms,
+            )
+        });
+        Some((elapsed, remaining))
+    }
+
     pub fn json_status(&self, host: &HostSnapshot) -> JsonStatus {
         let (elapsed, remaining) = match &self.session {
             Some(s) => (
-                Some(host.monotonic_ms.saturating_sub(s.started_ms) / 1000),
-                s.deadline_unix
-                    .map(|d| d.saturating_sub(host.unix_secs) as u64),
+                Some(elapsed_secs(s.started_ms, host.monotonic_ms)),
+                s.deadline_unix.map(|d| {
+                    countdown_secs(remaining_ms(
+                        d,
+                        s.started_unix,
+                        s.started_ms,
+                        host.monotonic_ms,
+                    ))
+                }),
             ),
             None => (None, None),
         };
@@ -558,6 +607,41 @@ mod tests {
         h.unix_secs = h0.unix_secs + 3600;
         let e = eng.handle(Input::Tick, &h);
         assert!(has_release(&e));
+    }
+
+    #[test]
+    fn duration_hours_ignores_wall_clock_jump() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(2_000);
+        h.unix_secs = h0.unix_secs + 5;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(
+            !has_release(&e),
+            "a truncated or stepped wall clock must not end a 1h session after 2s"
+        );
+        assert!(eng.is_active());
+        assert_eq!(eng.json_status(&h).remaining_secs, Some(3_598));
+        assert_eq!(eng.json_status(&h).elapsed_secs, Some(2));
+    }
+
+    #[test]
+    fn duration_hours_stops_when_monotonic_elapses() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(3_600_000);
+        h.unix_secs = h0.unix_secs;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(
+            has_release(&e),
+            "Hours sessions end on elapsed monotonic time, not the wall clock"
+        );
     }
 
     #[test]
