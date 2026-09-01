@@ -7,9 +7,18 @@ use never_sleep_core::{AppConfig, DurationPref, Lang, ViewModel, DEFAULT_HOTKEY_
 /// Ignore a second Start/End click that AppKit queued from the same press.
 pub const TOGGLE_COOLDOWN_MS: u64 = 400;
 
+/// Compact utility panel; not glued to the status item.
+pub const UTILITY_WIDTH: f64 = 640.0;
+pub const UTILITY_HEIGHT: f64 = 420.0;
+pub const UTILITY_MIN_WIDTH: f64 = 560.0;
+pub const UTILITY_MIN_HEIGHT: f64 = 360.0;
+pub const SIDEBAR_WIDTH: f64 = 172.0;
+pub const DETAIL_INSET: f64 = 28.0;
+pub const DETAIL_MAX_WIDTH: f64 = 400.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelPlacement {
-    /// Titled Settings-style window. Menu-bar click shows or hides it.
+    /// Titled utility window. Menu-bar click shows or hides it.
     Independent,
 }
 
@@ -37,6 +46,62 @@ pub enum PanelView {
     Main,
     Settings,
     Help,
+}
+
+/// Sidebar destinations. Coarse `PanelView` stays for Help / Settings reachability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarItem {
+    Standby,
+    Display,
+    Lid,
+    Safeguards,
+    General,
+    Help,
+}
+
+impl SidebarItem {
+    pub const ALL: [Self; 6] = [
+        Self::Standby,
+        Self::Display,
+        Self::Lid,
+        Self::Safeguards,
+        Self::General,
+        Self::Help,
+    ];
+
+    pub fn index(self) -> isize {
+        match self {
+            Self::Standby => 0,
+            Self::Display => 1,
+            Self::Lid => 2,
+            Self::Safeguards => 3,
+            Self::General => 4,
+            Self::Help => 5,
+        }
+    }
+
+    pub fn from_index(index: isize) -> Option<Self> {
+        Self::ALL.iter().copied().find(|item| item.index() == index)
+    }
+
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Self::Standby => "moon.zzz",
+            Self::Display => "display",
+            Self::Lid => "laptopcomputer",
+            Self::Safeguards => "checkmark.shield",
+            Self::General => "gearshape",
+            Self::Help => "questionmark.circle",
+        }
+    }
+
+    pub fn as_panel_view(self) -> PanelView {
+        match self {
+            Self::Standby => PanelView::Main,
+            Self::Help => PanelView::Help,
+            Self::Display | Self::Lid | Self::Safeguards | Self::General => PanelView::Settings,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +190,12 @@ pub struct PanelState {
     pub language_label: String,
     pub hotkey_hint: String,
     pub settings: String,
+    pub sidebar_options: String,
+    pub sidebar_guide: String,
+    pub pane_display_lead: String,
+    pub pane_lid_lead: String,
+    pub pane_safeguards_lead: String,
+    pub pane_general_lead: String,
     pub back: String,
     pub screen_off_label: String,
     pub lid_awake_label: String,
@@ -196,6 +267,12 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
         language_label: t.language_menu().into(),
         hotkey_hint: t.panel_hotkey_hint(),
         settings: t.settings_title().into(),
+        sidebar_options: t.sidebar_group_options().into(),
+        sidebar_guide: t.sidebar_group_guide().into(),
+        pane_display_lead: t.pane_display_lead().into(),
+        pane_lid_lead: t.warn_lid_best_effort().into(),
+        pane_safeguards_lead: t.pane_safeguards_lead().into(),
+        pane_general_lead: t.pane_general_lead().into(),
         back: t.back().into(),
         screen_off_label: t.screen_off_now().into(),
         lid_awake_label: t.lid_awake().into(),
@@ -274,6 +351,31 @@ mod tests {
         assert_ne!(PanelView::Main, PanelView::Settings);
         assert_ne!(PanelView::Settings, PanelView::Help);
         assert_ne!(PanelView::Help, PanelView::Main);
+    }
+
+    #[test]
+    fn sidebar_lists_standby_options_and_help() {
+        assert_eq!(SidebarItem::ALL.len(), 6);
+        assert_eq!(SidebarItem::Standby.as_panel_view(), PanelView::Main);
+        assert_eq!(SidebarItem::Display.as_panel_view(), PanelView::Settings);
+        assert_eq!(SidebarItem::Help.as_panel_view(), PanelView::Help);
+        assert_eq!(SidebarItem::Standby.symbol(), "moon.zzz");
+        assert_eq!(SidebarItem::from_index(5), Some(SidebarItem::Help));
+        assert_eq!(SidebarItem::from_index(9), None);
+        for item in SidebarItem::ALL {
+            assert_eq!(SidebarItem::from_index(item.index()), Some(item));
+        }
+    }
+
+    #[test]
+    fn utility_panel_tokens_match_the_design_spec() {
+        assert_eq!(UTILITY_WIDTH, 640.0);
+        assert_eq!(UTILITY_HEIGHT, 420.0);
+        assert_eq!(UTILITY_MIN_WIDTH, 560.0);
+        assert_eq!(UTILITY_MIN_HEIGHT, 360.0);
+        assert_eq!(SIDEBAR_WIDTH, 172.0);
+        assert_eq!(DETAIL_INSET, 28.0);
+        assert_eq!(DETAIL_MAX_WIDTH, 400.0);
     }
 
     #[test]
@@ -394,6 +496,11 @@ mod tests {
         assert_eq!(state.section_general, "General");
         assert_eq!(state.language_label, "Language");
         assert_eq!(state.more_settings, "Settings");
+        assert_eq!(state.sidebar_options, "Options");
+        assert_eq!(state.sidebar_guide, "Guide");
+        assert_eq!(state.pane_display_lead, t.pane_display_lead());
+        assert_eq!(state.pane_general_lead, t.pane_general_lead());
+        assert!(state.pane_lid_lead.contains("best-effort"));
         assert_eq!(state.hotkey_hint, t.panel_hotkey_hint());
         assert_eq!(state.primary_action, t.start_standby());
         assert!(state.hotkey_hint.contains("display off"));

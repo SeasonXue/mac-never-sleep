@@ -1,5 +1,5 @@
-//! Native AppKit menu-bar panel. macOS 26 uses Liquid Glass (`NSGlassEffectView`);
-//! older releases fall back to `NSVisualEffectView` vibrancy.
+//! Native AppKit utility panel. Sidebar uses Liquid Glass / Sidebar vibrancy;
+//! the detail column is opaque so copy stays readable (Notes-like).
 
 use std::ops::Deref;
 
@@ -7,14 +7,13 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSBox, NSBoxType, NSButton, NSColor,
+    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSButton, NSCellImagePosition, NSColor,
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSGlassEffectView,
     NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
     NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView, NSSegmentSwitchTracking,
     NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment,
-    NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
-    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
-    NSWindow,
+    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
 };
 use objc2_foundation::{
     MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString,
@@ -24,7 +23,10 @@ use tao::platform::macos::WindowExtMacOS;
 use tao::window::Window;
 
 use crate::gui::{UiCommand, UserEvent};
-use crate::panel::{preferred_glass, DurationKey, GlassKind, PanelState, PanelView};
+use crate::panel::{
+    preferred_glass, DurationKey, GlassKind, PanelState, PanelView, SidebarItem, DETAIL_INSET,
+    DETAIL_MAX_WIDTH, SIDEBAR_WIDTH,
+};
 
 const TAG_RESLEEP: isize = 1;
 const TAG_BATTERY: isize = 2;
@@ -50,6 +52,13 @@ define_class!(
         #[unsafe(method(toggle:))]
         fn toggle(&self, _sender: Option<&AnyObject>) {
             self.emit(UiCommand::Toggle);
+        }
+
+        #[unsafe(method(selectPane:))]
+        fn select_pane(&self, sender: Option<&AnyObject>) {
+            let Some(sender) = sender else { return };
+            let tag: isize = unsafe { msg_send![sender, tag] };
+            self.emit(UiCommand::SelectPane { index: tag });
         }
 
         #[unsafe(method(more:))]
@@ -128,9 +137,16 @@ impl PanelTarget {
 
 pub struct NativePanel {
     _target: Retained<PanelTarget>,
-    main_view: Retained<NSView>,
-    settings_view: Retained<NSView>,
-    help_view: Retained<NSView>,
+    sidebar_buttons: Vec<Retained<NSButton>>,
+    group_standby: Retained<NSTextField>,
+    group_options: Retained<NSTextField>,
+    group_guide: Retained<NSTextField>,
+    pane_standby: Retained<NSView>,
+    pane_display: Retained<NSView>,
+    pane_lid: Retained<NSView>,
+    pane_safeguards: Retained<NSView>,
+    pane_general: Retained<NSView>,
+    pane_help: Retained<NSView>,
     glyph: Retained<NSImageView>,
     sun: Retained<NSImage>,
     moon: Retained<NSImage>,
@@ -138,40 +154,32 @@ pub struct NativePanel {
     summary: Retained<NSTextField>,
     warning: Retained<NSTextField>,
     primary: Retained<NSButton>,
-    session_header: Retained<NSTextField>,
     duration: Retained<NSPopUpButton>,
     duration_label: Retained<NSTextField>,
-    resleep_label: Retained<NSTextField>,
-    resleep: Retained<NSSwitch>,
-    battery_label: Retained<NSTextField>,
-    battery: Retained<NSSwitch>,
     hotkey_hint: Retained<NSTextField>,
-    more: Retained<NSButton>,
-    help_main: Retained<NSButton>,
-    quit_main: Retained<NSButton>,
-    settings_title: Retained<NSTextField>,
-    back: Retained<NSButton>,
-    display_header: Retained<NSTextField>,
+    display_title: Retained<NSTextField>,
+    display_lead: Retained<NSTextField>,
     screen_off_label: Retained<NSTextField>,
     screen_off: Retained<NSSwitch>,
-    lid_header: Retained<NSTextField>,
+    resleep_label: Retained<NSTextField>,
+    resleep: Retained<NSSwitch>,
+    lid_title: Retained<NSTextField>,
+    lid_lead: Retained<NSTextField>,
     lid_label: Retained<NSTextField>,
     lid: Retained<NSSwitch>,
-    resleep_settings_label: Retained<NSTextField>,
-    resleep_settings: Retained<NSSwitch>,
-    safeguards_header: Retained<NSTextField>,
+    safeguards_title: Retained<NSTextField>,
+    safeguards_lead: Retained<NSTextField>,
     lock_label: Retained<NSTextField>,
     lock: Retained<NSSwitch>,
-    battery_settings_label: Retained<NSTextField>,
-    battery_settings: Retained<NSSwitch>,
-    general_header: Retained<NSTextField>,
+    battery_label: Retained<NSTextField>,
+    battery: Retained<NSSwitch>,
+    general_title: Retained<NSTextField>,
+    general_lead: Retained<NSTextField>,
     login_label: Retained<NSTextField>,
     login: Retained<NSSwitch>,
     language_label: Retained<NSTextField>,
     language: Retained<NSSegmentedControl>,
-    help_btn: Retained<NSButton>,
     help_title: Retained<NSTextField>,
-    help_back: Retained<NSButton>,
     help_kicker: Retained<NSTextField>,
     help_lead: Retained<NSTextField>,
     help_how: Retained<NSTextField>,
@@ -185,18 +193,17 @@ pub struct NativePanel {
     help_note_lid: Retained<NSTextField>,
     help_note_battery: Retained<NSTextField>,
     help_note_quit: Retained<NSTextField>,
-    current_view: PanelView,
-    help_return: PanelView,
+    current: SidebarItem,
 }
 
 impl NativePanel {
     pub fn attach(window: &Window, proxy: EventLoopProxy<UserEvent>) -> Result<Self, String> {
         let mtm = MainThreadMarker::new().ok_or("native panel: not on the main thread")?;
         let target = PanelTarget::new(mtm, proxy);
-        let sun = load_png(include_bytes!("../ui/assets/sun.png"))?;
-        let moon = load_png(include_bytes!("../ui/assets/moon.png"))?;
-        sun.setSize(objc2_foundation::NSSize::new(32.0, 32.0));
-        moon.setSize(objc2_foundation::NSSize::new(32.0, 32.0));
+        let sun =
+            sf_symbol("sun.max", 28.0).unwrap_or(load_png(include_bytes!("../ui/assets/sun.png"))?);
+        let moon = sf_symbol("moon.zzz", 28.0)
+            .unwrap_or(load_png(include_bytes!("../ui/assets/moon.png"))?);
 
         let ns_window = unsafe { &*window.ns_window().cast::<NSWindow>() };
         ns_window.setOpaque(true);
@@ -208,17 +215,53 @@ impl NativePanel {
         let glass_ok = AnyClass::get(c"NSGlassEffectView").is_some();
         let kind = preferred_glass(glass_ok);
 
-        let pages = NSView::new(mtm);
-        fill(host, &pages);
+        let (sidebar_root, sidebar_body) = sidebar_chrome(mtm, kind);
+        let detail = NSView::new(mtm);
+        pin_split(host, nv(&*sidebar_root), &detail);
 
-        let main_view = NSView::new(mtm);
-        let settings_view = NSView::new(mtm);
-        let help_view = NSView::new(mtm);
-        fill(&pages, &main_view);
-        fill(&pages, &settings_view);
-        fill(&pages, &help_view);
-        settings_view.setHidden(true);
-        help_view.setHidden(true);
+        let group_standby = section_header(mtm);
+        let group_options = section_header(mtm);
+        let group_guide = section_header(mtm);
+        let mut sidebar_buttons = Vec::new();
+        let nav = column(mtm, 2.0, 12.0);
+        nav.setAlignment(NSLayoutAttribute::Leading);
+        arrange(&nav, &group_standby);
+        for item in [
+            SidebarItem::Standby,
+            SidebarItem::Display,
+            SidebarItem::Lid,
+            SidebarItem::Safeguards,
+            SidebarItem::General,
+            SidebarItem::Help,
+        ] {
+            if item == SidebarItem::Display {
+                arrange(&nav, &group_options);
+            }
+            if item == SidebarItem::Help {
+                arrange(&nav, &group_guide);
+            }
+            let button = sidebar_button(&target, item, mtm);
+            arrange(&nav, &button);
+            sidebar_buttons.push(button);
+        }
+        fill(&sidebar_body, nv(&*nav));
+
+        let pane_standby = NSView::new(mtm);
+        let pane_display = NSView::new(mtm);
+        let pane_lid = NSView::new(mtm);
+        let pane_safeguards = NSView::new(mtm);
+        let pane_general = NSView::new(mtm);
+        let pane_help = NSView::new(mtm);
+        for pane in [
+            &pane_standby,
+            &pane_display,
+            &pane_lid,
+            &pane_safeguards,
+            &pane_general,
+            &pane_help,
+        ] {
+            fill(&detail, pane);
+        }
 
         let glyph = NSImageView::new(mtm);
         glyph.setImage(Some(&sun));
@@ -226,49 +269,30 @@ impl NativePanel {
         glyph.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
         nv(&*glyph)
             .heightAnchor()
-            .constraintEqualToConstant(32.0)
+            .constraintEqualToConstant(28.0)
             .setActive(true);
         nv(&*glyph)
             .widthAnchor()
-            .constraintEqualToConstant(32.0)
+            .constraintEqualToConstant(28.0)
             .setActive(true);
-        nv(&*glyph).setContentHuggingPriority_forOrientation(
-            1000.0_f32,
-            NSLayoutConstraintOrientation::Horizontal,
-        );
 
-        let status_title = heading(mtm, 15.0);
+        let status_title = heading(mtm, 22.0);
         let summary = wrap(mtm);
         let warning = wrap(mtm);
         warning.setTextColor(Some(&NSColor::systemOrangeColor()));
-
         let primary = push_button(&target, sel!(toggle:), NSBezelStyle::Push, mtm);
-        fill_width(nv(&*primary));
-        nv(&*primary)
-            .heightAnchor()
-            .constraintGreaterThanOrEqualToConstant(32.0)
-            .setActive(true);
-        let session_header = section_header(mtm);
         let duration_label = label(mtm);
         let duration = NSPopUpButton::new(mtm);
         unsafe {
             duration.setTarget(Some(as_any(&target)));
             duration.setAction(Some(sel!(durationChanged:)));
         }
-        let (resleep_label, resleep, resleep_row) = labeled_switch(&target, TAG_RESLEEP, mtm);
-        let (battery_label, battery, battery_row) = labeled_switch(&target, TAG_BATTERY, mtm);
-        let duration_row = duration_row(&duration_label, duration.as_ref(), mtm);
         let hotkey_hint = footnote(mtm);
-        let more = text_button(&target, sel!(more:), mtm);
-        let help_main = text_button(&target, sel!(help:), mtm);
-        let quit_main = text_button(&target, sel!(quit:), mtm);
 
         let identity = column(mtm, 2.0, 0.0);
-        identity.setAlignment(NSLayoutAttribute::Width);
+        identity.setAlignment(NSLayoutAttribute::Leading);
         arrange(&identity, &status_title);
         arrange(&identity, &summary);
-        fill_width(nv(&*identity));
-
         let header = NSStackView::new(mtm);
         header.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
         header.setAlignment(NSLayoutAttribute::CenterY);
@@ -276,39 +300,51 @@ impl NativePanel {
         arrange(&header, &glyph);
         arrange(&header, &identity);
 
-        let main_stack = column(mtm, 12.0, 20.0);
-        main_stack.setAlignment(NSLayoutAttribute::Width);
-        arrange(&main_stack, &header);
-        arrange(&main_stack, &warning);
-        arrange(&main_stack, &primary);
-        add_grouped_section(
-            &main_stack,
-            Some(&session_header),
-            &[duration_row, resleep_row, battery_row],
-            kind,
-            mtm,
-        );
-        arrange(&main_stack, &hotkey_hint);
+        let standby_stack = detail_column(mtm);
+        arrange(&standby_stack, &header);
+        arrange(&standby_stack, &warning);
+        arrange(&standby_stack, &primary);
         arrange(
-            &main_stack,
-            &chrome_bar(&more, Some(&help_main), Some(&quit_main), mtm),
+            &standby_stack,
+            &duration_row(&duration_label, duration.as_ref(), mtm),
         );
-        fill(&main_view, &main_stack);
+        arrange(&standby_stack, &hotkey_hint);
+        pin_detail_content(&pane_standby, nv(&*standby_stack));
 
-        let back = text_button(&target, sel!(back:), mtm);
-        let settings_title = heading(mtm, 13.0);
-        let display_header = section_header(mtm);
+        let display_title = heading(mtm, 22.0);
+        let display_lead = wrap(mtm);
         let (screen_off_label, screen_off, screen_off_row) =
             labeled_switch(&target, TAG_SCREEN_OFF, mtm);
-        let (resleep_settings_label, resleep_settings, resleep_settings_row) =
-            labeled_switch(&target, TAG_RESLEEP, mtm);
-        let lid_header = section_header(mtm);
+        let (resleep_label, resleep, resleep_row) = labeled_switch(&target, TAG_RESLEEP, mtm);
+        let display_stack = detail_column(mtm);
+        arrange(&display_stack, &display_title);
+        arrange(&display_stack, &display_lead);
+        arrange(&display_stack, &screen_off_row);
+        arrange(&display_stack, &resleep_row);
+        pin_detail_content(&pane_display, nv(&*display_stack));
+
+        let lid_title = heading(mtm, 22.0);
+        let lid_lead = wrap(mtm);
         let (lid_label, lid, lid_row) = labeled_switch(&target, TAG_LID, mtm);
-        let safeguards_header = section_header(mtm);
+        let lid_stack = detail_column(mtm);
+        arrange(&lid_stack, &lid_title);
+        arrange(&lid_stack, &lid_lead);
+        arrange(&lid_stack, &lid_row);
+        pin_detail_content(&pane_lid, nv(&*lid_stack));
+
+        let safeguards_title = heading(mtm, 22.0);
+        let safeguards_lead = wrap(mtm);
         let (lock_label, lock, lock_row) = labeled_switch(&target, TAG_LOCK, mtm);
-        let (battery_settings_label, battery_settings, battery_settings_row) =
-            labeled_switch(&target, TAG_BATTERY, mtm);
-        let general_header = section_header(mtm);
+        let (battery_label, battery, battery_row) = labeled_switch(&target, TAG_BATTERY, mtm);
+        let safeguards_stack = detail_column(mtm);
+        arrange(&safeguards_stack, &safeguards_title);
+        arrange(&safeguards_stack, &safeguards_lead);
+        arrange(&safeguards_stack, &lock_row);
+        arrange(&safeguards_stack, &battery_row);
+        pin_detail_content(&pane_safeguards, nv(&*safeguards_stack));
+
+        let general_title = heading(mtm, 22.0);
+        let general_lead = wrap(mtm);
         let (login_label, login, login_row) = labeled_switch(&target, TAG_LOGIN, mtm);
         let language_label = label(mtm);
         let language = NSSegmentedControl::new(mtm);
@@ -324,72 +360,38 @@ impl NativePanel {
             750.0_f32,
             NSLayoutConstraintOrientation::Horizontal,
         );
-        let language_row = trailing_control_row(&language_label, nv(&*language), mtm);
-        let help_btn = text_button(&target, sel!(help:), mtm);
-
-        let settings_body = column(mtm, 16.0, 0.0);
-        settings_body.setAlignment(NSLayoutAttribute::Width);
-        add_grouped_section(
-            &settings_body,
-            Some(&display_header),
-            &[screen_off_row, resleep_settings_row],
-            kind,
-            mtm,
+        let general_stack = detail_column(mtm);
+        arrange(&general_stack, &general_title);
+        arrange(&general_stack, &general_lead);
+        arrange(&general_stack, &login_row);
+        arrange(
+            &general_stack,
+            &trailing_control_row(&language_label, nv(&*language), mtm),
         );
-        add_grouped_section(&settings_body, Some(&lid_header), &[lid_row], kind, mtm);
-        add_grouped_section(
-            &settings_body,
-            Some(&safeguards_header),
-            &[lock_row, battery_settings_row],
-            kind,
-            mtm,
-        );
-        add_grouped_section(
-            &settings_body,
-            Some(&general_header),
-            &[login_row, language_row],
-            kind,
-            mtm,
-        );
+        pin_detail_content(&pane_general, nv(&*general_stack));
 
-        let settings_scroll = NSScrollView::new(mtm);
-        settings_scroll.setHasVerticalScroller(true);
-        settings_scroll.setAutohidesScrollers(true);
-        settings_scroll.setDrawsBackground(false);
-        settings_scroll.setBorderType(NSBorderType::NoBorder);
-        settings_scroll.setDocumentView(Some(&settings_body));
-        pin_document_width(&settings_scroll, nv(&*settings_body));
-        stretch(nv(&*settings_scroll));
-        nv(&*settings_scroll).setContentCompressionResistancePriority_forOrientation(
-            1.0_f32,
-            NSLayoutConstraintOrientation::Vertical,
-        );
-
-        let settings_stack = column(mtm, 12.0, 20.0);
-        settings_stack.setAlignment(NSLayoutAttribute::Width);
-        arrange(&settings_stack, &header_row(&back, &settings_title, mtm));
-        arrange(&settings_stack, &settings_scroll);
-        arrange(&settings_stack, &chrome_bar(&help_btn, None, None, mtm));
-        fill(&settings_view, &settings_stack);
-
-        let help_back = text_button(&target, sel!(back:), mtm);
-        let help_title = heading(mtm, 13.0);
-        let help_kicker = heading(mtm, 12.0);
+        let help_title = heading(mtm, 22.0);
+        let help_kicker = heading(mtm, 13.0);
         let help_lead = wrap(mtm);
-        let help_how = heading(mtm, 12.0);
+        let help_how = heading(mtm, 13.0);
         let help_step1_title = heading(mtm, 13.0);
         let help_step1_detail = wrap(mtm);
         let help_step2_title = heading(mtm, 13.0);
         let help_step2_detail = wrap(mtm);
         let help_step3_title = heading(mtm, 13.0);
         let help_step3 = wrap(mtm);
-        let help_notes = heading(mtm, 12.0);
+        let help_notes = heading(mtm, 13.0);
         let help_note_lid = wrap(mtm);
         let help_note_battery = wrap(mtm);
         let help_note_quit = wrap(mtm);
-
-        let help_body = column(mtm, 8.0, 0.0);
-        help_body.setAlignment(NSLayoutAttribute::Width);
+        let help_body = detail_column(mtm);
+        help_body.setEdgeInsets(NSEdgeInsets {
+            top: 0.0,
+            left: 0.0,
+            bottom: 24.0,
+            right: 0.0,
+        });
+        arrange(&help_body, &help_title);
         arrange(&help_body, &help_kicker);
         arrange(&help_body, &help_lead);
         arrange(&help_body, &help_how);
@@ -412,22 +414,23 @@ impl NativePanel {
         scroll.setDocumentView(Some(&help_body));
         pin_document_width(&scroll, nv(&*help_body));
         stretch(nv(&*scroll));
-        nv(&*scroll).setContentCompressionResistancePriority_forOrientation(
-            1.0_f32,
-            NSLayoutConstraintOrientation::Vertical,
-        );
-
-        let help_stack = column(mtm, 10.0, 16.0);
+        let help_stack = column(mtm, 0.0, DETAIL_INSET);
         help_stack.setAlignment(NSLayoutAttribute::Width);
-        arrange(&help_stack, &header_row(&help_back, &help_title, mtm));
         arrange(&help_stack, &scroll);
-        fill(&help_view, &help_stack);
+        fill(&pane_help, nv(&*help_stack));
 
-        Ok(Self {
+        let mut panel = Self {
             _target: target,
-            main_view,
-            settings_view,
-            help_view,
+            sidebar_buttons,
+            group_standby,
+            group_options,
+            group_guide,
+            pane_standby,
+            pane_display,
+            pane_lid,
+            pane_safeguards,
+            pane_general,
+            pane_help,
             glyph,
             sun,
             moon,
@@ -435,40 +438,32 @@ impl NativePanel {
             summary,
             warning,
             primary,
-            session_header,
             duration,
             duration_label,
-            resleep_label,
-            resleep,
-            battery_label,
-            battery,
             hotkey_hint,
-            more,
-            help_main,
-            quit_main,
-            settings_title,
-            back,
-            display_header,
+            display_title,
+            display_lead,
             screen_off_label,
             screen_off,
-            lid_header,
+            resleep_label,
+            resleep,
+            lid_title,
+            lid_lead,
             lid_label,
             lid,
-            resleep_settings_label,
-            resleep_settings,
-            safeguards_header,
+            safeguards_title,
+            safeguards_lead,
             lock_label,
             lock,
-            battery_settings_label,
-            battery_settings,
-            general_header,
+            battery_label,
+            battery,
+            general_title,
+            general_lead,
             login_label,
             login,
             language_label,
             language,
-            help_btn,
             help_title,
-            help_back,
             help_kicker,
             help_lead,
             help_how,
@@ -482,9 +477,10 @@ impl NativePanel {
             help_note_lid,
             help_note_battery,
             help_note_quit,
-            current_view: PanelView::Main,
-            help_return: PanelView::Main,
-        })
+            current: SidebarItem::Standby,
+        };
+        panel.apply_view();
+        Ok(panel)
     }
 
     pub fn apply(&mut self, state: &PanelState) {
@@ -495,7 +491,6 @@ impl NativePanel {
         set_text(&self.warning, &state.warning);
         self.warning.setHidden(state.warning.is_empty());
         self.primary.setTitle(&ns(&state.primary_action));
-        set_text(&self.session_header, &state.section_session);
         set_text(&self.duration_label, &state.duration_label);
         self.duration.removeAllItems();
         self.duration
@@ -505,32 +500,44 @@ impl NativePanel {
         self.duration.addItemWithTitle(&ns(&state.duration_8h));
         self.duration.addItemWithTitle(&ns(&state.duration_until));
         self.duration.selectItemAtIndex(state.duration.index());
-        set_text(&self.resleep_label, &state.resleep);
-        set_switch(&self.resleep, state.resleep_display);
-        set_text(&self.battery_label, &state.battery);
-        set_switch(&self.battery, state.battery_floor);
         set_text(&self.hotkey_hint, &state.hotkey_hint);
-        self.more.setTitle(&ns(&state.more_settings));
-        self.help_main.setTitle(&ns(&state.help));
-        self.quit_main.setTitle(&ns(&state.quit));
 
-        set_text(&self.settings_title, &state.settings);
-        self.back.setTitle(&ns(&state.back));
-        self.back.setToolTip(Some(&ns(&state.back)));
-        set_text(&self.display_header, &state.section_display);
+        set_text(&self.group_standby, &state.section_session);
+        set_text(&self.group_options, &state.sidebar_options);
+        set_text(&self.group_guide, &state.sidebar_guide);
+        let titles = [
+            &state.section_session,
+            &state.section_display,
+            &state.section_lid,
+            &state.section_safeguards,
+            &state.section_general,
+            &state.help,
+        ];
+        for (button, title) in self.sidebar_buttons.iter().zip(titles) {
+            button.setTitle(&ns(title));
+        }
+
+        set_text(&self.display_title, &state.section_display);
+        set_text(&self.display_lead, &state.pane_display_lead);
         set_text(&self.screen_off_label, &state.screen_off_label);
         set_switch(&self.screen_off, state.screen_off);
-        set_text(&self.lid_header, &state.section_lid);
+        set_text(&self.resleep_label, &state.resleep);
+        set_switch(&self.resleep, state.resleep_display);
+
+        set_text(&self.lid_title, &state.section_lid);
+        set_text(&self.lid_lead, &state.pane_lid_lead);
         set_text(&self.lid_label, &state.lid_awake_label);
         set_switch(&self.lid, state.lid_awake);
-        set_text(&self.resleep_settings_label, &state.resleep);
-        set_switch(&self.resleep_settings, state.resleep_display);
-        set_text(&self.safeguards_header, &state.section_safeguards);
+
+        set_text(&self.safeguards_title, &state.section_safeguards);
+        set_text(&self.safeguards_lead, &state.pane_safeguards_lead);
         set_text(&self.lock_label, &state.lock_screen_label);
         set_switch(&self.lock, state.lock_screen);
-        set_text(&self.battery_settings_label, &state.battery);
-        set_switch(&self.battery_settings, state.battery_floor);
-        set_text(&self.general_header, &state.section_general);
+        set_text(&self.battery_label, &state.battery);
+        set_switch(&self.battery, state.battery_floor);
+
+        set_text(&self.general_title, &state.section_general);
+        set_text(&self.general_lead, &state.pane_general_lead);
         set_text(&self.login_label, &state.launch_at_login_label);
         set_switch(&self.login, state.launch_at_login);
         set_text(&self.language_label, &state.language_label);
@@ -540,11 +547,8 @@ impl NativePanel {
             } else {
                 0
             });
-        self.help_btn.setTitle(&ns(&state.help));
 
         set_text(&self.help_title, &state.help);
-        self.help_back.setTitle(&ns(&state.back));
-        self.help_back.setToolTip(Some(&ns(&state.back)));
         set_text(&self.help_kicker, &state.help_kicker);
         set_text(&self.help_lead, &state.help_lead);
         set_text(&self.help_how, &state.help_how);
@@ -558,39 +562,52 @@ impl NativePanel {
         set_text(&self.help_note_lid, &state.help_note_lid);
         set_text(&self.help_note_battery, &state.help_note_battery);
         set_text(&self.help_note_quit, &state.help_note_quit);
-
         self.apply_view();
     }
 
     pub fn show_help(&mut self) {
-        if self.current_view != PanelView::Help {
-            self.help_return = self.current_view;
-        }
-        self.current_view = PanelView::Help;
-        self.apply_view();
+        self.show_pane(SidebarItem::Help);
     }
 
     pub fn show_settings(&mut self) {
-        self.current_view = PanelView::Settings;
-        self.apply_view();
+        self.show_pane(SidebarItem::Display);
     }
 
     pub fn go_back(&mut self) {
-        self.current_view = match self.current_view {
-            PanelView::Help => self.help_return,
-            PanelView::Settings => PanelView::Main,
-            PanelView::Main => PanelView::Main,
-        };
+        self.show_pane(SidebarItem::Standby);
+    }
+
+    pub fn show_pane(&mut self, item: SidebarItem) {
+        self.current = item;
+        match item.as_panel_view() {
+            PanelView::Main | PanelView::Settings | PanelView::Help => {}
+        }
         self.apply_view();
     }
 
+    pub fn select_adjacent(&mut self, delta: isize) {
+        let last = SidebarItem::ALL.len() as isize - 1;
+        let next = (self.current.index() + delta).clamp(0, last);
+        if let Some(item) = SidebarItem::from_index(next) {
+            self.show_pane(item);
+        }
+    }
+
     fn apply_view(&self) {
-        self.main_view
-            .setHidden(self.current_view != PanelView::Main);
-        self.settings_view
-            .setHidden(self.current_view != PanelView::Settings);
-        self.help_view
-            .setHidden(self.current_view != PanelView::Help);
+        self.pane_standby
+            .setHidden(self.current != SidebarItem::Standby);
+        self.pane_display
+            .setHidden(self.current != SidebarItem::Display);
+        self.pane_lid.setHidden(self.current != SidebarItem::Lid);
+        self.pane_safeguards
+            .setHidden(self.current != SidebarItem::Safeguards);
+        self.pane_general
+            .setHidden(self.current != SidebarItem::General);
+        self.pane_help.setHidden(self.current != SidebarItem::Help);
+        for (index, button) in self.sidebar_buttons.iter().enumerate() {
+            let on = self.current.index() == index as isize;
+            button.setBordered(on);
+        }
     }
 }
 
@@ -606,6 +623,13 @@ fn ns(text: &str) -> Retained<NSString> {
 fn load_png(bytes: &[u8]) -> Result<Retained<NSImage>, String> {
     let data = NSData::with_bytes(bytes);
     NSImage::initWithData(NSImage::alloc(), &data).ok_or_else(|| "panel image".into())
+}
+
+fn sf_symbol(name: &str, point: f64) -> Option<Retained<NSImage>> {
+    let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&ns(name), None)?;
+    image.setSize(objc2_foundation::NSSize::new(point, point));
+    image.setTemplate(true);
+    Some(image)
 }
 
 fn nv<T: AsRef<NSView>>(obj: &T) -> &NSView {
@@ -632,13 +656,6 @@ fn stretch(view: &NSView) {
     view.setContentHuggingPriority_forOrientation(1.0_f32, NSLayoutConstraintOrientation::Vertical);
 }
 
-fn fill_width(view: &NSView) {
-    view.setContentHuggingPriority_forOrientation(
-        1.0_f32,
-        NSLayoutConstraintOrientation::Horizontal,
-    );
-}
-
 fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
     document.setTranslatesAutoresizingMaskIntoConstraints(false);
     let clip = scroll.contentView();
@@ -656,64 +673,128 @@ fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
         .setActive(true);
 }
 
-fn grouped_card(
-    mtm: MainThreadMarker,
-    kind: GlassKind,
-    rows: &[Retained<NSStackView>],
-) -> Retained<NSView> {
-    let body = column(mtm, 0.0, 8.0);
-    body.setAlignment(NSLayoutAttribute::Width);
-    for (i, row) in rows.iter().enumerate() {
-        if i > 0 {
-            arrange(&body, &separator(mtm));
-        }
-        arrange(&body, row);
-    }
+fn pin_detail_content(pane: &NSView, content: &NSView) {
+    content.setTranslatesAutoresizingMaskIntoConstraints(false);
+    pane.addSubview(content);
+    content
+        .leadingAnchor()
+        .constraintEqualToAnchor(&pane.leadingAnchor())
+        .setActive(true);
+    content
+        .topAnchor()
+        .constraintEqualToAnchor(&pane.topAnchor())
+        .setActive(true);
+    content
+        .trailingAnchor()
+        .constraintLessThanOrEqualToAnchor(&pane.trailingAnchor())
+        .setActive(true);
+    content
+        .bottomAnchor()
+        .constraintLessThanOrEqualToAnchor(&pane.bottomAnchor())
+        .setActive(true);
+}
+
+fn pin_split(host: &NSView, sidebar: &NSView, detail: &NSView) {
+    sidebar.setTranslatesAutoresizingMaskIntoConstraints(false);
+    detail.setTranslatesAutoresizingMaskIntoConstraints(false);
+    host.addSubview(sidebar);
+    host.addSubview(detail);
+    sidebar
+        .leadingAnchor()
+        .constraintEqualToAnchor(&host.leadingAnchor())
+        .setActive(true);
+    sidebar
+        .topAnchor()
+        .constraintEqualToAnchor(&host.topAnchor())
+        .setActive(true);
+    sidebar
+        .bottomAnchor()
+        .constraintEqualToAnchor(&host.bottomAnchor())
+        .setActive(true);
+    sidebar
+        .widthAnchor()
+        .constraintEqualToConstant(SIDEBAR_WIDTH)
+        .setActive(true);
+    detail
+        .leadingAnchor()
+        .constraintEqualToAnchor(&sidebar.trailingAnchor())
+        .setActive(true);
+    detail
+        .topAnchor()
+        .constraintEqualToAnchor(&host.topAnchor())
+        .setActive(true);
+    detail
+        .bottomAnchor()
+        .constraintEqualToAnchor(&host.bottomAnchor())
+        .setActive(true);
+    detail
+        .trailingAnchor()
+        .constraintEqualToAnchor(&host.trailingAnchor())
+        .setActive(true);
+}
+
+fn sidebar_chrome(mtm: MainThreadMarker, kind: GlassKind) -> (Retained<NSView>, Retained<NSView>) {
     match kind {
         GlassKind::LiquidGlass => {
             let glass = NSGlassEffectView::new(mtm);
             glass.setStyle(NSGlassEffectViewStyle::Regular);
-            glass.setCornerRadius(10.0);
-            glass.setContentView(Some(nv(&*body)));
-            Retained::into_super(glass)
+            glass.setCornerRadius(0.0);
+            let content = NSView::new(mtm);
+            content.setAutoresizingMask(
+                NSAutoresizingMaskOptions::ViewWidthSizable
+                    | NSAutoresizingMaskOptions::ViewHeightSizable,
+            );
+            glass.setContentView(Some(&content));
+            (Retained::into_super(glass), content)
         }
         GlassKind::Vibrancy => {
             let visual = NSVisualEffectView::new(mtm);
-            visual.setMaterial(NSVisualEffectMaterial::ContentBackground);
-            visual.setBlendingMode(NSVisualEffectBlendingMode::WithinWindow);
+            visual.setMaterial(NSVisualEffectMaterial::Sidebar);
+            visual.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
             visual.setState(NSVisualEffectState::Active);
-            visual.setWantsLayer(true);
-            fill(nv(&*visual), nv(&*body));
-            let card = NSBox::new(mtm);
-            card.setBoxType(NSBoxType::Custom);
-            card.setTitlePosition(NSTitlePosition::NoTitle);
-            card.setCornerRadius(10.0);
-            card.setBorderWidth(0.0);
-            card.setFillColor(&NSColor::controlBackgroundColor());
-            card.setContentView(Some(nv(&*visual)));
-            Retained::into_super(card)
+            let content = NSView::new(mtm);
+            fill(nv(&*visual), &content);
+            (Retained::into_super(visual), content)
         }
     }
 }
 
-fn add_grouped_section(
-    parent: &NSStackView,
-    header: Option<&NSTextField>,
-    rows: &[Retained<NSStackView>],
-    kind: GlassKind,
+fn sidebar_button(
+    target: &PanelTarget,
+    item: SidebarItem,
     mtm: MainThreadMarker,
-) {
-    if let Some(header) = header {
-        arrange(parent, header);
+) -> Retained<NSButton> {
+    let button = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            &ns(""),
+            Some(as_any(target)),
+            Some(sel!(selectPane:)),
+            mtm,
+        )
+    };
+    button.setBezelStyle(NSBezelStyle::AccessoryBarAction);
+    button.setBordered(false);
+    button.setAlignment(NSTextAlignment::Left);
+    button.setImagePosition(NSCellImagePosition::ImageLeading);
+    if let Some(symbol) = sf_symbol(item.symbol(), 14.0) {
+        button.setImage(Some(&symbol));
     }
-    let card = grouped_card(mtm, kind, rows);
-    arrange(parent, &card);
+    button.setTag(item.index());
+    button.setContentHuggingPriority_forOrientation(
+        1.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    button
 }
 
-fn separator(mtm: MainThreadMarker) -> Retained<NSBox> {
-    let line = NSBox::new(mtm);
-    line.setBoxType(NSBoxType::Separator);
-    line
+fn detail_column(mtm: MainThreadMarker) -> Retained<NSStackView> {
+    let stack = column(mtm, 14.0, DETAIL_INSET);
+    stack.setAlignment(NSLayoutAttribute::Leading);
+    nv(&*stack)
+        .widthAnchor()
+        .constraintLessThanOrEqualToConstant(DETAIL_MAX_WIDTH)
+        .setActive(true);
+    stack
 }
 
 fn column(mtm: MainThreadMarker, spacing: f64, inset: f64) -> Retained<NSStackView> {
@@ -758,6 +839,7 @@ fn wrap(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::secondaryLabelColor()));
     field.setAlignment(NSTextAlignment::Left);
+    field.setPreferredMaxLayoutWidth(DETAIL_MAX_WIDTH - DETAIL_INSET);
     field
 }
 
@@ -767,6 +849,7 @@ fn footnote(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(11.0)));
     field.setTextColor(Some(&NSColor::tertiaryLabelColor()));
     field.setAlignment(NSTextAlignment::Left);
+    field.setPreferredMaxLayoutWidth(DETAIL_MAX_WIDTH - DETAIL_INSET);
     field
 }
 
@@ -776,7 +859,7 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::labelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(320.0);
+    field.setPreferredMaxLayoutWidth(DETAIL_MAX_WIDTH - 80.0);
     field.setContentHuggingPriority_forOrientation(
         1.0_f32,
         NSLayoutConstraintOrientation::Horizontal,
@@ -821,15 +904,6 @@ fn push_button(
     button
 }
 
-fn text_button(target: &PanelTarget, action: Sel, mtm: MainThreadMarker) -> Retained<NSButton> {
-    let button = unsafe {
-        NSButton::buttonWithTitle_target_action(&ns(""), Some(as_any(target)), Some(action), mtm)
-    };
-    button.setBezelStyle(NSBezelStyle::AccessoryBarAction);
-    button.setBordered(false);
-    button
-}
-
 fn labeled_switch(
     target: &PanelTarget,
     tag: isize,
@@ -857,6 +931,10 @@ fn labeled_switch(
     row.setSpacing(8.0);
     arrange(&row, &caption);
     arrange(&row, &toggle);
+    nv(&*row)
+        .widthAnchor()
+        .constraintEqualToConstant(DETAIL_MAX_WIDTH - DETAIL_INSET)
+        .setActive(true);
     (caption, toggle, row)
 }
 
@@ -885,42 +963,9 @@ fn trailing_control_row(
     row.setSpacing(8.0);
     arrange(&row, caption);
     row.addArrangedSubview(control);
-    row
-}
-
-fn header_row(
-    back: &NSButton,
-    title: &NSTextField,
-    mtm: MainThreadMarker,
-) -> Retained<NSStackView> {
-    let row = NSStackView::new(mtm);
-    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    row.setAlignment(NSLayoutAttribute::CenterY);
-    row.setSpacing(8.0);
-    arrange(&row, back);
-    arrange(&row, title);
-    row
-}
-
-fn chrome_bar(
-    left: &NSButton,
-    mid: Option<&NSButton>,
-    right: Option<&NSButton>,
-    mtm: MainThreadMarker,
-) -> Retained<NSStackView> {
-    let row = NSStackView::new(mtm);
-    row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
-    row.setAlignment(NSLayoutAttribute::CenterY);
-    row.setSpacing(12.0);
-    arrange(&row, left);
-    if let Some(mid) = mid {
-        arrange(&row, mid);
-    }
-    if let Some(right) = right {
-        let spacer = NSView::new(mtm);
-        fill_width(&spacer);
-        row.addArrangedSubview(&spacer);
-        arrange(&row, right);
-    }
+    nv(&*row)
+        .widthAnchor()
+        .constraintEqualToConstant(DETAIL_MAX_WIDTH - DETAIL_INSET)
+        .setActive(true);
     row
 }

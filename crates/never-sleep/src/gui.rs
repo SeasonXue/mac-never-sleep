@@ -21,7 +21,10 @@ use tray_icon::{
 use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
-use crate::panel::{panel_placement, panel_state, PanelPlacement, PanelState, ToggleGate};
+use crate::panel::{
+    panel_placement, panel_state, PanelPlacement, PanelState, SidebarItem, ToggleGate,
+    UTILITY_HEIGHT, UTILITY_MIN_HEIGHT, UTILITY_MIN_WIDTH, UTILITY_WIDTH,
+};
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
 use crate::protocol::{IpcRequest, IpcResponse};
@@ -41,14 +44,12 @@ pub(crate) enum UiCommand {
     SetDuration { value: String },
     SetOption { key: String, enabled: bool },
     SetLanguage { language: String },
+    SelectPane { index: isize },
     Help,
     More,
     Back,
     Quit,
 }
-
-const PANEL_WIDTH: f64 = 480.0;
-const PANEL_HEIGHT: f64 = 560.0;
 
 struct Popover {
     window: Window,
@@ -65,8 +66,9 @@ impl Popover {
     ) -> Result<Self, String> {
         let window = WindowBuilder::new()
             .with_title("Never Sleep")
-            .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
-            .with_resizable(false)
+            .with_inner_size(LogicalSize::new(UTILITY_WIDTH, UTILITY_HEIGHT))
+            .with_min_inner_size(LogicalSize::new(UTILITY_MIN_WIDTH, UTILITY_MIN_HEIGHT))
+            .with_resizable(true)
             .with_decorations(true)
             .with_transparent(false)
             .with_visible(false)
@@ -114,8 +116,8 @@ impl Popover {
             return;
         };
         let scale = self.window.scale_factor();
-        let width = PANEL_WIDTH * scale;
-        let height = PANEL_HEIGHT * scale;
+        let width = UTILITY_WIDTH * scale;
+        let height = UTILITY_HEIGHT * scale;
         let origin = monitor.position();
         let size = monitor.size();
         let x = f64::from(origin.x) + (f64::from(size.width) - width) / 2.0;
@@ -156,6 +158,8 @@ struct MenuHandles {
     login: CheckMenuItem,
     lang_en: CheckMenuItem,
     lang_zh: CheckMenuItem,
+    show_window: MenuItem,
+    settings: MenuItem,
     help: MenuItem,
     quit: MenuItem,
     dur_root: Submenu,
@@ -361,10 +365,15 @@ pub fn run() {
                 event: WindowEvent::KeyboardInput { event, .. },
                 ..
             } => {
-                if event.state == ElementState::Pressed && event.logical_key == Key::Escape {
-                    if let Some(popover) = popover.as_mut() {
-                        if popover.window.id() == window_id {
-                            popover.hide();
+                if event.state == ElementState::Pressed {
+                    if let Some(panel) = popover.as_mut() {
+                        if panel.window.id() == window_id {
+                            match event.logical_key {
+                                Key::Escape => panel.hide(),
+                                Key::ArrowDown => panel.ui.select_adjacent(1),
+                                Key::ArrowUp => panel.ui.select_adjacent(-1),
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -439,6 +448,8 @@ fn build_menu(menu: &Menu, cfg: &AppConfig) -> MenuHandles {
     let lang_zh = CheckMenuItem::new(t.language_chinese(), true, cfg.lang() == Lang::Zh, None);
     let lang_root = Submenu::with_items(t.language_menu(), true, &[&lang_en, &lang_zh])
         .expect("language submenu");
+    let show_window = MenuItem::new(t.show_window(), true, None);
+    let settings = MenuItem::new(t.settings_title(), true, None);
     let help = MenuItem::new(t.help_title(), true, None);
     let quit = MenuItem::new(t.quit(), true, None);
 
@@ -448,6 +459,7 @@ fn build_menu(menu: &Menu, cfg: &AppConfig) -> MenuHandles {
         &warn,
         &PredefinedMenuItem::separator(),
         &toggle,
+        &show_window,
         &PredefinedMenuItem::separator(),
         &dur_root,
         &PredefinedMenuItem::separator(),
@@ -459,6 +471,7 @@ fn build_menu(menu: &Menu, cfg: &AppConfig) -> MenuHandles {
         &PredefinedMenuItem::separator(),
         &login,
         &lang_root,
+        &settings,
         &help,
         &PredefinedMenuItem::separator(),
         &quit,
@@ -482,6 +495,8 @@ fn build_menu(menu: &Menu, cfg: &AppConfig) -> MenuHandles {
         login,
         lang_en,
         lang_zh,
+        show_window,
+        settings,
         help,
         quit,
         dur_root,
@@ -506,6 +521,8 @@ fn apply_static_labels(handles: &MenuHandles, lang: Lang) {
         .set_text(t.battery_floor_on(DEFAULT_BATTERY_FLOOR));
     handles.login.set_text(t.launch_at_login());
     handles.lang_root.set_text(t.language_menu());
+    handles.show_window.set_text(t.show_window());
+    handles.settings.set_text(t.settings_title());
     handles.help.set_text(t.help_title());
     handles.quit.set_text(t.quit());
 }
@@ -586,6 +603,15 @@ fn handle_menu_event(
     } else if id == handles.quit.id() {
         stop_for_quit(engine, platform);
         *control_flow = ControlFlow::Exit;
+    } else if id == handles.show_window.id() {
+        if let Some(panel) = popover.as_mut() {
+            panel.show();
+        }
+    } else if id == handles.settings.id() {
+        if let Some(panel) = popover.as_mut() {
+            panel.show();
+            panel.ui.show_settings();
+        }
     } else if id == handles.help.id() {
         show_help(engine, popover);
     } else if id == handles.lang_en.id() {
@@ -706,6 +732,11 @@ fn handle_ui_command(
                 apply_static_labels(handles, lang);
             }
         }
+        UiCommand::SelectPane { index } => {
+            if let (Some(panel), Some(item)) = (popover, SidebarItem::from_index(index)) {
+                panel.ui.show_pane(item);
+            }
+        }
         UiCommand::Help => {
             show_help(engine, popover);
         }
@@ -804,10 +835,9 @@ fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcInc
 
 fn show_help(engine: &Engine, popover: Option<&mut Popover>) {
     if let Some(panel) = popover {
-        if panel.visible {
-            panel.ui.show_help();
-            return;
-        }
+        panel.show();
+        panel.ui.show_help();
+        return;
     }
     let t = engine.config.tr();
     show_dialog(&t, t.help_title(), t.onboarding());

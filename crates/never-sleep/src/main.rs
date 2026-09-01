@@ -237,6 +237,7 @@ mod tests {
     #[test]
     fn native_panel_keeps_help_settings_and_more() {
         let src = include_str!("native_panel.rs");
+        let panel = include_str!("panel.rs");
         assert!(
             src.contains("PanelView::Help"),
             "in-panel How to use view must survive native rewrite"
@@ -250,66 +251,82 @@ mod tests {
             "Settings stays reachable from the main view"
         );
         assert!(
-            src.contains("more_settings"),
+            panel.contains("more_settings"),
             "Settings label is driven by Tr"
         );
         assert!(
             src.contains("section_session"),
-            "main view groups session controls under a section header"
+            "the sidebar labels Session from PanelState"
         );
         assert!(
             src.contains("section_display"),
-            "settings groups display toggles"
+            "Display stays a sidebar destination"
         );
         assert!(
             src.contains("hotkey_hint"),
             "main view must show that the hotkey works with the display off"
         );
+        assert!(
+            src.contains("SidebarItem::Help"),
+            "How to use is a sidebar item, not a footer link"
+        );
     }
 
     #[test]
-    fn native_panel_follows_macos_settings_window() {
+    fn native_panel_follows_utility_sidebar_detail() {
         let src = include_str!("native_panel.rs");
         let gui = include_str!("gui.rs");
         assert!(
-            src.contains("constraintEqualToConstant(32.0)"),
-            "the sun/moon is a 32pt status glyph"
+            src.contains("constraintEqualToConstant(28.0)"),
+            "the sun/moon is a compact status glyph, not a hero coin"
         );
         assert!(
             !src.contains("constraintEqualToConstant(88.0)"),
-            "the 88pt hero coin is not a Settings window"
+            "the 88pt hero coin is not a utility panel"
         );
         assert!(
-            !src.contains("NSLayoutAttribute::CenterX"),
-            "Settings forms lead-align"
+            src.contains("pin_split"),
+            "the panel is a sidebar plus detail split"
+        );
+        assert!(
+            src.contains("SIDEBAR_WIDTH"),
+            "sidebar width is the shared token"
+        );
+        assert!(
+            src.contains("pin_detail_content"),
+            "detail copy is leading-pinned, not trailing-hugging"
+        );
+        assert!(
+            src.contains("imageWithSystemSymbolName"),
+            "sidebar uses SF Symbols"
+        );
+        assert!(
+            src.contains("NSVisualEffectMaterial::Sidebar"),
+            "older macOS uses Sidebar vibrancy, not a card wall"
         );
         assert!(
             src.contains("section_header"),
-            "grouped System Settings-style section headers"
+            "sidebar groups use small caps-style headers"
         );
         assert!(
-            src.contains("settings_card") || src.contains("grouped_card"),
-            "form rows sit in rounded Settings groups"
-        );
-        assert!(
-            src.contains("NSBoxType::Separator") || src.contains("separator("),
-            "groups use hairline separators between rows"
+            !src.contains("grouped_card") && !src.contains("settings_card"),
+            "do not rebuild the iOS settings card wall"
         );
         assert!(
             src.contains("windowBackgroundColor"),
-            "the window uses the standard Settings background, not a floating glass sheet"
+            "the detail column is opaque so copy stays readable"
         );
         assert!(
-            src.contains("quit_main"),
-            "Quit stays on the root of the window"
+            !src.contains("quit_main"),
+            "Quit lives in the status-item menu, not the panel chrome"
         );
         assert!(
             !src.contains("quit_settings"),
             "nested Settings must not repeat Quit (HIG)"
         );
         assert!(
-            src.contains("help_main"),
-            "How to use is reachable from the main chrome, not only Settings"
+            src.contains("show_help"),
+            "How to use stays reachable from the panel"
         );
         assert!(
             !src.contains("set_toggle_armed"),
@@ -324,8 +341,12 @@ mod tests {
             "NSBox::setFillColor takes &NSColor, not Option"
         );
         assert!(
-            gui.contains("const PANEL_WIDTH: f64 = 480.0"),
-            "Settings-style content needs ~480pt, not a menu-extra popover"
+            gui.contains("UTILITY_WIDTH"),
+            "the utility panel uses the shared 640pt token"
+        );
+        assert!(
+            gui.contains("with_resizable(true)"),
+            "the utility panel allows limited resize"
         );
         assert!(
             gui.contains("with_decorations(true)"),
@@ -346,6 +367,14 @@ mod tests {
         assert!(
             gui.contains("panel_placement"),
             "placement policy is shared with Linux-tested panel.rs"
+        );
+        assert!(
+            gui.contains("SelectPane"),
+            "sidebar clicks select a pane through UiCommand"
+        );
+        assert!(
+            gui.contains("show_window"),
+            "the status-item menu can reopen the utility panel"
         );
     }
 
@@ -461,8 +490,9 @@ mod tests {
     fn settings_rows_fill_width_and_wrap_long_captions() {
         let src = include_str!("native_panel.rs");
         assert!(
-            src.contains("NSLayoutAttribute::Width"),
-            "settings/help stacks size children to the panel inner width"
+            src.contains("NSLayoutAttribute::Width")
+                || src.contains("constraintEqualToConstant(DETAIL_MAX_WIDTH"),
+            "detail rows size to the Notes-like content column"
         );
         assert!(
             src.contains("row_caption"),
@@ -471,6 +501,10 @@ mod tests {
         assert!(
             src.contains("NSStackViewDistribution::Fill"),
             "rows give leftover width to the caption, not the switch"
+        );
+        assert!(
+            src.contains("NSTextAlignment::Left"),
+            "detail copy is leading-aligned, not trailing"
         );
     }
 

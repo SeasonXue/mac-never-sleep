@@ -141,6 +141,36 @@ impl Tr {
         self.pick("General", "通用")
     }
 
+    pub fn sidebar_group_options(self) -> &'static str {
+        self.pick("Options", "选项")
+    }
+
+    pub fn sidebar_group_guide(self) -> &'static str {
+        self.pick("Guide", "指南")
+    }
+
+    pub fn pane_display_lead(self) -> &'static str {
+        self.pick(
+            "The display sleeps for real — not brightness 0.",
+            "真·关闭屏幕，不是把亮度拉到 0。",
+        )
+    }
+
+    pub fn pane_safeguards_lead(self) -> &'static str {
+        self.pick(
+            "Lock only if you need it. End standby before the pack dies.",
+            "需要时再锁登录。电量过低时结束待命。",
+        )
+    }
+
+    pub fn pane_general_lead(self) -> &'static str {
+        self.pick("Applies to this Mac only.", "只影响这台 Mac。")
+    }
+
+    pub fn show_window(self) -> &'static str {
+        self.pick("Show Window", "显示窗口")
+    }
+
     pub fn panel_hotkey_hint(self) -> String {
         match self.lang {
             Lang::En => format!("{DEFAULT_HOTKEY_LABEL} works with the display off"),
@@ -885,6 +915,15 @@ mod tests {
         assert_eq!(zh.panel_section_safeguards(), "保护");
         assert_eq!(en.panel_section_general(), "General");
         assert_eq!(zh.panel_section_general(), "通用");
+        assert_eq!(en.sidebar_group_options(), "Options");
+        assert_eq!(zh.sidebar_group_options(), "选项");
+        assert_eq!(en.sidebar_group_guide(), "Guide");
+        assert_eq!(zh.sidebar_group_guide(), "指南");
+        assert_eq!(en.show_window(), "Show Window");
+        assert_eq!(zh.show_window(), "显示窗口");
+        assert!(en.pane_display_lead().contains("brightness"));
+        assert!(zh.pane_display_lead().contains("亮度"));
+        assert_eq!(en.pane_general_lead(), "Applies to this Mac only.");
         assert!(en.panel_hotkey_hint().contains(DEFAULT_HOTKEY_LABEL));
         assert!(zh.panel_hotkey_hint().contains(DEFAULT_HOTKEY_LABEL));
         assert!(en.panel_hotkey_hint().contains("display off"));
