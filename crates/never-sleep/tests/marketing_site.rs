@@ -1,10 +1,12 @@
-//! SEO and product-style contracts for the Cloudflare marketing site.
+//! SEO and product-style contracts for the Cloudflare path canonical.
 //!
-//! The pages are static HTML so crawlers see real copy (no JS-only body).
-//! Field names here are a publishing contract: titles, hreflang, canonical
-//! URLs, and JSON-LD types should stay stable once the site is live.
+//! Public origin is `https://xyz-ai.app/never-sleep/`, not GitHub Pages and
+//! not the `never-sleep.xyz-ai.app` subdomain. The pages are static HTML so
+//! crawlers see real copy (no JS-only body). Field names here are a
+//! publishing contract: titles, hreflang, canonical URLs, and JSON-LD types
+//! should stay stable once the site is live.
 
-const SITE: &str = "https://never-sleep.xyz-ai.app";
+const SITE_ORIGIN: &str = "https://xyz-ai.app/never-sleep";
 
 use serde_json::Value;
 use std::fs;
@@ -54,19 +56,19 @@ fn english_homepage_has_seo_contract() {
     );
     assert_eq!(
         attr(&html, r#"rel="canonical" href=""#),
-        "https://never-sleep.xyz-ai.app/"
+        format!("{SITE_ORIGIN}/")
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="en" href=""#),
-        "https://never-sleep.xyz-ai.app/"
+        format!("{SITE_ORIGIN}/")
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="zh-Hans" href=""#),
-        "https://never-sleep.xyz-ai.app/zh/"
+        format!("{SITE_ORIGIN}/zh/")
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="x-default" href=""#),
-        "https://never-sleep.xyz-ai.app/"
+        format!("{SITE_ORIGIN}/")
     );
     assert_eq!(
         attr(&html, r#"property="og:title" content=""#),
@@ -75,7 +77,7 @@ fn english_homepage_has_seo_contract() {
     assert_eq!(attr(&html, r#"property="og:type" content=""#), "website");
     assert_eq!(
         attr(&html, r#"property="og:url" content=""#),
-        "https://never-sleep.xyz-ai.app/"
+        format!("{SITE_ORIGIN}/")
     );
     assert!(
         attr(&html, r#"property="og:image" content=""#).ends_with("/og.png"),
@@ -104,15 +106,15 @@ fn chinese_homepage_mirrors_hreflang_and_uses_product_name() {
     );
     assert_eq!(
         attr(&html, r#"rel="canonical" href=""#),
-        "https://never-sleep.xyz-ai.app/zh/"
+        format!("{SITE_ORIGIN}/zh/")
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="en" href=""#),
-        "https://never-sleep.xyz-ai.app/"
+        format!("{SITE_ORIGIN}/")
     );
     assert_eq!(
         attr(&html, r#"rel="alternate" hreflang="zh-Hans" href=""#),
-        "https://never-sleep.xyz-ai.app/zh/"
+        format!("{SITE_ORIGIN}/zh/")
     );
     assert!(
         html.contains("合盖") && html.contains("尽力而为"),
@@ -266,16 +268,16 @@ fn copy_covers_everyday_use_cases_not_only_chatgpt() {
 }
 
 #[test]
-fn sitemap_and_robots_point_at_the_product_origin() {
+fn sitemap_and_robots_point_at_xyz_ai_path() {
     let robots = read("robots.txt");
     assert!(robots.contains("User-agent: *"));
     assert!(robots.contains("Allow: /"));
     assert!(
-        robots.contains(&format!("Sitemap: {SITE}/sitemap.xml")),
+        robots.contains(&format!("Sitemap: {SITE_ORIGIN}/sitemap.xml")),
         "robots.txt must advertise the sitemap"
     );
     let sitemap = read("sitemap.xml");
-    for loc in [format!("{SITE}/"), format!("{SITE}/zh/")] {
+    for loc in [format!("{SITE_ORIGIN}/"), format!("{SITE_ORIGIN}/zh/")] {
         assert!(sitemap.contains(&loc), "sitemap missing {loc}");
     }
     assert!(
@@ -643,19 +645,113 @@ fn site_is_served_from_the_custom_domain_root() {
     }
     let manifest = read("manifest.webmanifest");
     assert!(
-        manifest.contains(r#""start_url": "/""#),
-        "PWA start_url must be the domain root on Cloudflare, got {manifest}"
+        manifest.contains(r#""start_url": "/never-sleep/""#),
+        "PWA start_url must be the xyz-ai.app/never-sleep path, got {manifest}"
     );
     for name in ["README.md", "README.zh-CN.md"] {
         let text = fs::read_to_string(readme_root().join(name))
             .unwrap_or_else(|err| panic!("missing {name}: {err}"));
         assert!(
-            text.contains(SITE),
-            "{name} must link the Cloudflare origin {SITE}"
+            text.contains(SITE_ORIGIN),
+            "{name} must link the Cloudflare path canonical {SITE_ORIGIN}"
         );
         assert!(
             !text.contains("github.io"),
             "{name} must not keep the GitHub Pages URL"
         );
     }
+}
+
+#[test]
+fn public_site_urls_do_not_mention_github_pages() {
+    for rel in [
+        "index.html",
+        "zh/index.html",
+        "404.html",
+        "robots.txt",
+        "sitemap.xml",
+        "manifest.webmanifest",
+    ] {
+        let body = read(rel);
+        assert!(
+            !body.contains("seasonxue.github.io"),
+            "{rel} still advertises GitHub Pages as a public URL"
+        );
+        assert!(
+            !body.contains("never-sleep.xyz-ai.app"),
+            "{rel} still advertises the retired subdomain as a public URL"
+        );
+        // GitHub repo/release URLs keep `mac-never-sleep` in the path; those
+        // are not the GitHub Pages project prefix.
+        let without_repo = body.replace("https://github.com/SeasonXue/mac-never-sleep", "");
+        assert!(
+            !without_repo.contains("/mac-never-sleep/"),
+            "{rel} still uses the GitHub Pages path prefix"
+        );
+    }
+}
+
+#[test]
+fn json_ld_urls_use_the_xyz_ai_canonical() {
+    for (rel, page) in [
+        ("index.html", format!("{SITE_ORIGIN}/")),
+        ("zh/index.html", format!("{SITE_ORIGIN}/zh/")),
+    ] {
+        let graph = json_ld(&read(rel));
+        let nodes: Vec<&Value> = match graph.get("@graph") {
+            Some(Value::Array(items)) => items.iter().collect(),
+            _ => vec![&graph],
+        };
+        for node in &nodes {
+            if let Some(url) = node.get("url").and_then(Value::as_str) {
+                if url.starts_with("https://github.com/") {
+                    continue;
+                }
+                assert!(
+                    url.starts_with(SITE_ORIGIN),
+                    "{rel} JSON-LD url must be on the xyz-ai path, got {url}"
+                );
+            }
+            for key in ["image", "screenshot"] {
+                if let Some(url) = node.get(key).and_then(Value::as_str) {
+                    assert!(
+                        url.starts_with(&format!("{SITE_ORIGIN}/assets/")),
+                        "{rel} JSON-LD {key} must be an absolute xyz-ai asset, got {url}"
+                    );
+                }
+            }
+        }
+        let app = nodes
+            .iter()
+            .find(|node| node.get("@type").and_then(Value::as_str) == Some("SoftwareApplication"))
+            .unwrap_or_else(|| panic!("{rel} needs SoftwareApplication JSON-LD"));
+        assert_eq!(app.get("url").and_then(Value::as_str), Some(page.as_str()));
+    }
+}
+
+#[test]
+fn absolute_on_host_paths_use_the_never_sleep_prefix() {
+    let html = read("404.html");
+    assert!(html.contains("href=\"/never-sleep/\""));
+    assert!(html.contains("href=\"/never-sleep/zh/\""));
+    assert!(html.contains("href=\"/never-sleep/assets/style.css\""));
+    assert!(!html.contains("/mac-never-sleep/"));
+
+    let manifest = read("manifest.webmanifest");
+    assert!(manifest.contains("\"start_url\": \"/never-sleep/\""));
+    assert!(manifest.contains("\"scope\": \"/never-sleep/\""));
+    assert!(manifest.contains("/never-sleep/assets/app-icon.png"));
+    assert!(!manifest.contains("/mac-never-sleep/"));
+}
+
+#[test]
+fn readme_website_links_use_the_xyz_ai_canonical() {
+    let en = fs::read_to_string(readme_root().join("README.md")).unwrap();
+    let zh = fs::read_to_string(readme_root().join("README.zh-CN.md")).unwrap();
+    assert!(en.contains(&format!("{SITE_ORIGIN}/")));
+    assert!(zh.contains(&format!("{SITE_ORIGIN}/zh/")));
+    assert!(!en.contains("seasonxue.github.io"));
+    assert!(!zh.contains("seasonxue.github.io"));
+    assert!(!en.contains("never-sleep.xyz-ai.app"));
+    assert!(!zh.contains("never-sleep.xyz-ai.app"));
 }
