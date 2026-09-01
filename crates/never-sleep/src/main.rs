@@ -268,28 +268,40 @@ mod tests {
     }
 
     #[test]
-    fn native_panel_follows_macos_menu_extra_layout() {
+    fn native_panel_follows_macos_settings_window() {
         let src = include_str!("native_panel.rs");
         let gui = include_str!("gui.rs");
         assert!(
             src.contains("constraintEqualToConstant(32.0)"),
-            "the sun/moon is a 32pt status glyph, not a giant centered CTA"
+            "the sun/moon is a 32pt status glyph"
         );
         assert!(
             !src.contains("constraintEqualToConstant(88.0)"),
-            "the 88pt hero coin is not macOS menu-extra practice"
+            "the 88pt hero coin is not a Settings window"
         );
         assert!(
             !src.contains("NSLayoutAttribute::CenterX"),
-            "menu extras lead-align; do not center the main stack"
+            "Settings forms lead-align"
         );
         assert!(
             src.contains("section_header"),
             "grouped System Settings-style section headers"
         );
         assert!(
+            src.contains("settings_card") || src.contains("grouped_card"),
+            "form rows sit in rounded Settings groups"
+        );
+        assert!(
+            src.contains("NSBoxType::Separator") || src.contains("separator("),
+            "groups use hairline separators between rows"
+        );
+        assert!(
+            src.contains("windowBackgroundColor"),
+            "the window uses the standard Settings background, not a floating glass sheet"
+        );
+        assert!(
             src.contains("quit_main"),
-            "Quit stays on the root of the menu extra"
+            "Quit stays on the root of the window"
         );
         assert!(
             !src.contains("quit_settings"),
@@ -300,12 +312,36 @@ mod tests {
             "How to use is reachable from the main chrome, not only Settings"
         );
         assert!(
-            gui.contains("const POPOVER_WIDTH: f64 = 300.0"),
-            "menu extras are compact (~300pt), not a 320pt iOS card"
+            !src.contains("set_toggle_armed"),
+            "End Standby must stay enabled; do not gray out the primary button"
         );
         assert!(
-            gui.contains("const POPOVER_HEIGHT: f64 = 400.0"),
-            "the shorter panel matches Control Center density"
+            src.contains("NSBezelStyle::Push"),
+            "the primary action is a standard push button, not Glass (which looks disabled)"
+        );
+        assert!(
+            gui.contains("const PANEL_WIDTH: f64 = 480.0"),
+            "Settings-style content needs ~480pt, not a menu-extra popover"
+        );
+        assert!(
+            gui.contains("with_decorations(true)"),
+            "the panel is a normal titled window"
+        );
+        assert!(
+            !gui.contains("with_always_on_top(true)"),
+            "a normal window is not pinned to the menu bar"
+        );
+        assert!(
+            !gui.contains("toggle_at"),
+            "do not anchor the window to the status item"
+        );
+        assert!(
+            !gui.contains("Focused(false)"),
+            "losing key status must not dismiss a real window"
+        );
+        assert!(
+            gui.contains("panel_placement"),
+            "placement policy is shared with Linux-tested panel.rs"
         );
     }
 
@@ -444,6 +480,10 @@ mod tests {
         assert!(
             gui.contains("take_click()"),
             "double-click must not emit a second Input::Toggle before refresh"
+        );
+        assert!(
+            !gui.contains("set_toggle_armed"),
+            "the primary button stays enabled so End Standby is never grayed out"
         );
     }
 }

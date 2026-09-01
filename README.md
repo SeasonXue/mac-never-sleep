@@ -8,7 +8,7 @@ The UI is **English by default**, with Simplified Chinese when the system langua
 
 ## A look at the app
 
-One left-click on the menu-bar sun opens a native AppKit panel. Press **Start Screen-Off Standby** — the glyph flips to a moon and the display goes dark about 1.5 seconds later. The panel follows macOS menu-extra layout (Liquid Glass, with vibrancy on older macOS).
+One left-click on the menu-bar sun opens a normal titled window (not a popover stuck to the icon). Press **Start Screen-Off Standby** — the glyph flips to a moon and the display goes dark about 1.5 seconds later. Close the window or click the icon again to hide it; **End Standby** stays clickable while a session is running.
 
 <table>
   <tr>
@@ -85,7 +85,7 @@ cargo build -p never-sleep --release
 open "dist/Never Sleep.app"
 ```
 
-An anthropomorphic sun appears in the menu bar. Left-click it to open the control panel, then press **Start Screen-Off Standby**. The status glyph flips to a moon before the display turns off about 1.5 seconds later; press **End Standby** (or the glyph) to stop. Right-click keeps the native fallback menu available.
+An anthropomorphic sun appears in the menu bar. Left-click it to open a Settings-style window, then press **Start Screen-Off Standby**. The status glyph flips to a moon before the display turns off about 1.5 seconds later; press **End Standby** to stop. Close the window (or click the icon again) to hide it — that does not end standby. Right-click keeps the native fallback menu available.
 
 | Option | Default | Meaning |
 | --- | --- | --- |

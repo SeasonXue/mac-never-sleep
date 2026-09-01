@@ -1,6 +1,21 @@
 //! Menu-bar panel copy and navigation, kept free of AppKit so Linux CI can lock it.
 
+use std::time::{Duration, Instant};
+
 use never_sleep_core::{AppConfig, DurationPref, Lang, ViewModel, DEFAULT_HOTKEY_LABEL};
+
+/// Ignore a second Start/End click that AppKit queued from the same press.
+pub const TOGGLE_COOLDOWN_MS: u64 = 400;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelPlacement {
+    /// Titled Settings-style window. Menu-bar click shows or hides it.
+    Independent,
+}
+
+pub fn panel_placement() -> PanelPlacement {
+    PanelPlacement::Independent
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlassKind {
@@ -204,28 +219,28 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
     }
 }
 
-/// Ignores extra panel toggle clicks until the next UI refresh cycle.
+/// Ignores extra panel toggle clicks for a short cooldown.
 ///
 /// AppKit can queue two `toggle:` actions from a double-click before the first
-/// `refresh_ui` paints. The old WebView disabled the control while a request
-/// was in flight; this is that guard without WKWebView.
+/// `refresh_ui` paints. The control stays enabled so End Standby is never grayed
+/// out waiting for the heartbeat.
 #[derive(Debug, Default)]
 pub struct ToggleGate {
-    armed: bool,
+    locked_until: Option<Instant>,
 }
 
 impl ToggleGate {
     pub fn take_click(&mut self) -> bool {
-        if self.armed {
-            false
-        } else {
-            self.armed = true;
-            true
-        }
+        self.take_click_at(Instant::now())
     }
 
-    pub fn release(&mut self) {
-        self.armed = false;
+    pub fn take_click_at(&mut self, now: Instant) -> bool {
+        if self.locked_until.is_some_and(|until| now < until) {
+            false
+        } else {
+            self.locked_until = Some(now + Duration::from_millis(TOGGLE_COOLDOWN_MS));
+            true
+        }
     }
 }
 
@@ -262,21 +277,32 @@ mod tests {
     }
 
     #[test]
-    fn toggle_gate_ignores_clicks_until_refresh() {
+    fn panel_placement_is_an_independent_window() {
+        assert_eq!(panel_placement(), PanelPlacement::Independent);
+    }
+
+    #[test]
+    fn toggle_gate_ignores_clicks_until_cooldown() {
         let mut gate = ToggleGate::default();
+        let t0 = Instant::now();
         assert!(
-            gate.take_click(),
-            "the first sun/primary click must start standby"
+            gate.take_click_at(t0),
+            "the first primary click must start standby"
         );
         assert!(
-            !gate.take_click(),
+            !gate.take_click_at(t0 + Duration::from_millis(10)),
             "a queued double-click must not toggle standby back off"
         );
-        assert!(!gate.take_click());
-        gate.release();
+        assert!(!gate.take_click_at(t0 + Duration::from_millis(200)));
         assert!(
-            gate.take_click(),
-            "after refresh the control is armed again"
+            gate.take_click_at(t0 + Duration::from_millis(TOGGLE_COOLDOWN_MS)),
+            "End Standby must work after a short pause without waiting for heartbeat"
+        );
+        let mut live = ToggleGate::default();
+        assert!(live.take_click());
+        assert!(
+            !live.take_click(),
+            "the production take_click path must share the same cooldown"
         );
     }
 

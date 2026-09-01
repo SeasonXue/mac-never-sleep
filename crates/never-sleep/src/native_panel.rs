@@ -7,13 +7,14 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
 use objc2::{define_class, msg_send, sel, AllocAnyThread, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSButton, NSCellImagePosition, NSColor,
+    NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSBox, NSBoxType, NSButton, NSColor,
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSGlassEffectView,
-    NSGlassEffectViewStyle, NSImage, NSImageScaling, NSLayoutAttribute,
+    NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
     NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView, NSSegmentSwitchTracking,
     NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment,
-    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
+    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
+    NSWindow,
 };
 use objc2_foundation::{
     MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString,
@@ -127,12 +128,10 @@ impl PanelTarget {
 
 pub struct NativePanel {
     _target: Retained<PanelTarget>,
-    glass: Option<Retained<NSGlassEffectView>>,
-    vibrancy: Option<Retained<NSVisualEffectView>>,
     main_view: Retained<NSView>,
     settings_view: Retained<NSView>,
     help_view: Retained<NSView>,
-    hero: Retained<NSButton>,
+    glyph: Retained<NSImageView>,
     sun: Retained<NSImage>,
     moon: Retained<NSImage>,
     status_title: Retained<NSTextField>,
@@ -200,8 +199,8 @@ impl NativePanel {
         moon.setSize(objc2_foundation::NSSize::new(32.0, 32.0));
 
         let ns_window = unsafe { &*window.ns_window().cast::<NSWindow>() };
-        ns_window.setOpaque(false);
-        ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
+        ns_window.setOpaque(true);
+        ns_window.setBackgroundColor(Some(&NSColor::windowBackgroundColor()));
 
         let host = unsafe { &*window.ns_view().cast::<NSView>() };
         host.setWantsLayer(true);
@@ -209,35 +208,8 @@ impl NativePanel {
         let glass_ok = AnyClass::get(c"NSGlassEffectView").is_some();
         let kind = preferred_glass(glass_ok);
 
-        let (root, glass, vibrancy) = match kind {
-            GlassKind::LiquidGlass => {
-                let glass = NSGlassEffectView::new(mtm);
-                glass.setStyle(NSGlassEffectViewStyle::Regular);
-                glass.setCornerRadius(12.0);
-                let content = NSView::new(mtm);
-                content.setAutoresizingMask(
-                    NSAutoresizingMaskOptions::ViewWidthSizable
-                        | NSAutoresizingMaskOptions::ViewHeightSizable,
-                );
-                glass.setContentView(Some(&content));
-                fill(host, nv(&*glass));
-                (content, Some(glass), None)
-            }
-            GlassKind::Vibrancy => {
-                let visual = NSVisualEffectView::new(mtm);
-                visual.setMaterial(NSVisualEffectMaterial::Popover);
-                visual.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-                visual.setState(NSVisualEffectState::Active);
-                visual.setWantsLayer(true);
-                fill(host, nv(&*visual));
-                let content = NSView::new(mtm);
-                fill(nv(&*visual), &content);
-                (content, None, Some(visual))
-            }
-        };
-
         let pages = NSView::new(mtm);
-        fill(&root, &pages);
+        fill(host, &pages);
 
         let main_view = NSView::new(mtm);
         let settings_view = NSView::new(mtm);
@@ -248,25 +220,19 @@ impl NativePanel {
         settings_view.setHidden(true);
         help_view.setHidden(true);
 
-        let hero = unsafe {
-            NSButton::buttonWithImage_target_action(
-                &sun,
-                Some(as_any(&target)),
-                Some(sel!(toggle:)),
-                mtm,
-            )
-        };
-        hero.setBordered(false);
-        hero.setImagePosition(NSCellImagePosition::ImageOnly);
-        hero.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
-        hero.setFrameSize(objc2_foundation::NSSize::new(32.0, 32.0));
-        hero.heightAnchor()
+        let glyph = NSImageView::new(mtm);
+        glyph.setImage(Some(&sun));
+        glyph.setEditable(false);
+        glyph.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+        nv(&*glyph)
+            .heightAnchor()
             .constraintEqualToConstant(32.0)
             .setActive(true);
-        hero.widthAnchor()
+        nv(&*glyph)
+            .widthAnchor()
             .constraintEqualToConstant(32.0)
             .setActive(true);
-        nv(&*hero).setContentHuggingPriority_forOrientation(
+        nv(&*glyph).setContentHuggingPriority_forOrientation(
             1000.0_f32,
             NSLayoutConstraintOrientation::Horizontal,
         );
@@ -276,13 +242,12 @@ impl NativePanel {
         let warning = wrap(mtm);
         warning.setTextColor(Some(&NSColor::systemOrangeColor()));
 
-        let primary_style = if glass_ok {
-            NSBezelStyle::Glass
-        } else {
-            NSBezelStyle::Push
-        };
-        let primary = push_button(&target, sel!(toggle:), primary_style, mtm);
+        let primary = push_button(&target, sel!(toggle:), NSBezelStyle::Push, mtm);
         fill_width(nv(&*primary));
+        nv(&*primary)
+            .heightAnchor()
+            .constraintGreaterThanOrEqualToConstant(32.0)
+            .setActive(true);
         let session_header = section_header(mtm);
         let duration_label = label(mtm);
         let duration = NSPopUpButton::new(mtm);
@@ -292,6 +257,7 @@ impl NativePanel {
         }
         let (resleep_label, resleep, resleep_row) = labeled_switch(&target, TAG_RESLEEP, mtm);
         let (battery_label, battery, battery_row) = labeled_switch(&target, TAG_BATTERY, mtm);
+        let duration_row = duration_row(&duration_label, duration.as_ref(), mtm);
         let hotkey_hint = footnote(mtm);
         let more = text_button(&target, sel!(more:), mtm);
         let help_main = text_button(&target, sel!(help:), mtm);
@@ -306,22 +272,22 @@ impl NativePanel {
         let header = NSStackView::new(mtm);
         header.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
         header.setAlignment(NSLayoutAttribute::CenterY);
-        header.setSpacing(10.0);
-        arrange(&header, &hero);
+        header.setSpacing(12.0);
+        arrange(&header, &glyph);
         arrange(&header, &identity);
 
-        let main_stack = column(mtm, 10.0, 16.0);
+        let main_stack = column(mtm, 12.0, 20.0);
         main_stack.setAlignment(NSLayoutAttribute::Width);
         arrange(&main_stack, &header);
         arrange(&main_stack, &warning);
         arrange(&main_stack, &primary);
-        arrange(&main_stack, &session_header);
-        arrange(
+        add_grouped_section(
             &main_stack,
-            &duration_row(&duration_label, duration.as_ref(), mtm),
+            Some(&session_header),
+            &[duration_row, resleep_row, battery_row],
+            kind,
+            mtm,
         );
-        arrange(&main_stack, &resleep_row);
-        arrange(&main_stack, &battery_row);
         arrange(&main_stack, &hotkey_hint);
         arrange(
             &main_stack,
@@ -358,23 +324,32 @@ impl NativePanel {
             750.0_f32,
             NSLayoutConstraintOrientation::Horizontal,
         );
+        let language_row = trailing_control_row(&language_label, nv(&*language), mtm);
         let help_btn = text_button(&target, sel!(help:), mtm);
 
-        let settings_body = column(mtm, 8.0, 0.0);
+        let settings_body = column(mtm, 16.0, 0.0);
         settings_body.setAlignment(NSLayoutAttribute::Width);
-        arrange(&settings_body, &display_header);
-        arrange(&settings_body, &screen_off_row);
-        arrange(&settings_body, &resleep_settings_row);
-        arrange(&settings_body, &lid_header);
-        arrange(&settings_body, &lid_row);
-        arrange(&settings_body, &safeguards_header);
-        arrange(&settings_body, &lock_row);
-        arrange(&settings_body, &battery_settings_row);
-        arrange(&settings_body, &general_header);
-        arrange(&settings_body, &login_row);
-        arrange(
+        add_grouped_section(
             &settings_body,
-            &trailing_control_row(&language_label, nv(&*language), mtm),
+            Some(&display_header),
+            &[screen_off_row, resleep_settings_row],
+            kind,
+            mtm,
+        );
+        add_grouped_section(&settings_body, Some(&lid_header), &[lid_row], kind, mtm);
+        add_grouped_section(
+            &settings_body,
+            Some(&safeguards_header),
+            &[lock_row, battery_settings_row],
+            kind,
+            mtm,
+        );
+        add_grouped_section(
+            &settings_body,
+            Some(&general_header),
+            &[login_row, language_row],
+            kind,
+            mtm,
         );
 
         let settings_scroll = NSScrollView::new(mtm);
@@ -390,7 +365,7 @@ impl NativePanel {
             NSLayoutConstraintOrientation::Vertical,
         );
 
-        let settings_stack = column(mtm, 10.0, 16.0);
+        let settings_stack = column(mtm, 12.0, 20.0);
         settings_stack.setAlignment(NSLayoutAttribute::Width);
         arrange(&settings_stack, &header_row(&back, &settings_title, mtm));
         arrange(&settings_stack, &settings_scroll);
@@ -450,12 +425,10 @@ impl NativePanel {
 
         Ok(Self {
             _target: target,
-            glass,
-            vibrancy,
             main_view,
             settings_view,
             help_view,
-            hero,
+            glyph,
             sun,
             moon,
             status_title,
@@ -515,9 +488,8 @@ impl NativePanel {
     }
 
     pub fn apply(&mut self, state: &PanelState) {
-        self.hero
+        self.glyph
             .setImage(Some(if state.active { &self.moon } else { &self.sun }));
-        self.hero.setToolTip(Some(&ns(&state.primary_action)));
         set_text(&self.status_title, &state.status_title);
         set_text(&self.summary, &state.summary);
         set_text(&self.warning, &state.warning);
@@ -587,20 +559,6 @@ impl NativePanel {
         set_text(&self.help_note_battery, &state.help_note_battery);
         set_text(&self.help_note_quit, &state.help_note_quit);
 
-        if let Some(glass) = &self.glass {
-            if state.active {
-                glass.setTintColor(Some(&NSColor::blackColor().colorWithAlphaComponent(0.28)));
-            } else {
-                glass.setTintColor(None);
-            }
-        }
-        if let Some(visual) = &self.vibrancy {
-            visual.setMaterial(if state.active {
-                NSVisualEffectMaterial::HUDWindow
-            } else {
-                NSVisualEffectMaterial::Popover
-            });
-        }
         self.apply_view();
     }
 
@@ -633,11 +591,6 @@ impl NativePanel {
             .setHidden(self.current_view != PanelView::Settings);
         self.help_view
             .setHidden(self.current_view != PanelView::Help);
-    }
-
-    pub fn set_toggle_armed(&self, armed: bool) {
-        self.hero.setEnabled(!armed);
-        self.primary.setEnabled(!armed);
     }
 }
 
@@ -703,6 +656,66 @@ fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
         .setActive(true);
 }
 
+fn grouped_card(
+    mtm: MainThreadMarker,
+    kind: GlassKind,
+    rows: &[Retained<NSStackView>],
+) -> Retained<NSView> {
+    let body = column(mtm, 0.0, 8.0);
+    body.setAlignment(NSLayoutAttribute::Width);
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 {
+            arrange(&body, &separator(mtm));
+        }
+        arrange(&body, row);
+    }
+    match kind {
+        GlassKind::LiquidGlass => {
+            let glass = NSGlassEffectView::new(mtm);
+            glass.setStyle(NSGlassEffectViewStyle::Regular);
+            glass.setCornerRadius(10.0);
+            glass.setContentView(Some(nv(&*body)));
+            Retained::into_super(glass)
+        }
+        GlassKind::Vibrancy => {
+            let visual = NSVisualEffectView::new(mtm);
+            visual.setMaterial(NSVisualEffectMaterial::ContentBackground);
+            visual.setBlendingMode(NSVisualEffectBlendingMode::WithinWindow);
+            visual.setState(NSVisualEffectState::Active);
+            visual.setWantsLayer(true);
+            fill(nv(&*visual), nv(&*body));
+            let card = NSBox::new(mtm);
+            card.setBoxType(NSBoxType::Custom);
+            card.setTitlePosition(NSTitlePosition::NoTitle);
+            card.setCornerRadius(10.0);
+            card.setBorderWidth(0.0);
+            card.setFillColor(Some(&NSColor::controlBackgroundColor()));
+            card.setContentView(Some(nv(&*visual)));
+            Retained::into_super(card)
+        }
+    }
+}
+
+fn add_grouped_section(
+    parent: &NSStackView,
+    header: Option<&NSTextField>,
+    rows: &[Retained<NSStackView>],
+    kind: GlassKind,
+    mtm: MainThreadMarker,
+) {
+    if let Some(header) = header {
+        arrange(parent, header);
+    }
+    let card = grouped_card(mtm, kind, rows);
+    arrange(parent, &card);
+}
+
+fn separator(mtm: MainThreadMarker) -> Retained<NSBox> {
+    let line = NSBox::new(mtm);
+    line.setBoxType(NSBoxType::Separator);
+    line
+}
+
 fn column(mtm: MainThreadMarker, spacing: f64, inset: f64) -> Retained<NSStackView> {
     let stack = NSStackView::new(mtm);
     stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
@@ -763,7 +776,7 @@ fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::labelColor()));
     field.setAlignment(NSTextAlignment::Left);
-    field.setPreferredMaxLayoutWidth(200.0);
+    field.setPreferredMaxLayoutWidth(320.0);
     field.setContentHuggingPriority_forOrientation(
         1.0_f32,
         NSLayoutConstraintOrientation::Horizontal,

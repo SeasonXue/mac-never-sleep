@@ -21,7 +21,7 @@ use tray_icon::{
 use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
-use crate::panel::{panel_state, PanelState, ToggleGate};
+use crate::panel::{panel_placement, panel_state, PanelPlacement, PanelState, ToggleGate};
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
 use crate::protocol::{IpcRequest, IpcResponse};
@@ -47,13 +47,14 @@ pub(crate) enum UiCommand {
     Quit,
 }
 
-const POPOVER_WIDTH: f64 = 300.0;
-const POPOVER_HEIGHT: f64 = 400.0;
+const PANEL_WIDTH: f64 = 480.0;
+const PANEL_HEIGHT: f64 = 560.0;
 
 struct Popover {
     window: Window,
     ui: native_panel::NativePanel,
     visible: bool,
+    placed: bool,
     last: Option<PanelState>,
 }
 
@@ -64,16 +65,16 @@ impl Popover {
     ) -> Result<Self, String> {
         let window = WindowBuilder::new()
             .with_title("Never Sleep")
-            .with_inner_size(LogicalSize::new(POPOVER_WIDTH, POPOVER_HEIGHT))
+            .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
             .with_resizable(false)
-            .with_decorations(false)
-            .with_transparent(true)
+            .with_decorations(true)
+            .with_transparent(false)
             .with_visible(false)
-            .with_always_on_top(true)
-            .with_has_shadow(false)
+            .with_always_on_top(false)
+            .with_has_shadow(true)
             .with_movable_by_window_background(false)
             .build(event_loop)
-            .map_err(|e| format!("popover window: {e}"))?;
+            .map_err(|e| format!("panel window: {e}"))?;
 
         let ui = native_panel::NativePanel::attach(&window, proxy)?;
 
@@ -81,46 +82,46 @@ impl Popover {
             window,
             ui,
             visible: false,
+            placed: false,
             last: None,
         })
     }
 
-    fn toggle_at(&mut self, rect: TrayRect) {
+    fn toggle_visible(&mut self) {
         if self.visible {
             self.hide();
-            return;
+        } else {
+            self.show();
         }
+    }
 
-        let scale = self.window.scale_factor();
-        let width = POPOVER_WIDTH * scale;
-        let anchor_x = rect.position.x + f64::from(rect.size.width) / 2.0;
-        let desired_x = anchor_x - width / 2.0;
-        let x = self
-            .window
-            .available_monitors()
-            .find(|monitor| {
-                let position = monitor.position();
-                let size = monitor.size();
-                anchor_x >= f64::from(position.x)
-                    && anchor_x <= f64::from(position.x) + f64::from(size.width)
-                    && rect.position.y >= f64::from(position.y)
-                    && rect.position.y <= f64::from(position.y) + f64::from(size.height)
-            })
-            .map(|monitor| {
-                let position = monitor.position();
-                let size = monitor.size();
-                let margin = 8.0 * scale;
-                let min_x = f64::from(position.x) + margin;
-                let max_x = f64::from(position.x) + f64::from(size.width) - width - margin;
-                desired_x.clamp(min_x, max_x.max(min_x))
-            })
-            .unwrap_or(desired_x);
-        let y = rect.position.y + f64::from(rect.size.height) + 4.0 * scale;
-        self.window
-            .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+    fn show(&mut self) {
+        if !self.placed && panel_placement() == PanelPlacement::Independent {
+            self.center_on_screen();
+            self.placed = true;
+        }
         self.window.set_visible(true);
         self.window.set_focus();
         self.visible = true;
+    }
+
+    fn center_on_screen(&self) {
+        let Some(monitor) = self
+            .window
+            .primary_monitor()
+            .or_else(|| self.window.current_monitor())
+        else {
+            return;
+        };
+        let scale = self.window.scale_factor();
+        let width = PANEL_WIDTH * scale;
+        let height = PANEL_HEIGHT * scale;
+        let origin = monitor.position();
+        let size = monitor.size();
+        let x = f64::from(origin.x) + (f64::from(size.width) - width) / 2.0;
+        let y = f64::from(origin.y) + (f64::from(size.height) - height) / 3.0;
+        self.window
+            .set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
     }
 
     fn hide(&mut self) {
@@ -281,10 +282,6 @@ pub fn run() {
                         &engine,
                         platform.as_mut(),
                     );
-                    toggle_gate.release();
-                    if let Some(panel) = popover.as_mut() {
-                        panel.ui.set_toggle_armed(false);
-                    }
                 }
             }
             Event::UserEvent(UserEvent::Menu(id)) => {
@@ -316,7 +313,7 @@ pub fn run() {
                     platform.as_mut(),
                 );
             }
-            Event::UserEvent(UserEvent::Tray(rect)) => {
+            Event::UserEvent(UserEvent::Tray(_rect)) => {
                 refresh_ui(
                     &handles,
                     &mut tray,
@@ -326,7 +323,7 @@ pub fn run() {
                     platform.as_mut(),
                 );
                 if let Some(panel) = popover.as_mut() {
-                    panel.toggle_at(rect);
+                    panel.toggle_visible();
                 }
             }
             Event::UserEvent(UserEvent::Ui(command)) => {
@@ -350,7 +347,7 @@ pub fn run() {
             }
             Event::WindowEvent {
                 window_id,
-                event: WindowEvent::Focused(false) | WindowEvent::CloseRequested,
+                event: WindowEvent::CloseRequested,
                 ..
             } => {
                 if let Some(popover) = popover.as_mut() {
@@ -658,9 +655,6 @@ fn handle_ui_command(
         UiCommand::Toggle => {
             if !toggle_gate.take_click() {
                 return;
-            }
-            if let Some(panel) = popover.as_mut() {
-                panel.ui.set_toggle_armed(true);
             }
             dispatch(engine, platform, Input::Toggle);
         }
