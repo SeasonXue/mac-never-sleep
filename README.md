@@ -8,7 +8,7 @@ The UI is **English by default**, with Simplified Chinese when the system langua
 
 ## A look at the app
 
-One left-click on the menu-bar sun opens the panel. Tap the big sun to start — it flips to a moon and the display goes dark about 1.5 seconds later. Everything lives in one small, native-feeling popover.
+One left-click on the menu-bar sun opens a native AppKit panel. Tap the large sun to start — it flips to a moon and the display goes dark about 1.5 seconds later. The panel uses system Liquid Glass (with vibrancy on older macOS).
 
 <table>
   <tr>

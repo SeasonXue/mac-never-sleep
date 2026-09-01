@@ -172,7 +172,7 @@ fn pages_reuse_popover_color_tokens_and_system_fonts() {
     );
     assert!(
         !css.contains("backdrop-filter"),
-        "product UI dropped frosted glass; do not bring it back on the site"
+        "marketing pages stay opaque; liquid glass lives in the AppKit panel"
     );
 }
 

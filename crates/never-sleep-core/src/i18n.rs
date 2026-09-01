@@ -101,6 +101,26 @@ impl Tr {
         self.pick("Screen-Off Standby", "关屏待命中")
     }
 
+    pub fn panel_summary_idle(self) -> &'static str {
+        self.pick("Display off, Mac stays online", "屏幕将关闭，Mac 保持在线")
+    }
+
+    pub fn panel_summary_active(self) -> &'static str {
+        self.pick("Display asleep, Mac stays online", "屏幕已休眠，Mac 仍在线")
+    }
+
+    pub fn more_settings(self) -> &'static str {
+        self.pick("More Settings", "更多设置")
+    }
+
+    pub fn settings_title(self) -> &'static str {
+        self.pick("Settings", "设置")
+    }
+
+    pub fn back(self) -> &'static str {
+        self.pick("Back", "返回")
+    }
+
     pub fn onboarding(self) -> &'static str {
         self.pick(ONBOARDING_EN, ONBOARDING_ZH)
     }
@@ -809,6 +829,25 @@ mod tests {
         assert_eq!(zh.start_standby(), "开始关屏待命");
         assert_eq!(zh.panel_active_title(), "关屏待命中");
         assert_eq!(zh.end_standby(), "结束待命");
+    }
+
+    #[test]
+    fn panel_chrome_strings_are_bilingual() {
+        let en = Tr::new(Lang::En);
+        let zh = Tr::new(Lang::Zh);
+        assert_eq!(en.panel_summary_idle(), "Display off, Mac stays online");
+        assert_eq!(zh.panel_summary_idle(), "屏幕将关闭，Mac 保持在线");
+        assert_eq!(
+            en.panel_summary_active(),
+            "Display asleep, Mac stays online"
+        );
+        assert_eq!(zh.panel_summary_active(), "屏幕已休眠，Mac 仍在线");
+        assert_eq!(en.more_settings(), "More Settings");
+        assert_eq!(zh.more_settings(), "更多设置");
+        assert_eq!(en.settings_title(), "Settings");
+        assert_eq!(zh.settings_title(), "设置");
+        assert_eq!(en.back(), "Back");
+        assert_eq!(zh.back(), "返回");
     }
 
     #[test]

@@ -27,20 +27,20 @@ scripts/                  package-macos.sh, icon generation
 .github/workflows/ci.yml  fmt + clippy + tests on Linux; test/build/package on macOS
 ```
 
-`never-sleep-core` must not depend on AppKit, IOKit, tao, wry, or tray-icon. The engine only emits `Effect`s (`ApplyPower`, `ReleasePower`, `SleepDisplay`, `LockSession`, `Notify`). The platform crate applies them.
+`never-sleep-core` must not depend on AppKit, IOKit, tao, or tray-icon. The engine only emits `Effect`s (`ApplyPower`, `ReleasePower`, `SleepDisplay`, `LockSession`, `Notify`). The platform crate applies them.
 
-On Linux CI the binary uses `StubPlatform` (prints, does not touch power). Menu bar / IOKit code is `#[cfg(target_os = "macos")]`.
+On Linux CI the binary uses `StubPlatform` (prints, does not touch power). Menu bar / IOKit / AppKit code is `#[cfg(target_os = "macos")]`.
 
-## Menu-bar popover hotspot
+## Menu-bar panel hotspot
 
-`crates/never-sleep/ui/popover.html` holds CSS, markup, and JS in one file. Two open PRs that both touch it will conflict.
+`crates/never-sleep/src/native_panel.rs` is the AppKit panel (Liquid Glass via `NSGlassEffectView`, `NSVisualEffectView` fallback). Two open PRs that both touch it will conflict. Panel copy and navigation that Linux can lock live in `crates/never-sleep/src/panel.rs`.
 
-Before editing `ui/` or popover wiring in `gui.rs`:
+Before editing `native_panel.rs` or popover wiring in `gui.rs`:
 
 1. `git fetch origin main` and start from (or merge) the **latest remote** `main`. Cloud snapshots are often behind; do not skip this for UI work.
-2. Do not run a second agent on the popover while another popover PR is still open. Land or rebase the first.
-3. Keep color tokens in `:root` / `.float.active`. Append new views below existing markup. Do not rewrite `setView` unless the task is navigation.
-4. After merging `main` into an in-flight UI PR, re-apply only the intended delta. Do not drop `helpView`, `moreButton`, or other views that already landed.
+2. Do not run a second agent on the panel while another panel PR is still open. Land or rebase the first.
+3. Keep `PanelView::Main` / `Settings` / `Help`. Do not drop More Settings, How to use, or the glass fallback.
+4. After merging `main` into an in-flight UI PR, re-apply only the intended delta.
 
 ## Toolchain
 
@@ -105,7 +105,7 @@ Prefer table-driven cases for parsers and language tags. Name tests after the pr
 
 ### What not to “TDD”
 
-- Pixel-level menu-bar layout (`ui/popover.html`) unless you are changing logic that can be unit-tested via `ViewModel`.
+- Pixel-level menu-bar layout (`native_panel.rs`) unless you are changing logic that can be unit-tested via `ViewModel` / `PanelState`.
 - IOKit / `pmset` bindings. Keep them thin. Policy belongs in core tests.
 - Generated packaging (`dist/`, `.icns`).
 

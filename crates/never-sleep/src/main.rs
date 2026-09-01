@@ -14,6 +14,8 @@ mod util;
 
 #[cfg(target_os = "macos")]
 mod gui;
+#[cfg(any(test, target_os = "macos"))]
+mod panel;
 
 use clap::Parser;
 use never_sleep_core::{Lang, StopReason, Tr, LANG_ENV};
@@ -206,113 +208,88 @@ mod tests {
     }
 
     #[test]
-    fn popover_uses_solid_background_without_header_gear() {
-        let html = include_str!("../ui/popover.html");
+    fn native_panel_uses_liquid_glass_with_vibrancy_fallback() {
+        let src = include_str!("native_panel.rs");
         assert!(
-            !html.contains("backdrop-filter"),
-            "popover must use a solid color, not frosted glass"
+            src.contains("NSGlassEffectView"),
+            "macOS 26 Liquid Glass is the preferred panel chrome"
         );
         assert!(
-            !html.contains("id=\"gearButton\""),
-            "settings gear is not in the header"
+            src.contains("NSVisualEffectView"),
+            "older macOS must keep NSVisualEffectView vibrancy"
         );
         assert!(
-            html.contains("id=\"moreButton\""),
-            "More Settings stays in the footer"
+            src.contains("preferred_glass"),
+            "glass selection is shared with Linux-tested policy"
         );
         assert!(
-            html.contains("id=\"helpView\""),
-            "in-popover How to use view must survive style-only edits"
+            !src.contains("popover.html"),
+            "the menu-bar panel must not embed HTML"
         );
         assert!(
-            html.contains("--bg: #f5f5f7"),
-            "idle popover uses an opaque light fill"
-        );
-        assert!(
-            html.contains("--bg: #1c1c1e"),
-            "active popover uses an opaque dark fill"
+            !src.contains("wry::"),
+            "the menu-bar panel must not use WKWebView"
         );
     }
 
     #[test]
-    fn popover_is_flush_without_arrow_shadow_or_app_title() {
-        let html = include_str!("../ui/popover.html");
+    fn native_panel_keeps_help_settings_and_more() {
+        let src = include_str!("native_panel.rs");
         assert!(
-            !html.contains(".float::before"),
-            "pointer arrow overlaps background text; flush the panel instead"
+            src.contains("PanelView::Help"),
+            "in-panel How to use view must survive native rewrite"
         );
         assert!(
-            !html.contains("--arrow-x"),
-            "arrow position is unused once the pointer is gone"
+            src.contains("PanelView::Settings"),
+            "settings view must survive native rewrite"
         );
         assert!(
-            !html.contains("drop-shadow(0 10px 20px"),
-            "outer drop-shadow around the panel must be removed"
+            src.contains("show_settings"),
+            "More Settings stays reachable from the main view"
         );
         assert!(
-            !html.contains("id=\"appTitle\""),
-            "Never Sleep title chrome is redundant in the popover"
-        );
-        let float = css_rule(html, ".float");
-        assert!(
-            float.contains("inset: 0") || float.contains("inset:0"),
-            "panel shell must sit flush in the window, got: {float}"
-        );
-        assert!(
-            !float.contains("drop-shadow"),
-            "panel shell must not cast an outer shadow, got: {float}"
-        );
-        let panel = css_rule(html, ".panel");
-        assert!(
-            panel.contains("inset: 0") || panel.contains("inset:0"),
-            "panel must not reserve space for an arrow, got: {panel}"
+            src.contains("more_settings"),
+            "More Settings label is driven by Tr"
         );
     }
 
     #[test]
-    fn preview_lid_awake_matches_runtime_best_effort_copy() {
-        let html = include_str!("../ui/popover.html");
+    fn menu_bar_shell_does_not_use_webview() {
+        let gui = include_str!("gui.rs");
+        assert!(!gui.contains("wry"), "gui.rs must not depend on wry");
+        assert!(!gui.contains("WebView"), "gui.rs must not host a WebView");
+        assert!(
+            gui.contains("native_panel::NativePanel"),
+            "the popover is an AppKit view tree"
+        );
+    }
+
+    #[test]
+    fn native_panel_lid_copy_keeps_best_effort() {
         let en = Tr::new(Lang::En).lid_awake();
         let zh = Tr::new(Lang::Zh).lid_awake();
         assert!(
             en.contains("best effort"),
             "runtime English lid copy must keep the best-effort qualifier: {en}"
         );
+        let panel = include_str!("panel.rs");
         assert!(
-            html.contains(en),
-            "previewState must ship the same lid_awake string as Tr::lid_awake(), got runtime {en:?}"
+            panel.contains("lid_awake_label"),
+            "native panel state must carry lid copy from Tr"
         );
-        assert!(
-            html.contains(zh),
-            "previewState must ship the same Chinese lid_awake string as Tr::lid_awake(), got runtime {zh:?}"
-        );
+        assert!(zh.contains("合盖") || zh.contains("尽力"));
     }
 
     #[test]
-    fn preview_copy_matches_runtime_actions_and_product_name() {
-        let html = include_str!("../ui/popover.html");
+    fn panel_copy_matches_runtime_actions_and_product_name() {
         let en = Tr::new(Lang::En);
         let zh = Tr::new(Lang::Zh);
-        for needle in [
-            en.start_standby(),
-            en.end_standby(),
-            en.panel_idle_title(),
-            en.panel_active_title(),
-            zh.start_standby(),
-            zh.end_standby(),
-            zh.panel_idle_title(),
-            zh.panel_active_title(),
-            zh.help_step1_detail(),
-        ] {
-            assert!(
-                html.contains(needle),
-                "previewState must ship the same string as Tr, missing {needle:?}"
-            );
-        }
-        assert!(
-            !html.contains("熄屏待命"),
-            "popover preview must not use the old Chinese product name"
-        );
+        assert_eq!(en.start_standby(), "Start Screen-Off Standby");
+        assert_eq!(zh.start_standby(), "开始关屏待命");
+        assert_eq!(en.panel_idle_title(), "Not Active");
+        assert_eq!(zh.panel_active_title(), "关屏待命中");
+        assert!(!zh.help_step1_detail().contains("熄屏待命"));
+        assert!(!zh.panel_summary_active().contains("熄屏待命"));
     }
 
     #[test]
@@ -337,31 +314,18 @@ mod tests {
 
     #[test]
     fn help_body_keeps_a_pointer_scroll_affordance() {
-        let html = include_str!("../ui/popover.html");
-        let help_body = css_rule(html, ".help-body");
+        let src = include_str!("native_panel.rs");
         assert!(
-            !help_body.contains("scrollbar-width: none"),
-            "hiding the help scrollbar leaves pointer users with no way to reach lower items: {help_body}"
+            src.contains("NSScrollView"),
+            "help copy is longer than the panel; native AppKit must keep a scroll view"
         );
         assert!(
-            help_body.contains("scrollbar-width: thin") || help_body.contains("overflow-y: scroll"),
-            "help body needs a visible, draggable scrollbar, got: {help_body}"
+            src.contains("setHasVerticalScroller(true)"),
+            "help needs a visible vertical scroller for pointer users"
         );
         assert!(
-            !html.contains(".help-body::-webkit-scrollbar { width: 0"),
-            "webkit scrollbar width 0 removes the only draggable thumb"
+            !src.contains("setHasVerticalScroller(false)"),
+            "do not hide the help scrollbar"
         );
-    }
-
-    fn css_rule(html: &str, selector: &str) -> String {
-        let marker = format!("{selector} {{");
-        let start = html
-            .find(&marker)
-            .unwrap_or_else(|| panic!("missing CSS rule {selector}"));
-        let body = &html[start + marker.len()..];
-        let end = body
-            .find('}')
-            .unwrap_or_else(|| panic!("unclosed CSS rule {selector}"));
-        body[..end].to_string()
     }
 }
