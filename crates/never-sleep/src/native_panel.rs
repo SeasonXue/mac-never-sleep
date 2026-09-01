@@ -164,10 +164,14 @@ define_class!(
 );
 
 impl CoinFlipDone {
-    fn new(sun: &CALayer, moon: &CALayer, mtm: MainThreadMarker) -> Retained<Self> {
+    fn new(
+        sun: Retained<CALayer>,
+        moon: Retained<CALayer>,
+        mtm: MainThreadMarker,
+    ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(FlipDoneIvars {
-            sun: sun.retain(),
-            moon: moon.retain(),
+            sun,
+            moon,
             showing_moon: Cell::new(false),
         });
         unsafe { msg_send![super(this), init] }
@@ -549,7 +553,7 @@ impl NativePanel {
         span_stack(&help_stack, nv(&*help_head));
         span_stack(&help_stack, nv(&*scroll));
 
-        let flip_done = CoinFlipDone::new(&sun_face, &moon_face, mtm);
+        let flip_done = CoinFlipDone::new(sun_face.clone(), moon_face.clone(), mtm);
         let panel = Self {
             _target: target,
             wash,
@@ -1470,13 +1474,9 @@ fn place_square_layer(layer: &CALayer, size: f64) {
         objc2_foundation::NSPoint::new(0.0, 0.0),
         objc2_foundation::NSSize::new(size, size),
     );
-    let anchor = objc2_foundation::NSPoint::new(0.5, 0.5);
-    let pos = objc2_foundation::NSPoint::new(size / 2.0, size / 2.0);
-    unsafe {
-        let _: () = msg_send![layer, setBounds: bounds];
-        let _: () = msg_send![layer, setAnchorPoint: anchor];
-        let _: () = msg_send![layer, setPosition: pos];
-    }
+    layer.setBounds(bounds);
+    layer.setAnchorPoint(objc2_foundation::NSPoint::new(0.5, 0.5));
+    layer.setPosition(objc2_foundation::NSPoint::new(size / 2.0, size / 2.0));
 }
 
 fn apply_perspective(layer: &CALayer) {

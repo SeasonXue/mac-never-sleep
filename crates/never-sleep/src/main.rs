@@ -321,6 +321,10 @@ mod tests {
             "the flip rotates around the coin center, not the default (0,0) corner"
         );
         assert!(
+            !src.contains("msg_send![layer, setAnchorPoint"),
+            "send CALayer geometry through the typed setters, not msg_send on Retained"
+        );
+        assert!(
             src.contains("setContentViewMargins") && src.contains("center_square"),
             "the 104pt faces sit in the middle of the 124pt circle; NSBox must not add extra margins"
         );
@@ -335,6 +339,10 @@ mod tests {
         assert!(
             src.contains("setClipsToBounds(false)"),
             "the host must not clip the card shadow at the window edge"
+        );
+        assert!(
+            src.contains("sun_face.clone()") && !src.contains(".retain()"),
+            "keep extra CALayer refs with Retained::clone; Message::retain is easy to leave out of scope on macOS"
         );
         assert!(
             !src.contains("transform.scale.x") && !src.contains("CATransition"),
