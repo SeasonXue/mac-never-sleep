@@ -605,8 +605,8 @@ mod tests {
             "NSTextAlignment and setAlignment need the objc2-app-kit NSText feature"
         );
         assert!(
-            cargo.contains("\"NSAccessibility\""),
-            "NSSwitch setAccessibilityLabel needs the objc2-app-kit NSAccessibility feature"
+            cargo.contains("\"NSAccessibilityProtocols\""),
+            "NSSwitch setAccessibilityLabel needs the objc2-app-kit NSAccessibilityProtocols feature"
         );
         assert!(
             !src.contains("CATransform3DMakeRotation"),
