@@ -70,6 +70,15 @@ pub fn hero_shows_moon(active: bool) -> bool {
     active
 }
 
+/// Container Y-axis angle: sun (front) at 0, moon (back) after a half-turn.
+pub fn hero_flip_radians(showing_moon: bool) -> f64 {
+    if showing_moon {
+        std::f64::consts::PI
+    } else {
+        0.0
+    }
+}
+
 pub fn panel_inner_width() -> f64 {
     PANEL_WIDTH - CONTENT_INSET * 2.0
 }
@@ -464,6 +473,8 @@ mod tests {
         assert_eq!(panel_fill_rgb(true), [0x1c, 0x1c, 0x1e]);
         assert!(!hero_shows_moon(false));
         assert!(hero_shows_moon(true));
+        assert_eq!(hero_flip_radians(false), 0.0);
+        assert_eq!(hero_flip_radians(true), std::f64::consts::PI);
         assert!(
             grouped_copy_max_width() < panel_inner_width(),
             "help/settings row copy sits beside a glyph, not the full inner width"

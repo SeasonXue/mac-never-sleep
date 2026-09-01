@@ -305,16 +305,28 @@ mod tests {
             "idle shows the sun; standby shows the moon — never both faces at once"
         );
         assert!(
-            src.contains("transform.scale.x"),
-            "the coin flips in place by squashing scale.x, not a 3D matrix or fade"
+            src.contains("moon_face.setHidden(true)"),
+            "first paint hides the moon so the two logos cannot overlap"
         );
         assert!(
-            !src.contains("transform.rotation.y") && !src.contains("CATransition"),
-            "rotation.y offset the faces beside an empty circle; fade is not a flip"
+            src.contains("transform.rotation.y")
+                && src.contains("hero_flip_radians")
+                && src.contains("setDoubleSided")
+                && src.contains("CATransformLayer")
+                && src.contains("m34"),
+            "the coin is a 3D half-turn: moon is the back face, container rotates 0↔π in place"
+        );
+        assert!(
+            src.contains("setAnchorPoint") || src.contains("set_anchor_center"),
+            "the flip rotates around the coin center, not the default (0,0) corner"
+        );
+        assert!(
+            !src.contains("transform.scale.x") && !src.contains("CATransition"),
+            "scale.x squash is not a half-turn that reveals the back; fade is not a flip"
         );
         assert!(
             !src.contains("CATransform3DMakeRotation") && !src.contains("valueWithCATransform3D"),
-            "do not pass CATransform3D through msg_send; that overlays both faces and crashes on click"
+            "do not pass a hand-rolled CATransform3D through msg_send; use crate types / NSNumber KVC"
         );
         assert!(
             src.contains("centerYAnchor") && src.contains("index_badge"),
