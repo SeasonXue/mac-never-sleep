@@ -11,9 +11,9 @@ use objc2_app_kit::{
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSGlassEffectView,
     NSGlassEffectViewStyle, NSImage, NSImageScaling, NSLayoutAttribute,
     NSLayoutConstraintOrientation, NSPopUpButton, NSScrollView, NSSegmentSwitchTracking,
-    NSSegmentedControl, NSStackView, NSSwitch, NSTextAlignment, NSTextField,
-    NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-    NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSSegmentedControl, NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment,
+    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
 };
 use objc2_foundation::{
     MainThreadMarker, NSData, NSEdgeInsets, NSObject, NSObjectProtocol, NSString,
@@ -289,9 +289,8 @@ impl NativePanel {
         arrange(&main_stack, &summary);
         arrange(&main_stack, &warning);
         arrange(&main_stack, &primary);
-        stretch(nv(&*primary));
         let card = column(mtm, 8.0, 0.0);
-        card.setAlignment(NSLayoutAttribute::Leading);
+        card.setAlignment(NSLayoutAttribute::Width);
         arrange(
             &card,
             &duration_row(&duration_label, duration.as_ref(), mtm),
@@ -328,7 +327,7 @@ impl NativePanel {
         let quit_settings = text_button(&target, sel!(quit:), mtm);
 
         let settings_stack = column(mtm, 10.0, 16.0);
-        settings_stack.setAlignment(NSLayoutAttribute::Leading);
+        settings_stack.setAlignment(NSLayoutAttribute::Width);
         arrange(&settings_stack, &header_row(&back, &settings_title, mtm));
         arrange(&settings_stack, &screen_off_row);
         arrange(&settings_stack, &lid_row);
@@ -357,7 +356,7 @@ impl NativePanel {
         let help_note_quit = wrap(mtm);
 
         let help_body = column(mtm, 8.0, 0.0);
-        help_body.setAlignment(NSLayoutAttribute::Leading);
+        help_body.setAlignment(NSLayoutAttribute::Width);
         arrange(&help_body, &help_kicker);
         arrange(&help_body, &help_lead);
         arrange(&help_body, &help_how);
@@ -378,10 +377,15 @@ impl NativePanel {
         scroll.setDrawsBackground(false);
         scroll.setBorderType(NSBorderType::NoBorder);
         scroll.setDocumentView(Some(&help_body));
+        pin_document_width(&scroll, nv(&*help_body));
         stretch(nv(&*scroll));
+        nv(&*scroll).setContentCompressionResistancePriority_forOrientation(
+            1.0_f32,
+            NSLayoutConstraintOrientation::Vertical,
+        );
 
         let help_stack = column(mtm, 10.0, 16.0);
-        help_stack.setAlignment(NSLayoutAttribute::Leading);
+        help_stack.setAlignment(NSLayoutAttribute::Width);
         arrange(&help_stack, &header_row(&help_back, &help_title, mtm));
         arrange(&help_stack, &scroll);
         fill(&help_view, &help_stack);
@@ -558,6 +562,11 @@ impl NativePanel {
         self.help_view
             .setHidden(self.current_view != PanelView::Help);
     }
+
+    pub fn set_toggle_armed(&self, armed: bool) {
+        self.hero.setEnabled(!armed);
+        self.primary.setEnabled(!armed);
+    }
 }
 
 fn as_any(obj: &PanelTarget) -> &AnyObject {
@@ -598,6 +607,23 @@ fn stretch(view: &NSView) {
     view.setContentHuggingPriority_forOrientation(1.0_f32, NSLayoutConstraintOrientation::Vertical);
 }
 
+fn pin_document_width(scroll: &NSScrollView, document: &NSView) {
+    document.setTranslatesAutoresizingMaskIntoConstraints(false);
+    let clip = scroll.contentView();
+    document
+        .leadingAnchor()
+        .constraintEqualToAnchor(&clip.leadingAnchor())
+        .setActive(true);
+    document
+        .topAnchor()
+        .constraintEqualToAnchor(&clip.topAnchor())
+        .setActive(true);
+    document
+        .widthAnchor()
+        .constraintEqualToAnchor(&clip.widthAnchor())
+        .setActive(true);
+}
+
 fn column(mtm: MainThreadMarker, spacing: f64, inset: f64) -> Retained<NSStackView> {
     let stack = NSStackView::new(mtm);
     stack.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
@@ -632,6 +658,24 @@ fn wrap(mtm: MainThreadMarker) -> Retained<NSTextField> {
     field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
     field.setTextColor(Some(&NSColor::secondaryLabelColor()));
     field.setAlignment(NSTextAlignment::Center);
+    field
+}
+
+fn row_caption(mtm: MainThreadMarker) -> Retained<NSTextField> {
+    let field = NSTextField::wrappingLabelWithString(&ns(""), mtm);
+    field.setSelectable(false);
+    field.setFont(Some(&NSFont::systemFontOfSize(13.0)));
+    field.setTextColor(Some(&NSColor::labelColor()));
+    field.setAlignment(NSTextAlignment::Left);
+    field.setPreferredMaxLayoutWidth(220.0);
+    field.setContentHuggingPriority_forOrientation(
+        1.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    field.setContentCompressionResistancePriority_forOrientation(
+        250.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     field
 }
 
@@ -686,12 +730,20 @@ fn labeled_switch(
     Retained<NSSwitch>,
     Retained<NSStackView>,
 ) {
-    let caption = label(mtm);
-    caption.setAlignment(NSTextAlignment::Left);
+    let caption = row_caption(mtm);
     let toggle = NSSwitch::new(mtm);
     bind_switch(&toggle, target, tag);
+    nv(&*toggle).setContentHuggingPriority_forOrientation(
+        750.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    nv(&*toggle).setContentCompressionResistancePriority_forOrientation(
+        1000.0_f32,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     let row = NSStackView::new(mtm);
     row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    row.setDistribution(NSStackViewDistribution::Fill);
     row.setAlignment(NSLayoutAttribute::CenterY);
     row.setSpacing(8.0);
     arrange(&row, &caption);
@@ -707,6 +759,7 @@ fn duration_row(
     caption.setAlignment(NSTextAlignment::Left);
     let row = NSStackView::new(mtm);
     row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
+    row.setDistribution(NSStackViewDistribution::Fill);
     row.setAlignment(NSLayoutAttribute::CenterY);
     row.setSpacing(8.0);
     arrange(&row, caption);

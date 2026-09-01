@@ -190,6 +190,31 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
     }
 }
 
+/// Ignores extra panel toggle clicks until the next UI refresh cycle.
+///
+/// AppKit can queue two `toggle:` actions from a double-click before the first
+/// `refresh_ui` paints. The old WebView disabled the control while a request
+/// was in flight; this is that guard without WKWebView.
+#[derive(Debug, Default)]
+pub struct ToggleGate {
+    armed: bool,
+}
+
+impl ToggleGate {
+    pub fn take_click(&mut self) -> bool {
+        if self.armed {
+            false
+        } else {
+            self.armed = true;
+            true
+        }
+    }
+
+    pub fn release(&mut self) {
+        self.armed = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +245,25 @@ mod tests {
         assert_ne!(PanelView::Main, PanelView::Settings);
         assert_ne!(PanelView::Settings, PanelView::Help);
         assert_ne!(PanelView::Help, PanelView::Main);
+    }
+
+    #[test]
+    fn toggle_gate_ignores_clicks_until_refresh() {
+        let mut gate = ToggleGate::default();
+        assert!(
+            gate.take_click(),
+            "the first sun/primary click must start standby"
+        );
+        assert!(
+            !gate.take_click(),
+            "a queued double-click must not toggle standby back off"
+        );
+        assert!(!gate.take_click());
+        gate.release();
+        assert!(
+            gate.take_click(),
+            "after refresh the control is armed again"
+        );
     }
 
     #[test]

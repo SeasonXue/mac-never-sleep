@@ -357,5 +357,39 @@ mod tests {
             !src.contains("setHasVerticalScroller(false)"),
             "do not hide the help scrollbar"
         );
+        assert!(
+            src.contains("pin_document_width"),
+            "the help document must be width-constrained to the clip view"
+        );
+    }
+
+    #[test]
+    fn settings_rows_fill_width_and_wrap_long_captions() {
+        let src = include_str!("native_panel.rs");
+        assert!(
+            src.contains("NSLayoutAttribute::Width"),
+            "settings/help stacks size children to the panel inner width"
+        );
+        assert!(
+            src.contains("row_caption"),
+            "switch captions wrap instead of pushing the control off-screen"
+        );
+        assert!(
+            src.contains("NSStackViewDistribution::Fill"),
+            "rows give leftover width to the caption, not the switch"
+        );
+    }
+
+    #[test]
+    fn gui_ignores_queued_toggle_clicks_until_refresh() {
+        let gui = include_str!("gui.rs");
+        assert!(
+            gui.contains("ToggleGate"),
+            "native toggle buttons need the same in-flight guard the WebView had"
+        );
+        assert!(
+            gui.contains("take_click()"),
+            "double-click must not emit a second Input::Toggle before refresh"
+        );
     }
 }

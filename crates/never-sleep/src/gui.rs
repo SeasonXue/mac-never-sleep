@@ -21,7 +21,7 @@ use tray_icon::{
 use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
-use crate::panel::{panel_state, PanelState};
+use crate::panel::{panel_state, PanelState, ToggleGate};
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
 use crate::protocol::{IpcRequest, IpcResponse};
@@ -224,6 +224,7 @@ pub fn run() {
     let mut tray_active: Option<bool> = None;
     let mut last_tick = Instant::now();
     let mut shown_onboarding = engine.config.onboarding_done;
+    let mut toggle_gate = ToggleGate::default();
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow =
@@ -280,6 +281,10 @@ pub fn run() {
                         &engine,
                         platform.as_mut(),
                     );
+                    toggle_gate.release();
+                    if let Some(panel) = popover.as_mut() {
+                        panel.ui.set_toggle_armed(false);
+                    }
                 }
             }
             Event::UserEvent(UserEvent::Menu(id)) => {
@@ -331,6 +336,7 @@ pub fn run() {
                     platform.as_mut(),
                     &handles,
                     popover.as_mut(),
+                    &mut toggle_gate,
                     control_flow,
                 );
                 refresh_ui(
@@ -644,11 +650,18 @@ fn handle_ui_command(
     engine: &mut Engine,
     platform: &mut dyn Platform,
     handles: &MenuHandles,
-    popover: Option<&mut Popover>,
+    mut popover: Option<&mut Popover>,
+    toggle_gate: &mut ToggleGate,
     control_flow: &mut ControlFlow,
 ) {
     match command {
         UiCommand::Toggle => {
+            if !toggle_gate.take_click() {
+                return;
+            }
+            if let Some(panel) = popover.as_mut() {
+                panel.ui.set_toggle_armed(true);
+            }
             dispatch(engine, platform, Input::Toggle);
         }
         UiCommand::SetDuration { value } => {
