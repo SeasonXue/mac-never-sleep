@@ -267,6 +267,20 @@ mod tests {
     }
 
     #[test]
+    fn native_panel_enables_appkit_text_alignment() {
+        let cargo = include_str!("../Cargo.toml");
+        let src = include_str!("native_panel.rs");
+        assert!(
+            src.contains("NSTextAlignment"),
+            "labels use NSTextAlignment for left/center copy"
+        );
+        assert!(
+            cargo.contains("\"NSText\""),
+            "NSTextAlignment and setAlignment need the objc2-app-kit NSText feature"
+        );
+    }
+
+    #[test]
     fn native_panel_is_a_crate_module_not_nested_under_gui() {
         let main = include_str!("main.rs");
         let gui = include_str!("gui.rs");
