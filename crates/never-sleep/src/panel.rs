@@ -215,6 +215,11 @@ pub fn help_back_target(opened_from: PanelView) -> PanelView {
     }
 }
 
+/// Status-item / fallback menu Help always returns to Main, even if Settings was last shown.
+pub fn menu_help_origin() -> PanelView {
+    PanelView::Main
+}
+
 /// True when a tray mouse-up should not reopen a panel that just hid from that same click.
 pub fn suppress_tray_reopen(ms_since_focus_loss_hide: u64) -> bool {
     ms_since_focus_loss_hide < TRAY_REOPEN_GUARD_MS
@@ -514,6 +519,11 @@ mod tests {
             help_back_target(PanelView::Help),
             PanelView::Main,
             "opening Help while already on Help still backs to Main"
+        );
+        assert_eq!(
+            help_back_target(menu_help_origin()),
+            PanelView::Main,
+            "status-item Help must not inherit a leftover Settings pane"
         );
     }
 

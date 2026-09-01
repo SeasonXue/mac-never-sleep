@@ -683,7 +683,7 @@ fn handle_menu_event(
             panel.ui.show_settings();
         }
     } else if id == handles.help.id() {
-        show_help(engine, popover);
+        show_menu_help(engine, popover);
     } else if id == handles.lang_en.id() {
         engine.config.language = Some(Lang::En);
         save_config(&engine.config);
@@ -803,7 +803,9 @@ fn handle_ui_command(
             }
         }
         UiCommand::Help => {
-            show_help(engine, popover);
+            if let Some(panel) = popover {
+                panel.ui.show_help();
+            }
         }
         UiCommand::More => {
             if let Some(panel) = popover {
@@ -898,10 +900,10 @@ fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcInc
     let _ = reply.send(resp);
 }
 
-fn show_help(engine: &Engine, popover: Option<&mut Popover>) {
+fn show_menu_help(engine: &Engine, popover: Option<&mut Popover>) {
     if let Some(panel) = popover {
         panel.show();
-        panel.ui.show_help();
+        panel.ui.show_help_from_menu();
         return;
     }
     let t = engine.config.tr();

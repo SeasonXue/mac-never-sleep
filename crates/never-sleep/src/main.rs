@@ -337,7 +337,10 @@ mod tests {
             "NSSwitch must announce Screen Off / Lid / Battery, not untitled switches"
         );
         assert!(
-            src.contains("help_back_target") && src.contains("help_from"),
+            src.contains("help_back_target")
+                && src.contains("help_from")
+                && src.contains("show_help_from_menu")
+                && src.contains("menu_help_origin"),
             "Help Back returns to Main when opened from Main, Settings when opened from Settings"
         );
         assert!(
@@ -531,6 +534,10 @@ mod tests {
         assert!(
             gui.contains("&& event.logical_key == Key::Escape"),
             "Escape hide must be one if so macOS clippy::collapsible_if stays clean"
+        );
+        assert!(
+            gui.contains("show_help_from_menu"),
+            "status-item Help must not reuse the in-panel origin"
         );
         assert!(
             gui.contains("handles.show_window.id()"),

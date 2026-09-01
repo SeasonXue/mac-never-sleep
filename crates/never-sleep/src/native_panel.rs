@@ -30,12 +30,12 @@ use tao::window::Window;
 use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{
     grouped_copy_max_width, help_back_target, hero_flip_radians, hero_flips, hero_shows_moon,
-    motion_duration_secs, panel_fill_rgb, panel_inner_width, preferred_glass, DurationKey,
-    GlassKind, PanelState, PanelView, SidebarItem, CARD_HAIRLINE, CARD_RADIUS, CARD_ROW_HEIGHT,
-    CARD_ROW_INSET_X, CARD_SEPARATOR_GAP, CONTENT_INSET, FOOTER_GAP, FOOTER_HEIGHT, HELP_ROW_GAP,
-    HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS, HERO_IMAGE, HERO_SIZE,
-    IDLE_FILL_RGB, PANEL_COLOR_SECS, PANEL_CORNER, PRIMARY_HEIGHT, SHADOW_INSET, SHADOW_OFFSET_Y,
-    SHADOW_OPACITY, SHADOW_RADIUS, WARNING_SLOT,
+    menu_help_origin, motion_duration_secs, panel_fill_rgb, panel_inner_width, preferred_glass,
+    DurationKey, GlassKind, PanelState, PanelView, SidebarItem, CARD_HAIRLINE, CARD_RADIUS,
+    CARD_ROW_HEIGHT, CARD_ROW_INSET_X, CARD_SEPARATOR_GAP, CONTENT_INSET, FOOTER_GAP,
+    FOOTER_HEIGHT, HELP_ROW_GAP, HELP_ROW_GLYPH, HELP_ROW_INSET, HELP_ROW_PAD_Y, HERO_FLIP_SECS,
+    HERO_IMAGE, HERO_SIZE, IDLE_FILL_RGB, PANEL_COLOR_SECS, PANEL_CORNER, PRIMARY_HEIGHT,
+    SHADOW_INSET, SHADOW_OFFSET_Y, SHADOW_OPACITY, SHADOW_RADIUS, WARNING_SLOT,
 };
 
 const TAG_RESLEEP: isize = 1;
@@ -744,8 +744,16 @@ impl NativePanel {
     }
 
     pub fn show_help(&mut self) {
+        self.open_help(self.current);
+    }
+
+    pub fn show_help_from_menu(&mut self) {
+        self.open_help(menu_help_origin());
+    }
+
+    fn open_help(&mut self, origin: PanelView) {
         if self.current != PanelView::Help {
-            self.help_from = self.current;
+            self.help_from = origin;
         }
         self.help_scroll
             .contentView()
