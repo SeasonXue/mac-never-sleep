@@ -14,6 +14,8 @@ mod util;
 
 #[cfg(target_os = "macos")]
 mod gui;
+#[cfg(target_os = "macos")]
+mod native_panel;
 #[cfg(any(test, target_os = "macos"))]
 mod panel;
 
@@ -261,6 +263,20 @@ mod tests {
         assert!(
             gui.contains("native_panel::NativePanel"),
             "the popover is an AppKit view tree"
+        );
+    }
+
+    #[test]
+    fn native_panel_is_a_crate_module_not_nested_under_gui() {
+        let main = include_str!("main.rs");
+        let gui = include_str!("gui.rs");
+        assert!(
+            main.contains("mod native_panel;"),
+            "native_panel.rs lives next to gui.rs so macOS can compile it"
+        );
+        assert!(
+            !gui.contains("mod native_panel;"),
+            "a submodule inside gui.rs would look for src/gui/native_panel.rs"
         );
     }
 

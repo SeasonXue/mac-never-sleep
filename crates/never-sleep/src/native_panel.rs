@@ -5,7 +5,7 @@ use std::ops::Deref;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Sel};
-use objc2::{define_class, msg_send, sel, ClassType, DefinedClass, MainThreadOnly};
+use objc2::{define_class, msg_send, sel, AllocAnyThread, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBezelStyle, NSBorderType, NSButton, NSCellImagePosition, NSColor,
     NSControlStateValueOff, NSControlStateValueOn, NSFont, NSGlassEffectView,
@@ -22,7 +22,7 @@ use tao::event_loop::EventLoopProxy;
 use tao::platform::macos::WindowExtMacOS;
 use tao::window::Window;
 
-use super::{UiCommand, UserEvent};
+use crate::gui::{UiCommand, UserEvent};
 use crate::panel::{preferred_glass, DurationKey, GlassKind, PanelState, PanelView};
 
 const TAG_RESLEEP: isize = 1;

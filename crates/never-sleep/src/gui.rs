@@ -26,9 +26,9 @@ use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
 use crate::protocol::{IpcRequest, IpcResponse};
 
-mod native_panel;
+use crate::native_panel;
 
-enum UserEvent {
+pub(crate) enum UserEvent {
     Hotkey,
     Menu(tray_icon::menu::MenuId),
     Tray(TrayRect),
@@ -36,7 +36,7 @@ enum UserEvent {
 }
 
 #[derive(Debug)]
-enum UiCommand {
+pub(crate) enum UiCommand {
     Toggle,
     SetDuration { value: String },
     SetOption { key: String, enabled: bool },
