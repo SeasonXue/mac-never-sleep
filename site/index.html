@@ -111,6 +111,30 @@
           },
           {
             "@type": "Question",
+            "name": "How is this different from Caffeine, Amphetamine, or PowerToys Awake?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Keep-awake tools keep the machine from sleeping. Many also keep the display on; PowerToys Awake only does that when Keep screen on is checked. Never Sleep keeps the Mac awake and puts the display to sleep. It does not simulate a mouse or keyboard, it reasserts display sleep if a remote session wakes the panel, and it never rewrites Energy Saver."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does it fake mouse movement so Teams stays Available?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. It does not simulate a mouse or keyboard. Presence spoofing is not a feature. HID idle still means a person is away."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Will the display burn in?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "The default path is real display sleep, not a static bright frame. Overnight work does not leave the panel on for hours."
+            }
+          },
+          {
+            "@type": "Question",
             "name": "How do I stop Screen-Off Standby?",
             "acceptedAnswer": {
               "@type": "Answer",
@@ -133,7 +157,7 @@
           <span class="brand-name">Never Sleep</span>
         </a>
         <nav class="nav-links" aria-label="Page">
-          <a href="#features">Why</a>
+          <a href="#why">Why</a>
           <a href="#uses">Uses</a>
           <a href="#look">Look</a>
           <a href="#how">How to</a>
@@ -181,8 +205,22 @@
   <main id="main">
     <section class="section" id="why">
       <div class="wrap">
-        <h2>One job. Not another Caffeine.</h2>
-        <p class="section-lead"><code>caffeinate</code>, KeepingYouAwake, and Amphetamine default to keeping the panel lit. This app collapses the scenario to a single sentence:</p>
+        <h2>Keep-awake tools leave the panel on</h2>
+        <p class="section-lead">Caffeine, Amphetamine, and mouse jigglers are built for “awake forever”: never sleep, never lock, never turn the display off. Overnight work survives — and so does a bright, often static screen.</p>
+        <div class="grid">
+          <article class="card feature">
+            <h3>The screen stays on</h3>
+            <p>Hours of a lit, often frozen panel: OLED burn-in, extra heat, wasted backlight, and a laptop glowing on an empty desk.</p>
+          </article>
+          <article class="card feature">
+            <h3>Fake input, buried options</h3>
+            <p>Some tools jiggle the mouse or hold “keep screen on”. Allowing display sleep is a hidden checkbox. Never Sleep does not simulate a mouse or keyboard.</p>
+          </article>
+          <article class="card feature">
+            <h3>Display off is the product</h3>
+            <p>Real display sleep, Mac still working. If remote input wakes the panel, it goes dark again. Energy Saver is never rewritten.</p>
+          </article>
+        </div>
         <blockquote class="quote">When you leave, the display must go dark. The machine must stay awake.</blockquote>
       </div>
     </section>
@@ -214,7 +252,7 @@
           </article>
           <article class="card feature">
             <h3>Long-running jobs</h3>
-            <p>Compiles, encodes, backups, and syncs can finish overnight. Duration presets and a battery floor stop it safely.</p>
+            <p>Overnight 3D renders, video exports, compiles, encodes, backups, and syncs — the same work people buy keep-awake tools for, without a lit panel for hours. Duration presets and a battery floor stop it safely.</p>
           </article>
         </div>
       </div>
@@ -359,7 +397,7 @@ never-sleep doctor      <span class="cmt"># assertions, battery, lid</span></pre
     <section class="section" id="compare">
       <div class="wrap">
         <h2>Compared with common tools</h2>
-        <p class="section-lead">Same table as the README — display-off by default is the product, not a buried option.</p>
+        <p class="section-lead">Keep-awake forever tools keep the lights on. Display-off by default is the product, not a buried option.</p>
         <div class="table-wrap">
           <table>
             <caption>Never Sleep versus caffeinate, KeepingYouAwake, and Amphetamine</caption>
@@ -445,6 +483,18 @@ never-sleep doctor      <span class="cmt"># assertions, battery, lid</span></pre
           <details>
             <summary>Does Never Sleep change Energy Saver settings?</summary>
             <p>No. It only takes in-process IOKit assertions. Quit, crash, or relaunch restores clamshell flags. Energy Saver is never rewritten.</p>
+          </details>
+          <details>
+            <summary>How is this different from Caffeine, Amphetamine, or PowerToys Awake?</summary>
+            <p>Keep-awake tools keep the machine from sleeping. Many also keep the display on; PowerToys Awake only does that when Keep screen on is checked. Never Sleep keeps the Mac awake and puts the display to sleep. It does not simulate a mouse or keyboard, it reasserts display sleep if a remote session wakes the panel, and it never rewrites Energy Saver.</p>
+          </details>
+          <details>
+            <summary>Does it fake mouse movement so Teams stays Available?</summary>
+            <p>No. It does not simulate a mouse or keyboard. Presence spoofing is not a feature. HID idle still means a person is away.</p>
+          </details>
+          <details>
+            <summary>Will the display burn in?</summary>
+            <p>The default path is real display sleep, not a static bright frame. Overnight work does not leave the panel on for hours.</p>
           </details>
           <details>
             <summary>How do I stop Screen-Off Standby?</summary>

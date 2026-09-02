@@ -267,6 +267,200 @@ fn copy_covers_everyday_use_cases_not_only_chatgpt() {
     );
 }
 
+fn passages_around(hay: &str, needle: &str) -> Vec<String> {
+    let lower = hay.to_ascii_lowercase();
+    let needle_l = needle.to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find(&needle_l) {
+        let abs = from + rel;
+        out.push(passage_at(hay, abs));
+        from = abs + needle.len().max(1);
+    }
+    out
+}
+
+fn passage_at(hay: &str, abs: usize) -> String {
+    let before = &hay[..abs];
+    if let Some(details) = before.rfind("<details") {
+        if let Some(rel_end) = hay[details..].find("</details>") {
+            let end = details + rel_end + "</details>".len();
+            if end > abs {
+                return hay[details..end].to_string();
+            }
+        }
+    }
+    if json_ld_still_open(before) {
+        let start = before.rfind('{').unwrap_or(0);
+        let end = char_boundary_at_or_before(hay, (abs + 520).min(hay.len()));
+        return hay[start..end].to_string();
+    }
+    let start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let end = abs + hay[abs..].find('\n').unwrap_or(hay[abs..].len());
+    hay[start..end].to_string()
+}
+
+fn json_ld_still_open(before: &str) -> bool {
+    let open = before.rfind("application/ld+json");
+    let close = before.rfind("</script>");
+    match (open, close) {
+        (Some(o), Some(c)) => o > c,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+fn char_boundary_at_or_before(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn teams_passage_is_nongoal(passage: &str) -> bool {
+    let lower = passage.to_ascii_lowercase();
+    lower.contains("will not")
+        || lower.contains("does not")
+        || lower.contains("do not")
+        || lower.contains("not a feature")
+        || lower.contains("not keep")
+        || lower.contains("won't")
+        || passage.contains("不会")
+        || passage.contains("不是")
+        || passage.contains("不模拟")
+        || passage.contains("不让")
+}
+
+fn powertoys_passage_claims_always_on_display(passage: &str) -> bool {
+    let lower = passage.to_ascii_lowercase();
+    let qualified = lower.contains("keep screen on")
+        || lower.contains("optional")
+        || passage.contains("可选项")
+        || passage.contains("勾选");
+    if qualified {
+        return false;
+    }
+    lower.contains("never turn the display")
+        || lower.contains("not to sleep the display")
+        || passage.contains("也不关屏")
+        || passage.contains("不要关屏")
+}
+
+#[test]
+fn copy_names_keep_awake_pain_and_display_off_fix() {
+    let en_site = read("index.html");
+    let zh_site = read("zh/index.html");
+    let en_readme = fs::read_to_string(readme_root().join("README.md"))
+        .unwrap_or_else(|err| panic!("missing README.md: {err}"));
+    let zh_readme = fs::read_to_string(readme_root().join("README.zh-CN.md"))
+        .unwrap_or_else(|err| panic!("missing README.zh-CN.md: {err}"));
+
+    assert!(
+        en_site.contains(r#"id="why""#) && en_site.contains(r##"href="#why""##),
+        "English nav must send Why to the keep-awake contrast, not skip it"
+    );
+    assert!(
+        zh_site.contains(r#"id="why""#) && zh_site.contains(r##"href="#why""##),
+        "Chinese nav must reach the 防休眠 contrast section"
+    );
+
+    for (label, hay) in [("English site", &en_site), ("English README", &en_readme)] {
+        let lower = hay.to_ascii_lowercase();
+        assert!(
+            lower.contains("caffeine") && lower.contains("amphetamine"),
+            "{label} must name the usual keep-awake tools"
+        );
+        assert!(
+            lower.contains("burn-in") || lower.contains("oled"),
+            "{label} must name the lit-panel cost (OLED burn-in)"
+        );
+        assert!(
+            lower.contains("mouse"),
+            "{label} must name mouse-jiggle keep-awake, got no mouse"
+        );
+        assert!(
+            lower.contains("does not simulate")
+                || lower.contains("do not simulate")
+                || lower.contains("does not jiggle")
+                || lower.contains("not simulate"),
+            "{label} must say Never Sleep does not fake HID"
+        );
+        let teams = passages_around(hay, "Teams");
+        assert!(
+            !teams.is_empty(),
+            "{label} should name Teams as a non-goal, not omit it"
+        );
+        for passage in &teams {
+            assert!(
+                teams_passage_is_nongoal(passage),
+                "{label} Teams mention must negate the feature in that passage, got {passage:?}"
+            );
+        }
+        for passage in passages_around(hay, "PowerToys") {
+            assert!(
+                !powertoys_passage_claims_always_on_display(&passage),
+                "{label} must not say PowerToys Awake always keeps the display on, got {passage:?}"
+            );
+        }
+    }
+
+    for (label, hay) in [("Chinese site", &zh_site), ("Chinese README", &zh_readme)] {
+        assert!(
+            hay.contains("Caffeine") && hay.contains("Amphetamine"),
+            "{label} must name the usual keep-awake tools"
+        );
+        assert!(
+            hay.contains("烧屏"),
+            "{label} must name 烧屏 as the cost of leaving the panel on"
+        );
+        assert!(
+            hay.contains("鼠标"),
+            "{label} must name 模拟鼠标 keep-awake"
+        );
+        assert!(
+            hay.contains("不模拟"),
+            "{label} must say Never Sleep 不模拟键鼠"
+        );
+        let teams = passages_around(hay, "Teams");
+        assert!(
+            !teams.is_empty(),
+            "{label} should name Teams as a non-goal, not omit it"
+        );
+        for passage in &teams {
+            assert!(
+                teams_passage_is_nongoal(passage),
+                "{label} Teams mention must negate the feature in that passage, got {passage:?}"
+            );
+        }
+        for passage in passages_around(hay, "PowerToys") {
+            assert!(
+                !powertoys_passage_claims_always_on_display(&passage),
+                "{label} must not say PowerToys Awake always keeps the display on, got {passage:?}"
+            );
+        }
+    }
+
+    let en_faq = en_site
+        .split(r#"id="faq""#)
+        .nth(1)
+        .unwrap_or_else(|| panic!("English FAQ section"));
+    assert!(
+        en_faq.to_ascii_lowercase().contains("caffeine"),
+        "English FAQ must answer how this differs from Caffeine-class tools"
+    );
+    let zh_faq = zh_site
+        .split(r#"id="faq""#)
+        .nth(1)
+        .unwrap_or_else(|| panic!("Chinese FAQ section"));
+    assert!(
+        zh_faq.contains("Caffeine") || zh_faq.contains("Amphetamine") || zh_faq.contains("防休眠"),
+        "Chinese FAQ must answer how this differs from 防休眠 tools"
+    );
+}
+
 #[test]
 fn sitemap_and_robots_point_at_xyz_ai_path() {
     let robots = read("robots.txt");

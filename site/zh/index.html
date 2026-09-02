@@ -75,6 +75,30 @@
               "@type": "Answer",
               "text": "合盖保活是尽力而为。最可靠仍是开盖熄屏。"
             }
+          },
+          {
+            "@type": "Question",
+            "name": "和 Caffeine、Amphetamine 这类防休眠工具有什么不同？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "那些工具让电脑保持唤醒；很多还会让屏幕一直亮着。PowerToys Awake 在 Windows 上同类，但「保持屏幕打开」是可选项。Never Sleep 让电脑保持唤醒，并把显示器关掉。不模拟鼠标或键盘；远程会话点亮屏幕后会再关；不改写节能设置。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "会模拟鼠标让 Teams 保持在线吗？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "不会。不模拟鼠标或键盘，也不会伪装有人在。HID 空闲仍然表示人已离开。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "会不会烧屏？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "默认路径是真·显示器休眠，不是长时间静止亮屏。通宵干活不必把屏幕一直开着。"
+            }
           }
         ]
       }
@@ -92,7 +116,7 @@
           <span class="brand-name">Never Sleep</span>
         </a>
         <nav class="nav-links" aria-label="本页">
-          <a href="#features">为什么</a>
+          <a href="#why">为什么</a>
           <a href="#uses">场景</a>
           <a href="#look">界面</a>
           <a href="#how">怎么用</a>
@@ -140,8 +164,22 @@
   <main id="main">
     <section class="section" id="why">
       <div class="wrap">
-        <h2>只做一件事，不是再做一个 Caffeine</h2>
-        <p class="section-lead"><code>caffeinate</code>、KeepingYouAwake、Amphetamine 默认几乎都是屏幕也别关。这个产品把场景收成一句话：</p>
+        <h2>防休眠工具会把屏幕一直亮着</h2>
+        <p class="section-lead">Caffeine、Amphetamine 和各种模拟鼠标的工具，做的是「永远醒着」：不待机、不锁屏、也不关屏。通宵的活能跑完，一块常亮、画面几乎不动的屏幕也跟着亮一整晚。</p>
+        <div class="grid">
+          <article class="card feature">
+            <h3>屏幕一直亮着</h3>
+            <p>连续数小时的亮屏、静止画面：OLED 烧屏、多余发热、浪费背光，空桌子上一台发光的电脑。</p>
+          </article>
+          <article class="card feature">
+            <h3>模拟键鼠，选项藏很深</h3>
+            <p>有的工具会轻微移动鼠标，或勾选「保持屏幕打开」。允许关屏往往是隐藏选项。Never Sleep 不模拟鼠标或键盘。</p>
+          </article>
+          <article class="card feature">
+            <h3>关屏才是产品</h3>
+            <p>真·显示器休眠，电脑继续干活。远程输入把屏幕点亮，会再关掉。不改写系统节能设置。</p>
+          </article>
+        </div>
         <blockquote class="quote">人走了，屏幕必须灭。机器必须醒。</blockquote>
       </div>
     </section>
@@ -173,7 +211,7 @@
           </article>
           <article class="card feature">
             <h3>长时间任务不用守着</h3>
-            <p>编译、转码、备份、同步可以过夜跑完。时长预设加上电量下限，结束得很干净。</p>
+            <p>通宵 3D 渲染、视频导出、编译、转码、备份、同步——和防休眠工具要干的是同一类活，只是屏幕关掉。时长预设加上电量下限，结束得很干净。</p>
           </article>
         </div>
       </div>
@@ -318,7 +356,7 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
     <section class="section" id="compare">
       <div class="wrap">
         <h2>与常见工具对比</h2>
-        <p class="section-lead">和 README 同一张表——默认关屏才是产品，不是藏起来的选项。</p>
+        <p class="section-lead">「永远醒着」的工具会把灯一直开着。默认关屏才是产品，不是藏起来的选项。</p>
         <div class="table-wrap">
           <table>
             <caption>Never Sleep 与 caffeinate、KeepingYouAwake、Amphetamine</caption>
@@ -404,6 +442,18 @@ never-sleep doctor      <span class="cmt"># 看断言、电池、合盖</span></
           <details>
             <summary>会改系统节能设置吗？</summary>
             <p>不会。只用进程内 IOKit 断言。退出、崩溃或再次启动会还原合盖标志，不改写节能设置。</p>
+          </details>
+          <details>
+            <summary>和 Caffeine、Amphetamine 这类防休眠工具有什么不同？</summary>
+            <p>那些工具让电脑保持唤醒；很多还会让屏幕一直亮着。PowerToys Awake 在 Windows 上同类，但「保持屏幕打开」是可选项。Never Sleep 让电脑保持唤醒，并把显示器关掉。不模拟鼠标或键盘；远程会话点亮屏幕后会再关；不改写节能设置。</p>
+          </details>
+          <details>
+            <summary>会模拟鼠标让 Teams 保持在线吗？</summary>
+            <p>不会。不模拟鼠标或键盘，也不会伪装有人在。HID 空闲仍然表示人已离开。</p>
+          </details>
+          <details>
+            <summary>会不会烧屏？</summary>
+            <p>默认路径是真·显示器休眠，不是长时间静止亮屏。通宵干活不必把屏幕一直开着。</p>
           </details>
           <details>
             <summary>怎么结束关屏待命？</summary>
