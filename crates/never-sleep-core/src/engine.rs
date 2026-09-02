@@ -1,5 +1,7 @@
 use crate::config::AppConfig;
-use crate::duration::{deadline_unix_secs, format_duration};
+use crate::duration::{
+    countdown_secs, deadline_unix_secs, format_duration, hours_elapsed_ms, session_remaining_ms,
+};
 use crate::i18n::{Lang, Tr};
 use crate::status::{build_view_model, HostSnapshot, JsonStatus, ViewModel};
 use crate::DurationPref;
@@ -116,8 +118,9 @@ impl StopReason {
 #[derive(Debug, Clone)]
 struct Session {
     started_ms: u64,
-    _started_unix: i64,
-    _duration: DurationPref,
+    started_continuous_ms: u64,
+    started_unix: i64,
+    duration: DurationPref,
     deadline_unix: Option<i64>,
     initial_display_off_sent: bool,
     last_sleep_display_ms: Option<u64>,
@@ -182,8 +185,9 @@ impl Engine {
             deadline_unix_secs(host.unix_secs, host.utc_offset_secs, host.unix_secs, pref);
         self.session = Some(Session {
             started_ms: host.monotonic_ms,
-            _started_unix: host.unix_secs,
-            _duration: pref,
+            started_continuous_ms: host.continuous_ms,
+            started_unix: host.unix_secs,
+            duration: pref,
             deadline_unix: deadline,
             initial_display_off_sent: false,
             last_sleep_display_ms: None,
@@ -291,10 +295,8 @@ impl Engine {
                 }
             }
         }
-        if let Some(deadline) = session.deadline_unix {
-            if host.unix_secs >= deadline {
-                return Some(StopReason::DurationElapsed);
-            }
+        if self.remaining_ms(session, host) == Some(0) {
+            return Some(StopReason::DurationElapsed);
         }
         None
     }
@@ -337,8 +339,11 @@ impl Engine {
     }
 
     pub fn view(&self, host: &HostSnapshot) -> ViewModel {
-        let (started, deadline) = match &self.session {
-            Some(s) => (Some(s.started_ms), s.deadline_unix),
+        let (elapsed, remaining) = match &self.session {
+            Some(s) => (
+                Some(self.elapsed_secs(s, host)),
+                self.remaining_secs(s, host),
+            ),
             None => (None, None),
         };
         let last_stop = self
@@ -347,20 +352,54 @@ impl Engine {
         build_view_model(
             &self.config,
             self.is_active(),
-            started,
-            deadline,
+            elapsed,
+            remaining,
             host,
             last_stop.as_deref(),
             self.display_asleep(host),
         )
     }
 
+    /// Elapsed milliseconds and optional remaining milliseconds for the UI clock.
+    pub fn session_times(&self, host: &HostSnapshot) -> Option<(u64, Option<u64>)> {
+        let session = self.session.as_ref()?;
+        let elapsed = host.monotonic_ms.saturating_sub(session.started_ms);
+        Some((elapsed, self.remaining_ms(session, host)))
+    }
+
+    fn remaining_ms(&self, session: &Session, host: &HostSnapshot) -> Option<u64> {
+        session.deadline_unix.map(|deadline| {
+            session_remaining_ms(
+                session.duration,
+                deadline,
+                session.started_unix,
+                session.started_continuous_ms,
+                host.continuous_ms,
+                host.unix_secs,
+            )
+        })
+    }
+
+    fn remaining_secs(&self, session: &Session, host: &HostSnapshot) -> Option<u64> {
+        self.remaining_ms(session, host).map(countdown_secs)
+    }
+
+    fn elapsed_secs(&self, session: &Session, host: &HostSnapshot) -> u64 {
+        match session.duration {
+            DurationPref::Hours { .. } => {
+                hours_elapsed_ms(session.started_continuous_ms, host.continuous_ms) / 1_000
+            }
+            DurationPref::UntilLocal { .. } | DurationPref::Indefinite => {
+                crate::elapsed_secs(session.started_ms, host.monotonic_ms)
+            }
+        }
+    }
+
     pub fn json_status(&self, host: &HostSnapshot) -> JsonStatus {
         let (elapsed, remaining) = match &self.session {
             Some(s) => (
-                Some(host.monotonic_ms.saturating_sub(s.started_ms) / 1000),
-                s.deadline_unix
-                    .map(|d| d.saturating_sub(host.unix_secs) as u64),
+                Some(self.elapsed_secs(s, host)),
+                self.remaining_secs(s, host),
             ),
             None => (None, None),
         };
@@ -397,6 +436,7 @@ mod tests {
     fn host(ms: u64) -> HostSnapshot {
         HostSnapshot {
             monotonic_ms: ms,
+            continuous_ms: ms,
             unix_secs: 1_700_000_000 + (ms as i64 / 1000),
             utc_offset_secs: 8 * 3600,
             on_ac: true,
@@ -558,6 +598,121 @@ mod tests {
         h.unix_secs = h0.unix_secs + 3600;
         let e = eng.handle(Input::Tick, &h);
         assert!(has_release(&e));
+    }
+
+    #[test]
+    fn duration_hours_ignores_wall_clock_jump() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(2_000);
+        h.unix_secs = h0.unix_secs + 5;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(
+            !has_release(&e),
+            "a truncated or stepped wall clock must not end a 1h session after 2s"
+        );
+        assert!(eng.is_active());
+        assert_eq!(eng.json_status(&h).remaining_secs, Some(3_598));
+        assert_eq!(eng.json_status(&h).elapsed_secs, Some(2));
+    }
+
+    #[test]
+    fn duration_hours_ignores_large_ntp_forward_correction() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(60_000);
+        h.unix_secs = h0.unix_secs + 3_600;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(
+            !has_release(&e),
+            "a forward NTP/manual correction while the Mac stays awake must not end Hours"
+        );
+        assert!(eng.is_active());
+        assert_eq!(eng.json_status(&h).remaining_secs, Some(3_540));
+        assert_eq!(eng.json_status(&h).elapsed_secs, Some(60));
+    }
+
+    #[test]
+    fn duration_hours_stops_when_monotonic_elapses() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(3_600_000);
+        h.unix_secs = h0.unix_secs;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(
+            has_release(&e),
+            "Hours sessions end when the suspend-aware clock elapses, even if unix_secs is stuck"
+        );
+    }
+
+    #[test]
+    fn duration_hours_stops_after_suspend_when_continuous_clock_elapses() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(2_000);
+        h.monotonic_ms = 2_000;
+        h.continuous_ms = 3_600_000;
+        h.unix_secs = h0.unix_secs;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(
+            has_release(&e),
+            "Instant does not run during system sleep; mach_continuous_time must still end Hours"
+        );
+    }
+
+    #[test]
+    fn hours_countdown_matches_suspend_aware_deadline() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::Hours { hours: 1 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let mut h = host(2_000);
+        h.monotonic_ms = 2_000;
+        h.continuous_ms = 1_800_000;
+        h.unix_secs = h0.unix_secs + 1_800;
+        let e = eng.handle(Input::Tick, &h);
+        assert!(!has_release(&e));
+        assert!(eng.is_active());
+        assert_eq!(
+            eng.json_status(&h).remaining_secs,
+            Some(1_800),
+            "30 minutes of suspend must leave 30 minutes on the countdown, not ~1h"
+        );
+        assert_eq!(eng.json_status(&h).elapsed_secs, Some(1_800));
+        assert_eq!(eng.view(&h).remaining_secs, Some(1_800));
+        assert_eq!(eng.view(&h).elapsed_secs, Some(1_800));
+    }
+
+    #[test]
+    fn until_local_remaining_follows_unix_secs() {
+        let mut cfg = cfg();
+        cfg.duration = DurationPref::UntilLocal { hour: 8, minute: 0 };
+        let mut eng = Engine::new(cfg);
+        let h0 = host(0);
+        eng.handle(Input::Start, &h0);
+        let first = eng.json_status(&h0).remaining_secs.unwrap();
+        let mut later = host(5_000);
+        later.unix_secs = h0.unix_secs;
+        assert_eq!(
+            eng.json_status(&later).remaining_secs,
+            Some(first),
+            "UntilLocal remaining must not drop with monotonic time alone"
+        );
+        later.unix_secs = h0.unix_secs + 10;
+        assert_eq!(eng.json_status(&later).remaining_secs, Some(first - 10));
     }
 
     #[test]

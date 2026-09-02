@@ -73,6 +73,7 @@ mod tests {
         fn snapshot(&self) -> HostSnapshot {
             HostSnapshot {
                 monotonic_ms: 0,
+                continuous_ms: 0,
                 unix_secs: 1_700_000_000,
                 utc_offset_secs: 0,
                 on_ac: true,

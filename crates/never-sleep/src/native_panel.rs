@@ -772,6 +772,10 @@ impl NativePanel {
         self.apply_view();
     }
 
+    pub fn set_elapsed_clock(&self, value: &str) {
+        set_text(&self.elapsed, value);
+    }
+
     pub fn show_help(&mut self) {
         self.open_help(self.current, false);
     }

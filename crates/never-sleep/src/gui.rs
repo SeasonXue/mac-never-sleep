@@ -5,7 +5,7 @@ use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use never_sleep_core::{
     AppConfig, DurationPref, Engine, Input, Lang, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
-    DEFAULT_HOTKEY_LABEL,
+    DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
 };
 use tao::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
 use tao::event::{ElementState, Event, StartCause, WindowEvent};
@@ -22,9 +22,9 @@ use crate::apply::{dispatch, stop_for_quit};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
-    dismiss_on_focus_loss, panel_placement, panel_state, panel_tick_ms, panel_window_y,
-    physical_to_logical, suppress_tray_reopen, window_height, window_width, PanelPlacement,
-    PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH,
+    dismiss_on_focus_loss, panel_clock_delay_ms, panel_clock_only_changed, panel_placement,
+    panel_state, panel_window_y, physical_to_logical, suppress_tray_reopen, window_height,
+    window_width, PanelPlacement, PanelState, ToggleGate, PANEL_HEIGHT, PANEL_WIDTH,
 };
 use crate::persist::{load_config, save_config};
 use crate::platform::{default_platform, Platform};
@@ -197,6 +197,15 @@ impl Popover {
         if self.last.as_ref() == Some(&state) {
             return;
         }
+        if self
+            .last
+            .as_ref()
+            .is_some_and(|prev| panel_clock_only_changed(prev, &state))
+        {
+            self.ui.set_elapsed_clock(&state.elapsed_clock);
+            self.last = Some(state);
+            return;
+        }
         self.ui.apply(&state);
         self.last = Some(state);
     }
@@ -293,14 +302,12 @@ pub fn run() {
     };
     let mut tray: Option<TrayIcon> = None;
     let mut tray_active: Option<bool> = None;
-    let mut last_tick = Instant::now();
+    let mut next_wake = Instant::now() + Duration::from_millis(HEARTBEAT_MS);
     let mut shown_onboarding = engine.config.onboarding_done;
     let mut toggle_gate = ToggleGate::default();
 
     event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::WaitUntil(
-            Instant::now() + Duration::from_millis(panel_tick_ms(engine.is_active())),
-        );
+        *control_flow = ControlFlow::WaitUntil(next_wake);
 
         while let Ok(incoming) = ipc_rx.try_recv() {
             handle_ipc(&mut engine, platform.as_mut(), incoming);
@@ -311,6 +318,7 @@ pub fn run() {
                 &mut popover,
                 &engine,
                 platform.as_mut(),
+                &mut next_wake,
             );
         }
 
@@ -339,21 +347,20 @@ pub fn run() {
                     &mut popover,
                     &engine,
                     platform.as_mut(),
+                    &mut next_wake,
                 );
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
-                if last_tick.elapsed() >= Duration::from_millis(400) {
-                    last_tick = Instant::now();
-                    dispatch(&mut engine, platform.as_mut(), Input::Tick);
-                    refresh_ui(
-                        &handles,
-                        &mut tray,
-                        &mut tray_active,
-                        &mut popover,
-                        &engine,
-                        platform.as_mut(),
-                    );
-                }
+                dispatch(&mut engine, platform.as_mut(), Input::Tick);
+                refresh_ui(
+                    &handles,
+                    &mut tray,
+                    &mut tray_active,
+                    &mut popover,
+                    &engine,
+                    platform.as_mut(),
+                    &mut next_wake,
+                );
             }
             Event::UserEvent(UserEvent::Menu(id)) => {
                 handle_menu_event(
@@ -371,6 +378,7 @@ pub fn run() {
                     &mut popover,
                     &engine,
                     platform.as_mut(),
+                    &mut next_wake,
                 );
             }
             Event::UserEvent(UserEvent::Hotkey) => {
@@ -382,6 +390,7 @@ pub fn run() {
                     &mut popover,
                     &engine,
                     platform.as_mut(),
+                    &mut next_wake,
                 );
             }
             Event::UserEvent(UserEvent::Tray(rect)) => {
@@ -392,6 +401,7 @@ pub fn run() {
                     &mut popover,
                     &engine,
                     platform.as_mut(),
+                    &mut next_wake,
                 );
                 if let Some(panel) = popover.as_mut() {
                     panel.toggle_at(rect);
@@ -419,6 +429,7 @@ pub fn run() {
                     &mut popover,
                     &engine,
                     platform.as_mut(),
+                    &mut next_wake,
                 );
             }
             Event::WindowEvent {
@@ -614,6 +625,7 @@ fn refresh_ui(
     popover: &mut Option<Popover>,
     engine: &Engine,
     platform: &mut dyn Platform,
+    next_wake: &mut Instant,
 ) {
     let host = platform.snapshot();
     let vm = engine.view(&host);
@@ -668,6 +680,11 @@ fn refresh_ui(
     if let (Some(panel), Some(state)) = (popover.as_mut(), next) {
         panel.update(state);
     }
+    let delay = match engine.session_times(&host) {
+        Some((elapsed, remaining)) => panel_clock_delay_ms(true, remaining, elapsed),
+        None => HEARTBEAT_MS,
+    };
+    *next_wake = Instant::now() + Duration::from_millis(delay);
 }
 
 fn handle_menu_event(

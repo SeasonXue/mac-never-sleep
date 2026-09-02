@@ -22,6 +22,9 @@ impl Thermal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostSnapshot {
     pub monotonic_ms: u64,
+    /// Clock that keeps running during system sleep and does not jump with NTP.
+    /// On macOS this is `mach_continuous_time`; `monotonic_ms` is `Instant`.
+    pub continuous_ms: u64,
     pub unix_secs: i64,
     /// Seconds east of UTC.
     pub utc_offset_secs: i32,
@@ -79,13 +82,15 @@ pub struct ViewModel {
     pub user_present: bool,
     /// Elapsed seconds in the current session; `None` while idle.
     pub elapsed_secs: Option<u64>,
+    /// Remaining whole seconds when a deadline is set; `None` while idle or indefinite.
+    pub remaining_secs: Option<u64>,
 }
 
 pub fn build_view_model(
     cfg: &AppConfig,
     active: bool,
-    started_ms: Option<u64>,
-    deadline_unix: Option<i64>,
+    elapsed_secs: Option<u64>,
+    remaining_secs: Option<u64>,
     host: &HostSnapshot,
     last_stop: Option<&str>,
     display_asleep: bool,
@@ -105,11 +110,8 @@ pub fn build_view_model(
         }
     }
 
-    let elapsed = started_ms.map(|s| host.monotonic_ms.saturating_sub(s) / 1000);
-    let remaining = deadline_unix.map(|d| d.saturating_sub(host.unix_secs) as u64);
-
     let status_line = if active {
-        match elapsed {
+        match elapsed_secs {
             Some(s) => t.standby_elapsed(&format_duration(lang, s)),
             None => t.standby_status().into(),
         }
@@ -148,7 +150,7 @@ pub fn build_view_model(
         if let Some(b) = host.battery_percent {
             details.push(t.battery_percent(b));
         }
-        if let Some(r) = remaining {
+        if let Some(r) = remaining_secs {
             details.push(t.remaining(&format_duration(lang, r)));
         }
     } else {
@@ -182,7 +184,7 @@ pub fn build_view_model(
         detail_line,
         primary_action,
         tooltip,
-        remaining_label: remaining.map(|r| format_duration(lang, r)),
+        remaining_label: remaining_secs.map(|r| format_duration(lang, r)),
         warnings,
         duration: cfg.duration,
         screen_off: cfg.screen_off,
@@ -193,7 +195,8 @@ pub fn build_view_model(
         battery_floor_label: cfg.battery_floor_label(),
         display_asleep,
         user_present: host.user_present(cfg.user_idle_resleep_ms),
-        elapsed_secs: if active { elapsed } else { None },
+        elapsed_secs: if active { elapsed_secs } else { None },
+        remaining_secs: if active { remaining_secs } else { None },
     }
 }
 
@@ -205,6 +208,7 @@ mod tests {
     fn host() -> HostSnapshot {
         HostSnapshot {
             monotonic_ms: 5_000,
+            continuous_ms: 5_000,
             unix_secs: 1_700_000_000,
             utc_offset_secs: 0,
             on_ac: true,
@@ -282,6 +286,7 @@ mod tests {
         assert!(!view.display_asleep);
         assert!(view.user_present);
         assert_eq!(view.elapsed_secs, None);
+        assert_eq!(view.remaining_secs, None);
     }
 
     #[test]
@@ -289,9 +294,19 @@ mod tests {
         let cfg = AppConfig::default();
         let mut h = host();
         h.monotonic_ms = 66_000;
-        let view = build_view_model(&cfg, true, Some(1_000), None, &h, None, false);
+        let view = build_view_model(&cfg, true, Some(65), None, &h, None, false);
         assert_eq!(view.elapsed_secs, Some(65));
+        assert_eq!(view.remaining_secs, None);
         assert_eq!(view.primary_action, cfg.tr().end_standby());
+    }
+
+    #[test]
+    fn remaining_secs_surface_on_the_view() {
+        let cfg = AppConfig::default();
+        let view = build_view_model(&cfg, true, Some(0), Some(3_598), &host(), None, false);
+        assert_eq!(view.elapsed_secs, Some(0));
+        assert_eq!(view.remaining_secs, Some(3_598));
+        assert!(view.remaining_label.is_some());
     }
 
     #[test]
@@ -299,10 +314,10 @@ mod tests {
         let cfg = AppConfig::default();
         let mut away = host();
         away.hid_idle_ms = 80_000;
-        let view = build_view_model(&cfg, true, Some(1_000), None, &away, None, true);
+        let view = build_view_model(&cfg, true, Some(0), None, &away, None, true);
         assert!(view.display_asleep);
         assert!(!view.user_present);
-        let present = build_view_model(&cfg, true, Some(1_000), None, &host(), None, false);
+        let present = build_view_model(&cfg, true, Some(0), None, &host(), None, false);
         assert!(!present.display_asleep);
         assert!(present.user_present);
     }

@@ -294,6 +294,10 @@ mod tests {
             src.contains("elapsed"),
             "moon mode shows an elapsed clock beside End Standby"
         );
+        assert!(
+            src.contains("set_elapsed_clock"),
+            "a 1s clock tick must not rebuild the duration popup"
+        );
         assert!(!src.contains("breathe"), "the Start pill must not pulse");
         assert!(
             !src.contains("session_card"),
@@ -834,8 +838,16 @@ mod tests {
     fn gui_ignores_queued_toggle_clicks_until_refresh() {
         let gui = include_str!("gui.rs");
         assert!(
-            gui.contains("panel_tick_ms"),
-            "the pill clock ticks every second while a session is running"
+            gui.contains("panel_clock_delay_ms"),
+            "the session clock wakes on second boundaries while a session is running"
+        );
+        assert!(
+            gui.contains("next_wake"),
+            "WaitUntil must not be reset to now+interval on every event"
+        );
+        assert!(
+            gui.contains("panel_clock_only_changed"),
+            "a clock tick must not rebuild the settings popup"
         );
         assert!(
             gui.contains("SleepDisplayNow"),
