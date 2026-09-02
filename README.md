@@ -58,7 +58,9 @@ The job is always the same: **display off, Mac awake**. That is useful for more 
 
 ## Why this, instead of the usual keep-awake tools
 
-“Work only, awake forever” tools — Caffeine, Amphetamine, PowerToys Awake, Don't Sleep, mouse jigglers — exist so a job never stops: overnight renders, compiles, remote desktops, unattended scripts. They do it by simulating a tiny mouse twitch, or by telling the OS **not to sleep the display**. The machine stays up. So does a bright, often static panel.
+“Work only, awake forever” tools — Caffeine, Amphetamine, Don't Sleep, mouse jigglers — exist so a job never stops: overnight renders, compiles, remote desktops, unattended scripts. They do it by simulating a tiny mouse twitch, or by telling the OS **not to sleep the display**. The machine stays up. So does a bright, often static panel.
+
+PowerToys Awake on Windows is the same job, except Keep screen on is optional.
 
 That is the pain:
 
