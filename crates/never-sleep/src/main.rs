@@ -842,6 +842,15 @@ mod tests {
             "the session clock wakes on second boundaries while a session is running"
         );
         assert!(
+            !gui.contains("panel_tick_ms"),
+            "gui.rs must not call the coarse panel_tick_ms helper; that is dead_code on macOS release"
+        );
+        let panel = include_str!("panel.rs");
+        assert!(
+            panel.contains("#[cfg(test)]\npub fn panel_tick_ms"),
+            "panel_tick_ms is test-only so `cargo build --release` on macOS stays warning-free"
+        );
+        assert!(
             gui.contains("next_wake"),
             "WaitUntil must not be reset to now+interval on every event"
         );
