@@ -273,6 +273,8 @@ pub fn session_clock_label(vm: &ViewModel) -> String {
 }
 
 /// Event-loop wait while a session is running so the elapsed clock ticks every second.
+/// Test helper: the GUI uses `panel_clock_delay_ms` so wakes land on second boundaries.
+#[cfg(test)]
 pub fn panel_tick_ms(active: bool) -> u64 {
     panel_clock_delay_ms(active, None, 0)
 }

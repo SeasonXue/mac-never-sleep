@@ -510,6 +510,29 @@ fn pages_do_not_advertise_building_from_source() {
 }
 
 #[test]
+fn workspace_crate_version_matches_info_plist() {
+    let version = shipping_app_version();
+    let cargo = fs::read_to_string(readme_root().join("Cargo.toml"))
+        .expect("workspace Cargo.toml must exist");
+    let workspace = cargo
+        .split("[workspace.package]")
+        .nth(1)
+        .expect("workspace.package");
+    let cargo_version = workspace
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("version = \"")
+                .and_then(|rest| rest.strip_suffix('"'))
+        })
+        .expect("workspace.package version");
+    assert_eq!(
+        cargo_version, version,
+        "Cargo.toml and Info.plist must ship the same version"
+    );
+}
+
+#[test]
 fn pages_show_the_shipping_app_version() {
     let version = shipping_app_version();
     assert!(
