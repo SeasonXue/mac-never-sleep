@@ -268,6 +268,96 @@ fn copy_covers_everyday_use_cases_not_only_chatgpt() {
 }
 
 #[test]
+fn copy_names_keep_awake_pain_and_display_off_fix() {
+    let en_site = read("index.html");
+    let zh_site = read("zh/index.html");
+    let en_readme = fs::read_to_string(readme_root().join("README.md"))
+        .unwrap_or_else(|err| panic!("missing README.md: {err}"));
+    let zh_readme = fs::read_to_string(readme_root().join("README.zh-CN.md"))
+        .unwrap_or_else(|err| panic!("missing README.zh-CN.md: {err}"));
+
+    assert!(
+        en_site.contains(r#"id="why""#) && en_site.contains(r##"href="#why""##),
+        "English nav must send Why to the keep-awake contrast, not skip it"
+    );
+    assert!(
+        zh_site.contains(r#"id="why""#) && zh_site.contains(r##"href="#why""##),
+        "Chinese nav must reach the 防休眠 contrast section"
+    );
+
+    for (label, hay) in [("English site", &en_site), ("English README", &en_readme)] {
+        let lower = hay.to_ascii_lowercase();
+        assert!(
+            lower.contains("caffeine") && lower.contains("amphetamine"),
+            "{label} must name the usual keep-awake tools"
+        );
+        assert!(
+            lower.contains("burn-in") || lower.contains("oled"),
+            "{label} must name the lit-panel cost (OLED burn-in)"
+        );
+        assert!(
+            lower.contains("mouse"),
+            "{label} must name mouse-jiggle keep-awake, got no mouse"
+        );
+        assert!(
+            lower.contains("does not simulate")
+                || lower.contains("do not simulate")
+                || lower.contains("does not jiggle")
+                || lower.contains("not simulate"),
+            "{label} must say Never Sleep does not fake HID"
+        );
+        if lower.contains("teams") {
+            assert!(
+                lower.contains("not") || lower.contains("does not") || lower.contains("do not"),
+                "{label} may mention Teams only as a non-goal, not a feature"
+            );
+        }
+    }
+
+    for (label, hay) in [("Chinese site", &zh_site), ("Chinese README", &zh_readme)] {
+        assert!(
+            hay.contains("Caffeine") && hay.contains("Amphetamine"),
+            "{label} must name the usual keep-awake tools"
+        );
+        assert!(
+            hay.contains("烧屏"),
+            "{label} must name 烧屏 as the cost of leaving the panel on"
+        );
+        assert!(
+            hay.contains("鼠标"),
+            "{label} must name 模拟鼠标 keep-awake"
+        );
+        assert!(
+            hay.contains("不模拟"),
+            "{label} must say Never Sleep 不模拟键鼠"
+        );
+        if hay.contains("Teams") {
+            assert!(
+                hay.contains("不会") || hay.contains("不是") || hay.contains("不模拟"),
+                "{label} may mention Teams only as a non-goal, not a feature"
+            );
+        }
+    }
+
+    let en_faq = en_site
+        .split(r#"id="faq""#)
+        .nth(1)
+        .unwrap_or_else(|| panic!("English FAQ section"));
+    assert!(
+        en_faq.to_ascii_lowercase().contains("caffeine"),
+        "English FAQ must answer how this differs from Caffeine-class tools"
+    );
+    let zh_faq = zh_site
+        .split(r#"id="faq""#)
+        .nth(1)
+        .unwrap_or_else(|| panic!("Chinese FAQ section"));
+    assert!(
+        zh_faq.contains("Caffeine") || zh_faq.contains("Amphetamine") || zh_faq.contains("防休眠"),
+        "Chinese FAQ must answer how this differs from 防休眠 tools"
+    );
+}
+
+#[test]
 fn sitemap_and_robots_point_at_xyz_ai_path() {
     let robots = read("robots.txt");
     assert!(robots.contains("User-agent: *"));

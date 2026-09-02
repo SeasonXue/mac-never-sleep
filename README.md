@@ -54,13 +54,21 @@ The job is always the same: **display off, Mac awake**. That is useful for more 
 - **Protect the display** — real display sleep, not brightness 0. Less heat and wear on the panel, and the desk stays dark.
 - **Lower idle power** — the backlight is a large part of a MacBook’s idle draw. Sleep the panel; keep CPU, disk, and network available.
 - **Remote sessions** — ChatGPT, Codex, Cursor, Screen Sharing, or SSH. If remote input wakes the panel, it goes dark again while you are away.
-- **Long-running jobs** — compiles, encodes, backups, and syncs can finish overnight. Duration presets (1 / 3 / 8 hours, or until 08:00) and a battery floor stop it safely.
+- **Long-running jobs** — overnight 3D renders, video exports, compiles, encodes, backups, and syncs. The same work people buy keep-awake tools for, without a lit panel for hours. Duration presets (1 / 3 / 8 hours, or until 08:00) and a battery floor stop it safely.
 
-## Why this, instead of the usual tools
+## Why this, instead of the usual keep-awake tools
 
-Built-in `caffeinate` and menu-bar apps like KeepingYouAwake / Amphetamine all mean “don’t sleep”. Their default path is almost always **keep the display on**, or they bury “allow display sleep” deep in options. Closed-lid stay-awake often needs an Enhancer, or rewriting `pmset`, and can leave power policy dirty after quit.
+“Work only, awake forever” tools — Caffeine, Amphetamine, PowerToys Awake, Don't Sleep, mouse jigglers — exist so a job never stops: overnight renders, compiles, remote desktops, unattended scripts. They do it by simulating a tiny mouse twitch, or by telling the OS **not to sleep the display**. The machine stays up. So does a bright, often static panel.
 
-This product collapses the scenario to one job:
+That is the pain:
+
+- **The screen stays on.** OLED burn-in, extra heat, wasted backlight, and a glowing laptop on an empty desk.
+- **“Allow display sleep” is buried**, if it exists at all. Default is keep the panel lit (`caffeinate -d`, “keep screen on”).
+- **Fake input is a lie.** Jiggling the mouse looks like a person is there. Never Sleep does not simulate a mouse or keyboard, so it will not keep Teams “Available”.
+- **Nothing puts the panel back to sleep** if a remote session wakes it.
+- **Some tools rewrite Energy Saver** (`pmset`) and leave the Mac unable to sleep after a crash.
+
+This product is the other job:
 
 > When you leave, the display must go dark (panel, power, privacy). The machine must stay awake (downloads, a mini server, remote sessions).
 
