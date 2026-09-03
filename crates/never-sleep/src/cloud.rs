@@ -4,6 +4,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -56,6 +57,8 @@ pub struct CloudHandle {
     events: mpsc::Receiver<CloudEvent>,
     join: Option<thread::JoinHandle<()>>,
     held_commands: Mutex<Vec<RemoteCommand>>,
+    /// Set before the wake sender is dropped so a full channel cannot lose Detach.
+    detached: Arc<AtomicBool>,
 }
 
 impl CloudHandle {
@@ -80,6 +83,7 @@ impl CloudHandle {
     /// Stop heartbeats without marking the Mac offline. The menu reporter owns
     /// the next POST.
     pub fn detach(mut self) {
+        self.detached.store(true, Ordering::SeqCst);
         if let Some(wake) = self.wake.take() {
             let _ = wake.try_send(ReporterWake::Detach);
         }
@@ -524,9 +528,11 @@ pub(crate) trait CloudTransport {
 
 pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang) -> CloudHandle {
     let latest = Arc::new(Mutex::new(None));
+    let detached = Arc::new(AtomicBool::new(false));
     let (wake_tx, wake_rx) = mpsc::sync_channel(2);
     let (event_tx, event_rx) = mpsc::channel();
     let latest_for_thread = Arc::clone(&latest);
+    let detached_for_thread = Arc::clone(&detached);
     let join = thread::Builder::new()
         .name("never-sleep-cloud".into())
         .spawn(move || {
@@ -539,6 +545,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
                 wake_rx,
                 latest_for_thread,
                 event_tx,
+                detached_for_thread,
             );
         })
         .ok();
@@ -548,6 +555,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
         events: event_rx,
         join,
         held_commands: Mutex::new(Vec::new()),
+        detached,
     }
 }
 
@@ -608,6 +616,18 @@ fn reporter_marks_offline(
     }
 }
 
+fn reporter_goes_offline(
+    recv: Result<ReporterWake, RecvTimeoutError>,
+    drained_shutdown: bool,
+    drained_detach: bool,
+    detached: bool,
+) -> bool {
+    if detached {
+        return false;
+    }
+    reporter_marks_offline(recv, drained_shutdown, drained_detach)
+}
+
 fn reporter_loop(
     identity: CloudIdentity,
     display_name: String,
@@ -615,6 +635,7 @@ fn reporter_loop(
     wake_rx: mpsc::Receiver<ReporterWake>,
     latest: Arc<Mutex<Option<(JsonStatus, Lang)>>>,
     event_tx: mpsc::Sender<CloudEvent>,
+    detached: Arc<AtomicBool>,
 ) {
     let mut gate = ReporterGate::default();
     let mut inbox = CommandInbox::default();
@@ -624,7 +645,12 @@ fn reporter_loop(
             let recv = wake_rx.recv_timeout(Duration::from_secs(3));
             let (drained_shutdown, drained_detach) = drain_reporter_wakes(&wake_rx);
             let shutting_down = shutting_down_from_wake(recv, drained_shutdown || drained_detach);
-            let offline = reporter_marks_offline(recv, drained_shutdown, drained_detach);
+            let offline = reporter_goes_offline(
+                recv,
+                drained_shutdown,
+                drained_detach,
+                detached.load(Ordering::SeqCst) || drained_detach,
+            );
             if shutting_down && !offline {
                 break;
             }
@@ -852,6 +878,7 @@ mod tests {
             events,
             join: None,
             held_commands: Mutex::new(Vec::new()),
+            detached: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -1433,6 +1460,7 @@ mod tests {
             events: event_rx,
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
+            detached: Arc::new(AtomicBool::new(false)),
         };
         let mut inactive = sample_status();
         inactive.active = false;
@@ -1478,6 +1506,48 @@ mod tests {
             false,
             false
         ));
+        assert!(
+            !reporter_goes_offline(Err(RecvTimeoutError::Disconnected), false, false, true),
+            "dropping the sender after a lost Detach must not POST offline:true"
+        );
+        assert!(reporter_goes_offline(
+            Err(RecvTimeoutError::Disconnected),
+            false,
+            false,
+            false
+        ));
+        assert!(
+            !reporter_goes_offline(Ok(ReporterWake::Snapshot), true, false, true),
+            "Snapshot + drained shutdown after a full wake channel must honor detach"
+        );
+    }
+
+    #[test]
+    fn detach_records_intent_when_wake_channel_is_full() {
+        let (wake_tx, wake_rx) = mpsc::sync_channel(2);
+        wake_tx.try_send(ReporterWake::Snapshot).unwrap();
+        wake_tx.try_send(ReporterWake::Snapshot).unwrap();
+        let detached = Arc::new(AtomicBool::new(false));
+        let (_event_tx, event_rx) = mpsc::channel();
+        let handle = CloudHandle {
+            latest: Arc::new(Mutex::new(None)),
+            wake: Some(wake_tx),
+            events: event_rx,
+            join: None,
+            held_commands: Mutex::new(Vec::new()),
+            detached: Arc::clone(&detached),
+        };
+        handle.detach();
+        assert!(
+            detached.load(Ordering::SeqCst),
+            "Detach intent must outlive a full wake channel"
+        );
+        assert_eq!(wake_rx.try_recv(), Ok(ReporterWake::Snapshot));
+        assert_eq!(wake_rx.try_recv(), Ok(ReporterWake::Snapshot));
+        assert!(
+            wake_rx.try_recv().is_err(),
+            "the Detach wake itself may be dropped when the channel is full"
+        );
     }
 
     #[test]
@@ -1497,6 +1567,7 @@ mod tests {
             events: event_rx,
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
+            detached: Arc::new(AtomicBool::new(false)),
         };
         handle.detach();
         assert_eq!(
@@ -1523,6 +1594,7 @@ mod tests {
             events: event_rx,
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
+            detached: Arc::new(AtomicBool::new(false)),
         };
         let mut inactive = sample_status();
         inactive.active = false;
