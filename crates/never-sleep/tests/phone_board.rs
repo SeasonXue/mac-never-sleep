@@ -110,6 +110,8 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("function canStoreClaim"));
     assert!(js.contains("storageCanHold"));
     assert!(js.contains("claimReservation"));
+    assert!(js.contains("MAX_DISPLAY_NAME_CHARS = 128"));
+    assert!(js.contains("function boundDisplayName"));
     assert!(js.contains("storageError"));
     assert!(
         !js.contains("padStart(2, \"0\")}:00"),
@@ -157,8 +159,11 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("bestEffortCleanup"));
     assert!(index.contains("bestEffortCleanup"));
     assert!(board.contains("alarmNeedsUpdate"));
+    assert!(index.contains("commitPersistedAlarm"));
     assert!(board.contains("commitAlarmUnix"));
-    assert!(index.contains("commitAlarmUnix"));
+    assert!(board.contains("commitPersistedAlarm"));
+    assert!(board.contains("MAX_DISPLAY_NAME_CHARS"));
+    assert!(board.contains("boundDisplayName"));
     let persist = index
         .split("async #persist()")
         .nth(1)
@@ -177,6 +182,9 @@ fn worker_shards_per_device_not_one_global_board() {
     );
     let cloud = read("crates/never-sleep/src/cloud.rs");
     assert!(cloud.contains("retain_pending"));
+    assert!(cloud.contains("take_latest"));
+    assert!(cloud.contains("should_reporter_tick"));
+    assert!(cloud.contains("bound_display_name"));
     assert!(
         !cloud.contains("const CAP: usize = 64"),
         "delivered command ids must not be truncated before ack"

@@ -168,13 +168,24 @@ pub fn cloud_enabled() -> bool {
     cfg!(target_os = "macos") || std::env::var(CLOUD_URL_ENV).is_ok()
 }
 
+/// Phone-board cards and localStorage reservations share this cap.
+pub const MAX_DISPLAY_NAME_CHARS: usize = 128;
+
+pub fn bound_display_name(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return "Mac".into();
+    }
+    trimmed.chars().take(MAX_DISPLAY_NAME_CHARS).collect()
+}
+
 pub fn default_display_name() -> String {
     if let Ok(name) = std::env::var("NEVER_SLEEP_DEVICE_NAME") {
         if !name.trim().is_empty() {
-            return name.trim().to_string();
+            return bound_display_name(&name);
         }
     }
-    hostname_from_os().unwrap_or_else(|| "Mac".into())
+    bound_display_name(&hostname_from_os().unwrap_or_else(|| "Mac".into()))
 }
 
 /// Parse a gethostname / C-string buffer. Used so tests can lock the Mac name
@@ -397,8 +408,17 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
     }
 }
 
+#[cfg(test)]
 fn clone_latest(latest: &Mutex<Option<(JsonStatus, Lang)>>) -> Option<(JsonStatus, Lang)> {
     latest.lock().ok().and_then(|slot| slot.clone())
+}
+
+fn take_latest(latest: &Mutex<Option<(JsonStatus, Lang)>>) -> Option<(JsonStatus, Lang)> {
+    latest.lock().ok().and_then(|mut slot| slot.take())
+}
+
+fn should_reporter_tick(fresh: bool, shutting_down: bool) -> bool {
+    fresh || shutting_down
 }
 
 fn shutting_down_from_wake(
@@ -446,8 +466,13 @@ fn reporter_loop(
             let drained_shutdown = drain_reporter_wakes(&wake_rx);
             shutting_down_from_wake(recv, drained_shutdown)
         };
-        if let Some(pair) = clone_latest(&latest) {
+        let mut fresh = false;
+        if let Some(pair) = take_latest(&latest) {
             last = Some(pair);
+            fresh = true;
+        }
+        if !should_reporter_tick(fresh, shutting_down) {
+            continue;
         }
         let Some((status, lang)) = last.as_ref() else {
             if shutting_down {
@@ -1140,6 +1165,52 @@ mod tests {
         assert!(!gate.needs_pair_start());
         assert_eq!(*transport.pair_calls.lock().unwrap(), 3);
         assert_eq!(*transport.beat_calls.lock().unwrap(), 4);
+    }
+
+    #[test]
+    fn stale_snapshot_is_not_heartbeated_until_main_loop_refreshes() {
+        assert!(
+            !should_reporter_tick(false, false),
+            "a blocked osascript dialog must not keep the Mac online or ack commands"
+        );
+        assert!(
+            should_reporter_tick(true, false),
+            "a freshly pushed main-loop snapshot may heartbeat"
+        );
+        assert!(
+            should_reporter_tick(false, true),
+            "quit still POSTs the last snapshot"
+        );
+        let src = include_str!("cloud.rs");
+        assert!(src.contains("take_latest"));
+        assert!(src.contains("should_reporter_tick(fresh, shutting_down)"));
+    }
+
+    #[test]
+    fn take_latest_consumes_the_main_loop_snapshot() {
+        let slot = Mutex::new(Some((sample_status(), Lang::En)));
+        assert!(take_latest(&slot).is_some());
+        assert!(
+            take_latest(&slot).is_none(),
+            "do not replay last after the reporter already sent it"
+        );
+    }
+
+    #[test]
+    fn display_name_is_capped_before_it_is_advertised() {
+        assert_eq!(
+            bound_display_name(&"x".repeat(200)).chars().count(),
+            MAX_DISPLAY_NAME_CHARS
+        );
+        assert_eq!(
+            bound_display_name(&"名".repeat(200)).chars().count(),
+            MAX_DISPLAY_NAME_CHARS
+        );
+        assert_eq!(bound_display_name("  Studio  "), "Studio");
+        assert_eq!(bound_display_name("   "), "Mac");
+        assert!(default_display_name().chars().count() <= MAX_DISPLAY_NAME_CHARS);
+        let src = include_str!("cloud.rs");
+        assert!(src.contains("bound_display_name"));
     }
 
     #[test]

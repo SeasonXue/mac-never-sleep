@@ -1,6 +1,7 @@
 (() => {
   const STORAGE_KEY = "never-sleep-devices";
   const LIST_MAX_DEVICES = 32;
+  const MAX_DISPLAY_NAME_CHARS = 128;
   const zh = document.documentElement.lang.startsWith("zh");
 
   const copy = zh
@@ -84,11 +85,18 @@
     return next;
   }
 
+  function boundDisplayName(name) {
+    if (typeof name !== "string") return "Mac";
+    const trimmed = name.trim();
+    if (!trimmed) return "Mac";
+    return [...trimmed].slice(0, MAX_DISPLAY_NAME_CHARS).join("");
+  }
+
   function claimReservation() {
     return {
       device_id: "f".repeat(64),
       device_token: "f".repeat(128),
-      display_name: "Mac".repeat(16),
+      display_name: "M".repeat(MAX_DISPLAY_NAME_CHARS),
     };
   }
 
@@ -445,7 +453,7 @@
       const devices = withDevices(loadDevices(), {
         device_id: json.device_id,
         device_token: json.device_token,
-        display_name: json.display_name,
+        display_name: boundDisplayName(json.display_name),
       });
       saveDevices(devices);
       input.value = "";

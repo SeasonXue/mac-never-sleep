@@ -15,7 +15,7 @@ import {
   publishReservedPairing,
   shardName,
   bestEffortCleanup,
-  commitAlarmUnix,
+  commitPersistedAlarm,
   pairingCodeIsLive,
 } from "./board.js";
 
@@ -85,7 +85,7 @@ export class BoardHub {
 
   async #scheduleAlarm() {
     const next = this.board.nextAlarmUnix();
-    this.alarmUnix = await commitAlarmUnix(this.alarmUnix, next, async (unix) => {
+    this.alarmUnix = await commitPersistedAlarm(this.alarmUnix, next, async (unix) => {
       if (unix == null) {
         await this.ctx.storage.deleteAlarm();
       } else {

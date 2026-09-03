@@ -24,7 +24,10 @@ import {
   shardName,
   alarmNeedsUpdate,
   bestEffortCleanup,
+  boundDisplayName,
   commitAlarmUnix,
+  commitPersistedAlarm,
+  MAX_DISPLAY_NAME_CHARS,
 } from "../src/board.js";
 
 function sampleStatus(overrides = {}) {
@@ -1168,6 +1171,55 @@ test("alarm scheduling failure is propagated so pair/start can retry", async () 
   assert.equal(skipped, 1_600);
 });
 
+test("claim still returns after a transient deleteAlarm failure", async () => {
+  const cleared = await commitPersistedAlarm(1_600, null, async () => {
+    throw new Error("transient deleteAlarm");
+  });
+  assert.equal(
+    cleared,
+    1_600,
+    "the one-time code is already persisted; keep retrying delete later",
+  );
+  await assert.rejects(
+    () =>
+      commitPersistedAlarm(1_600, 1_700, async () => {
+        throw new Error("transient setAlarm");
+      }),
+    /transient setAlarm/,
+    "pair/start still needs setAlarm to succeed",
+  );
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  assert.match(
+    index,
+    /commitPersistedAlarm/,
+    "BoardHub must not fail a persisted claim when deleteAlarm rejects",
+  );
+});
+
+test("pair/start and claim cap oversized display names", async () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  const long = "名".repeat(200);
+  const started = await json(
+    await post(board, "/api/pair/start", {
+      ...id,
+      display_name: long,
+    }),
+  );
+  assert.equal(started.status, 200);
+  const claimed = await json(
+    await post(board, "/api/pair/claim", {
+      pairing_code: started.body.pairing_code,
+    }),
+  );
+  assert.equal(claimed.status, 200);
+  assert.equal([...claimed.body.display_name].length, MAX_DISPLAY_NAME_CHARS);
+  assert.equal(boundDisplayName(long).length, MAX_DISPLAY_NAME_CHARS);
+  assert.equal(boundDisplayName("  Studio  "), "Studio");
+  assert.equal(boundDisplayName("   "), "Mac");
+});
+
 test("failed persist restores the live board from the stored snapshot", () => {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
@@ -1224,10 +1276,15 @@ test("claim reserves space for the credential when quota is almost full", () => 
     "board.js must build the prospective device list before claiming",
   );
   const end = src.indexOf("\n  async function post(");
-  const { withDevices, storageCanHold, canStoreClaim, claimReservation } =
-    new Function(
-      `const LIST_MAX_DEVICES = 32;\n${src.slice(start, end)}\nreturn { withDevices, storageCanHold, canStoreClaim, claimReservation };`,
-    )();
+  const {
+    withDevices,
+    storageCanHold,
+    canStoreClaim,
+    claimReservation,
+    boundDisplayName,
+  } = new Function(
+    `const LIST_MAX_DEVICES = 32;\nconst MAX_DISPLAY_NAME_CHARS = 128;\n${src.slice(start, end)}\nreturn { withDevices, storageCanHold, canStoreClaim, claimReservation, boundDisplayName };`,
+  )();
 
   const STORAGE_KEY = "never-sleep-devices";
   const existing = [];
@@ -1263,6 +1320,63 @@ test("claim reserves space for the credential when quota is almost full", () => 
     "do not consume the one-time code before the credential payload fits",
   );
   assert.match(src, /storageError/);
+  assert.equal(boundDisplayName("名".repeat(200)).length, MAX_DISPLAY_NAME_CHARS);
+});
+
+test("claim reservation covers a max-length display name near quota", () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function withDevices");
+  const end = src.indexOf("\n  async function post(");
+  const { withDevices, canStoreClaim, claimReservation } = new Function(
+    `const LIST_MAX_DEVICES = 32;\nconst MAX_DISPLAY_NAME_CHARS = 128;\n${src.slice(start, end)}\nreturn { withDevices, canStoreClaim, claimReservation };`,
+  )();
+
+  const STORAGE_KEY = "never-sleep-devices";
+  const existing = [];
+  for (let i = 0; i < 31; i += 1) {
+    existing.push({
+      device_id: String(i).padStart(32, "a"),
+      device_token: String(i).padStart(64, "b"),
+      display_name: "Studio",
+    });
+  }
+  const shortPlaceholder = {
+    device_id: "f".repeat(64),
+    device_token: "f".repeat(128),
+    display_name: "Mac".repeat(16),
+  };
+  const reserved = claimReservation();
+  assert.equal(reserved.display_name.length, MAX_DISPLAY_NAME_CHARS);
+  assert.ok(
+    reserved.display_name.length > shortPlaceholder.display_name.length,
+    "48 characters is smaller than the documented display-name max",
+  );
+
+  const shortPayload = JSON.stringify(withDevices(existing, shortPlaceholder));
+  const longPayload = JSON.stringify(withDevices(existing, reserved));
+  assert.ok(longPayload.length > shortPayload.length);
+
+  const probeKey = `${STORAGE_KEY}:probe`;
+  const existingRaw = JSON.stringify(existing);
+  const storage = quotaStorage(
+    STORAGE_KEY.length +
+      existingRaw.length +
+      probeKey.length +
+      shortPayload.length +
+      8,
+  );
+  storage.setItem(STORAGE_KEY, existingRaw);
+
+  assert.equal(
+    canStoreClaim(storage, STORAGE_KEY, existing, shortPlaceholder),
+    true,
+    "the old 48-character placeholder still fits this constrained quota",
+  );
+  assert.equal(
+    canStoreClaim(storage, STORAGE_KEY, existing, reserved),
+    false,
+    "do not consume the one-time code when a max-length name will not fit",
+  );
 });
 
 test("pair start still returns the new code when replaced-shard cleanup fails", () => {

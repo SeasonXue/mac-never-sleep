@@ -105,6 +105,16 @@ export function shardName(path, body) {
 }
 
 export const LIST_MAX_DEVICES = 32;
+/** Phone-board cards and localStorage reservations share this cap. */
+export const MAX_DISPLAY_NAME_CHARS = 128;
+
+export function boundDisplayName(name) {
+  if (typeof name !== "string") return "Mac";
+  const trimmed = name.trim();
+  if (!trimmed) return "Mac";
+  return [...trimmed].slice(0, MAX_DISPLAY_NAME_CHARS).join("");
+}
+
 export const PAIR_RESERVE_ATTEMPTS = 8;
 /** Drop undelivered commands after a few missed heartbeats, not hours later. */
 export const COMMAND_TTL_SECS = HEARTBEAT_TTL_SECS * 4;
@@ -173,6 +183,16 @@ export async function commitAlarmUnix(scheduledUnix, nextUnix, apply) {
   if (!alarmNeedsUpdate(scheduledUnix, nextUnix)) return scheduledUnix;
   await apply(nextUnix);
   return nextUnix;
+}
+
+/** After a board write, dropping a now-obsolete alarm must not fail the request. */
+export async function commitPersistedAlarm(scheduledUnix, nextUnix, apply) {
+  try {
+    return await commitAlarmUnix(scheduledUnix, nextUnix, apply);
+  } catch (err) {
+    if (nextUnix == null) return scheduledUnix;
+    throw err;
+  }
 }
 
 export async function bestEffortCleanup(result, cleanup) {
@@ -450,16 +470,17 @@ export class Board {
     if (existing && !tokensMatch(existing.token, deviceToken)) {
       return { ok: false, error: "unauthorized", status: 401 };
     }
+    const name = boundDisplayName(displayName || existing?.displayName || "Mac");
     if (!existing) {
       this.devices.set(deviceId, {
         token: deviceToken,
-        displayName: displayName || "Mac",
+        displayName: name,
         lastSeen: null,
         status: emptyStatus(),
         commands: [],
       });
     } else if (displayName) {
-      existing.displayName = displayName;
+      existing.displayName = boundDisplayName(displayName);
     }
     const replacedCodes = this.#purgeCodes(now);
     for (const [code, offer] of this.codes) {
@@ -484,7 +505,7 @@ export class Board {
     this.codes.set(code, {
       deviceId,
       token: deviceToken,
-      displayName: displayName || existing?.displayName || "Mac",
+      displayName: name,
       expires,
     });
     const chinese = isChineseLang(lang);
@@ -513,7 +534,7 @@ export class Board {
         existing.deviceId === deviceId &&
         tokensMatch(existing.token, deviceToken)
       ) {
-        existing.displayName = displayName || existing.displayName;
+        existing.displayName = boundDisplayName(displayName || existing.displayName);
         existing.expires = expiresUnix || existing.expires;
         return { ok: true, created: false, status: 200 };
       }
@@ -522,7 +543,7 @@ export class Board {
     this.codes.set(code, {
       deviceId,
       token: deviceToken,
-      displayName: displayName || "Mac",
+      displayName: boundDisplayName(displayName || "Mac"),
       expires: expiresUnix || this.nowSecs() + PAIRING_TTL_SECS,
     });
     return { ok: true, created: true, status: 200 };
@@ -575,7 +596,7 @@ export class Board {
     if (!device || !tokensMatch(device.token, deviceToken)) {
       return { ok: false, error: "unauthorized", status: 401 };
     }
-    if (displayName) device.displayName = displayName;
+    if (displayName) device.displayName = boundDisplayName(displayName);
     if (status && typeof status === "object") {
       device.status = sanitizeStatus(status);
     }
