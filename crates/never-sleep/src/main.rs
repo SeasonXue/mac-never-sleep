@@ -142,7 +142,7 @@ fn cmd_pair(json: bool) {
                 return;
             }
             if !resp.ok {
-                eprintln!("{}", resp.error.as_deref().unwrap_or(ui_tr().failed()));
+                eprintln!("{}", pair_cli_error(&resp));
                 std::process::exit(1);
             }
             if let Some(code) = &resp.pairing_code {
@@ -157,6 +157,10 @@ fn cmd_pair(json: bool) {
             std::process::exit(1);
         }
     }
+}
+
+fn pair_cli_error(resp: &IpcResponse) -> String {
+    crate::protocol::human_ipc_error(resp.error.as_deref().unwrap_or(""), load_config().lang())
 }
 
 fn cmd_on(for_raw: Option<String>, json: bool) {
@@ -241,9 +245,28 @@ mod tests {
             "a second process must not mint a different cloud pairing"
         );
         assert!(cmd.contains("menubar_not_running"));
+        assert!(
+            cmd.contains("pair_cli_error"),
+            "human pair output must translate IPC codes"
+        );
+        let err = rust_fn_src(src, "pair_cli_error");
+        assert!(err.contains("human_ipc_error"));
         let gui = include_str!("gui.rs");
         assert!(gui.contains("IpcRequest::Pair"));
         assert!(gui.contains("ok_pairing"));
+        let ipc_loop = gui
+            .split("while let Ok(incoming) = ipc_rx.try_recv()")
+            .nth(1)
+            .expect("gui ipc loop");
+        let chunk = ipc_loop.split("match event").next().unwrap();
+        let drain = chunk
+            .find("apply_polled_commands")
+            .expect("pair IPC must drain reporter events first");
+        let handle = chunk.find("handle_ipc").expect("handle_ipc");
+        assert!(
+            drain < handle,
+            "queued CloudEvent::Pairing must be applied before answering pair"
+        );
     }
 
     #[test]

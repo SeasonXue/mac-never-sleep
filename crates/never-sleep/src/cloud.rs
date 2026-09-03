@@ -30,8 +30,9 @@ pub struct CloudHandle {
     /// `latest` changed; it must not carry the payload or a newer inactive
     /// status is dropped while the reporter is in a slow POST.
     latest: Arc<Mutex<Option<(JsonStatus, Lang)>>>,
-    wake: SyncSender<()>,
+    wake: Option<SyncSender<()>>,
     events: mpsc::Receiver<CloudEvent>,
+    join: Option<thread::JoinHandle<()>>,
 }
 
 impl CloudHandle {
@@ -39,7 +40,21 @@ impl CloudHandle {
         if let Ok(mut slot) = self.latest.lock() {
             *slot = Some((status, lang));
         }
-        let _ = self.wake.try_send(());
+        if let Some(wake) = &self.wake {
+            let _ = wake.try_send(());
+        }
+    }
+
+    /// Disconnect the reporter and wait until it has POSTed the latest snapshot.
+    pub fn flush_and_join(mut self) {
+        self.disconnect_and_join();
+    }
+
+    fn disconnect_and_join(&mut self) {
+        self.wake.take();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
     }
 
     #[cfg(test)]
@@ -53,6 +68,12 @@ impl CloudHandle {
             out.push(ev);
         }
         out
+    }
+}
+
+impl Drop for CloudHandle {
+    fn drop(&mut self) {
+        self.disconnect_and_join();
     }
 }
 
@@ -315,7 +336,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
     let (wake_tx, wake_rx) = mpsc::sync_channel(1);
     let (event_tx, event_rx) = mpsc::channel();
     let latest_for_thread = Arc::clone(&latest);
-    thread::Builder::new()
+    let join = thread::Builder::new()
         .name("never-sleep-cloud".into())
         .spawn(move || {
             reporter_loop(
@@ -332,8 +353,9 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
         .ok();
     CloudHandle {
         latest,
-        wake: wake_tx,
+        wake: Some(wake_tx),
         events: event_rx,
+        join,
     }
 }
 
@@ -521,8 +543,9 @@ mod tests {
     fn test_cloud_handle(wake: SyncSender<()>, events: mpsc::Receiver<CloudEvent>) -> CloudHandle {
         CloudHandle {
             latest: Arc::new(Mutex::new(None)),
-            wake,
+            wake: Some(wake),
             events,
+            join: None,
         }
     }
 
@@ -709,6 +732,63 @@ mod tests {
         ));
         let (status, _) = clone_latest(&latest).expect("shutdown must still read the slot");
         assert!(!status.active);
+    }
+
+    #[test]
+    fn flush_and_join_delivers_inactive_after_slow_reporter() {
+        let posted = Arc::new(Mutex::new(None));
+        let latest = Arc::new(Mutex::new(None));
+        let (wake_tx, wake_rx) = mpsc::sync_channel(1);
+        let (_event_tx, event_rx) = mpsc::channel();
+        let posted_t = Arc::clone(&posted);
+        let latest_t = Arc::clone(&latest);
+        let join = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            loop {
+                match wake_rx.recv_timeout(Duration::from_millis(200)) {
+                    Ok(()) | Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => {
+                        *posted_t.lock().unwrap() = clone_latest(&latest_t).map(|(s, _)| s.active);
+                        break;
+                    }
+                }
+            }
+        });
+        let handle = CloudHandle {
+            latest,
+            wake: Some(wake_tx),
+            events: event_rx,
+            join: Some(join),
+        };
+        let mut inactive = sample_status();
+        inactive.active = false;
+        handle.push_status(inactive, Lang::En);
+        handle.flush_and_join();
+        assert_eq!(
+            *posted.lock().unwrap(),
+            Some(false),
+            "exit must wait until the reporter has the inactive snapshot"
+        );
+    }
+
+    #[test]
+    fn pair_ipc_drains_queued_pairing_event() {
+        let (event_tx, event_rx) = mpsc::channel();
+        event_tx
+            .send(CloudEvent::Pairing {
+                code: "AB7K-2Q9M".into(),
+                url: "https://example/board/?code=AB7K-2Q9M".into(),
+            })
+            .unwrap();
+        let handle = test_cloud_handle(mpsc::sync_channel(1).0, event_rx);
+        let mut pairing = None;
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert_eq!(
+            pairing.as_ref().map(|(code, _)| code.as_str()),
+            Some("AB7K-2Q9M")
+        );
     }
 
     #[test]

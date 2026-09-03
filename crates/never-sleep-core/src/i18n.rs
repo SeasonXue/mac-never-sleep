@@ -400,6 +400,13 @@ impl Tr {
         self.pick("Pairing code", "配对码")
     }
 
+    pub fn pairing_unavailable(self) -> &'static str {
+        self.pick(
+            "Pairing is not ready yet. Open Settings, or retry in a moment.",
+            "配对尚未就绪。请打开设置，或稍后再试。",
+        )
+    }
+
     pub fn language_menu(self) -> &'static str {
         self.pick("Language", "语言")
     }
@@ -943,6 +950,19 @@ mod tests {
         assert_eq!(zh.phone_board(), "手机看板");
         assert_eq!(en.pairing_code(), "Pairing code");
         assert_eq!(zh.pairing_code(), "配对码");
+        assert_eq!(
+            en.pairing_unavailable(),
+            "Pairing is not ready yet. Open Settings, or retry in a moment."
+        );
+        assert_eq!(
+            zh.pairing_unavailable(),
+            "配对尚未就绪。请打开设置，或稍后再试。"
+        );
+        assert_ne!(
+            zh.pairing_unavailable(),
+            "pairing_unavailable",
+            "human CLI output must not print the IPC code"
+        );
         assert_eq!(en.back(), "Back");
         assert_eq!(zh.back(), "返回");
         assert_eq!(en.panel_section_session(), "Session");

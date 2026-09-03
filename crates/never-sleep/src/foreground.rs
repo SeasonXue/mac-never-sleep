@@ -66,11 +66,12 @@ pub fn run_foreground(
         );
     }
     stop_for_quit(&mut engine, platform);
-    if let Some(handle) = cloud.as_ref() {
+    if let Some(handle) = cloud {
         handle.push_status(
             engine.json_status(&platform.snapshot()),
             engine.config.lang(),
         );
+        handle.flush_and_join();
     }
     println!("{}", engine.config.tr().foreground_ended());
     Ok(())
@@ -95,5 +96,23 @@ mod tests {
             Some(DurationPref::Hours { hours: 1 })
         );
         assert!(parse_optional_duration(Some("0h"), Lang::En).is_err());
+    }
+
+    #[test]
+    fn foreground_joins_reporter_after_final_status() {
+        let src = include_str!("foreground.rs");
+        let start = src.find("pub fn run_foreground").expect("run_foreground");
+        let body = src[start..]
+            .split("pub fn parse_optional_duration")
+            .next()
+            .unwrap();
+        assert!(
+            body.contains("flush_and_join"),
+            "process exit must wait for the inactive heartbeat POST"
+        );
+        assert!(
+            body.contains("push_status"),
+            "the final snapshot still has to be queued"
+        );
     }
 }

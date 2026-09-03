@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use never_sleep_core::{parse_duration_pref_in, DurationPref, JsonStatus, Lang};
+use never_sleep_core::{parse_duration_pref_in, DurationPref, JsonStatus, Lang, Tr};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -94,6 +94,15 @@ pub fn parse_on_duration_in(raw: Option<&str>, lang: Lang) -> Result<Option<Dura
     }
 }
 
+/// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
+pub fn human_ipc_error(code: &str, lang: Lang) -> String {
+    match code {
+        "" => Tr::new(lang).failed().to_string(),
+        "pairing_unavailable" => Tr::new(lang).pairing_unavailable().to_string(),
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +192,18 @@ mod tests {
         assert!(status_json.get("pairing_code").is_none());
         assert!(status_json.get("pairing_url").is_none());
         assert!(status_json.get("device_id").is_none());
+        let json_err = IpcResponse::err("pairing_unavailable");
+        assert_eq!(
+            serde_json::to_value(&json_err).unwrap()["error"],
+            "pairing_unavailable"
+        );
+        assert_ne!(
+            human_ipc_error("pairing_unavailable", Lang::Zh),
+            "pairing_unavailable"
+        );
+        assert_eq!(
+            human_ipc_error("pairing_unavailable", Lang::En),
+            never_sleep_core::Tr::new(Lang::En).pairing_unavailable()
+        );
     }
 }
