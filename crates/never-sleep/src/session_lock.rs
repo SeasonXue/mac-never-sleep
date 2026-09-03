@@ -165,6 +165,17 @@ mod tests {
             macos.contains("should_clear_unclaimed_clamshell"),
             "apply_power must restore an inherited flag when this process is not claiming it"
         );
+        let apply = macos.split("fn apply_power").nth(1).expect("apply_power");
+        let fail_at = apply
+            .find("idle_assertion_failed")
+            .expect("assertion failure path");
+        let clear_at = apply
+            .find("should_clear_unclaimed_clamshell")
+            .expect("inherited clear");
+        assert!(
+            fail_at < clear_at,
+            "do not restore inherited clamshell before PreventUserIdleSystemSleep succeeds"
+        );
         let ipc = include_str!("gui.rs");
         let on_arm = ipc
             .split("IpcRequest::On")

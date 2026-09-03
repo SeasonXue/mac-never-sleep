@@ -608,18 +608,18 @@ impl Platform for MacPlatform {
             release_assertion(&mut self.network_id);
         }
 
+        if plan.prevent_idle_sleep && self.idle_id.is_none() {
+            self.owns_power = true;
+            let _ = self.release_power();
+            return Err(t.idle_assertion_failed().into());
+        }
+
         if crate::session_lock::should_clear_unclaimed_clamshell(plan.disable_clamshell_sleep) {
             set_clamshell_sleep_disabled(false);
             self.clamshell_on = false;
         } else {
             set_clamshell_sleep_disabled(true);
             self.clamshell_on = true;
-        }
-
-        if plan.prevent_idle_sleep && self.idle_id.is_none() {
-            self.owns_power = true;
-            let _ = self.release_power();
-            return Err(t.idle_assertion_failed().into());
         }
 
         self.owns_power = plan.prevent_idle_sleep || plan.disable_clamshell_sleep;
