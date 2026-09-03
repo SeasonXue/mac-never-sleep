@@ -155,23 +155,29 @@ fn session_clocks(pref: DurationPref, host: &HostSnapshot) -> SessionClocks {
     }
 }
 
+fn clocks_from_remaining(host: &HostSnapshot, remaining: u64) -> SessionClocks {
+    SessionClocks {
+        started_ms: host.monotonic_ms,
+        started_continuous_ms: host.continuous_ms,
+        started_unix: host.unix_secs,
+        deadline: Some(host.unix_secs + remaining as i64),
+    }
+}
+
 fn handoff_clocks(
     pref: DurationPref,
     remaining_secs: Option<u64>,
     host: &HostSnapshot,
 ) -> SessionClocks {
     match (pref, remaining_secs) {
+        (DurationPref::Indefinite, _) | (_, None) => session_clocks(pref, host),
         (DurationPref::Hours { hours }, Some(remaining)) => {
             let cap = u64::from(hours).saturating_mul(3600);
-            let rem = remaining.min(cap) as i64;
-            SessionClocks {
-                started_ms: host.monotonic_ms,
-                started_continuous_ms: host.continuous_ms,
-                started_unix: host.unix_secs,
-                deadline: Some(host.unix_secs + rem),
-            }
+            clocks_from_remaining(host, remaining.min(cap))
         }
-        (pref, _) => session_clocks(pref, host),
+        (DurationPref::UntilLocal { .. }, Some(remaining)) => {
+            clocks_from_remaining(host, remaining.min(86_400))
+        }
     }
 }
 
@@ -252,6 +258,9 @@ impl Engine {
         effects: &mut Vec<Effect>,
     ) {
         if self.session.is_some() {
+            return;
+        }
+        if remaining_secs == Some(0) {
             return;
         }
         self.begin_session(
@@ -667,6 +676,64 @@ mod tests {
         h.unix_secs = h0.unix_secs;
         assert_eq!(eng.json_status(&h).remaining_secs, Some(3_590));
         assert!(eng.is_active());
+    }
+
+    #[test]
+    fn handoff_until_local_with_zero_remaining_does_not_roll_to_tomorrow() {
+        let mut eng = Engine::new(cfg());
+        let h = host(0);
+        let effects = eng.handle(
+            Input::Handoff {
+                pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
+                remaining_secs: Some(0),
+            },
+            &h,
+        );
+        assert!(
+            !eng.is_active(),
+            "an already-elapsed until-local session must not restart as tomorrow"
+        );
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::ApplyPower(_))),
+            "zero remaining is not a fresh start"
+        );
+        assert!(!eng.json_status(&h).active);
+    }
+
+    #[test]
+    fn handoff_until_local_uses_supplied_remaining_not_wall_clock() {
+        let mut eng = Engine::new(cfg());
+        let h0 = host(0);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
+                remaining_secs: Some(90),
+            },
+            &h0,
+        );
+        assert!(eng.is_active());
+        assert_eq!(eng.json_status(&h0).remaining_secs, Some(90));
+        assert_eq!(
+            eng.config.duration,
+            DurationPref::UntilLocal { hour: 8, minute: 0 }
+        );
+    }
+
+    #[test]
+    fn handoff_hours_with_zero_remaining_does_not_start() {
+        let mut eng = Engine::new(cfg());
+        let effects = eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(0),
+            },
+            &host(0),
+        );
+        assert!(!eng.is_active());
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::ApplyPower(_))),
+            "zero leftover seconds must not re-apply power just to tick-stop"
+        );
     }
 
     #[test]

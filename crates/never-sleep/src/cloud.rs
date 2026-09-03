@@ -55,6 +55,7 @@ pub struct CloudHandle {
     wake: Option<SyncSender<ReporterWake>>,
     events: mpsc::Receiver<CloudEvent>,
     join: Option<thread::JoinHandle<()>>,
+    held_commands: Mutex<Vec<RemoteCommand>>,
 }
 
 impl CloudHandle {
@@ -105,10 +106,24 @@ impl CloudHandle {
 
     pub fn poll_events(&self) -> Vec<CloudEvent> {
         let mut out = Vec::new();
+        if let Ok(mut held) = self.held_commands.lock() {
+            if !held.is_empty() {
+                out.push(CloudEvent::Commands(std::mem::take(&mut *held)));
+            }
+        }
         while let Ok(ev) = self.events.try_recv() {
             out.push(ev);
         }
         out
+    }
+
+    fn hold_commands(&self, commands: Vec<RemoteCommand>) {
+        if commands.is_empty() {
+            return;
+        }
+        if let Ok(mut held) = self.held_commands.lock() {
+            held.extend(commands);
+        }
     }
 }
 
@@ -532,6 +547,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
         wake: Some(wake_tx),
         events: event_rx,
         join,
+        held_commands: Mutex::new(Vec::new()),
     }
 }
 
@@ -778,6 +794,13 @@ pub fn apply_polled_commands(
     for event in handle.poll_events() {
         match event {
             CloudEvent::Commands(commands) => {
+                if crate::session_lock::should_hold_cloud_commands(
+                    engine.is_active(),
+                    std::process::id(),
+                ) {
+                    handle.hold_commands(commands);
+                    continue;
+                }
                 apply_cloud_commands(engine, platform, &commands);
             }
             CloudEvent::Pairing {
@@ -828,6 +851,7 @@ mod tests {
             wake: Some(wake),
             events,
             join: None,
+            held_commands: Mutex::new(Vec::new()),
         }
     }
 
@@ -1276,6 +1300,37 @@ mod tests {
     }
 
     #[test]
+    fn queued_phone_off_applies_after_handoff_not_while_idle() {
+        let _guard = TestDataDir::install();
+        crate::paths::ensure_data_dir().unwrap();
+        std::fs::write(crate::paths::session_lock_path(), "pid=1\nclamshell=1\n").unwrap();
+        let (event_tx, event_rx) = mpsc::channel();
+        event_tx
+            .send(CloudEvent::Commands(vec![RemoteCommand::off("end")]))
+            .unwrap();
+        let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
+        let mut pairing = None;
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(!engine.is_active());
+        let host = platform.snapshot();
+        engine.handle(
+            never_sleep_core::Input::Handoff {
+                pref: never_sleep_core::DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+            },
+            &host,
+        );
+        assert!(engine.is_active(), "handoff must start the adopted session");
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(
+            !engine.is_active(),
+            "phone Off queued before adopt must end the session the menu just took over"
+        );
+    }
+
+    #[test]
     fn hostname_from_c_buffer_reads_gethostname_bytes() {
         assert_eq!(
             hostname_from_c_buffer(b"Studio.local\0trailing"),
@@ -1376,6 +1431,7 @@ mod tests {
             wake: Some(wake_tx),
             events: event_rx,
             join: Some(join),
+            held_commands: Mutex::new(Vec::new()),
         };
         let mut inactive = sample_status();
         inactive.active = false;
@@ -1439,6 +1495,7 @@ mod tests {
             wake: Some(wake_tx),
             events: event_rx,
             join: Some(join),
+            held_commands: Mutex::new(Vec::new()),
         };
         handle.detach();
         assert_eq!(
@@ -1464,6 +1521,7 @@ mod tests {
             wake: Some(wake_tx),
             events: event_rx,
             join: Some(join),
+            held_commands: Mutex::new(Vec::new()),
         };
         let mut inactive = sample_status();
         inactive.active = false;

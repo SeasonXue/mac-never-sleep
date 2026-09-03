@@ -66,7 +66,7 @@ pub fn run_foreground(
                             &mut engine,
                             platform,
                             Input::Stop {
-                                reason: StopReason::User,
+                                reason: StopReason::AppQuit,
                             },
                         );
                     }
@@ -188,8 +188,12 @@ mod tests {
             "a live handoff must not POST offline:true after the menu is already heartbeating"
         );
         assert!(
-            after_ping.contains("StopReason::User") && after_ping.contains("stop_for_quit"),
-            "release foreground power assertions; do not keep a hidden Engine running"
+            handoff.contains("StopReason::AppQuit") && handoff.contains("stop_for_quit"),
+            "handoff must release assertions silently; AppQuit does not notify 待命已结束"
+        );
+        assert!(
+            !handoff.contains("StopReason::User"),
+            "User stop would show an ended notification after the menu already said started"
         );
         assert!(
             after_ping.contains("return Ok(())"),

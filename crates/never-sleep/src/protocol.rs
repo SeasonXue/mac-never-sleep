@@ -56,6 +56,11 @@ impl IpcRequest {
             handoff: true,
         }
     }
+
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn is_handoff(&self) -> bool {
+        matches!(self, Self::On { handoff: true, .. })
+    }
 }
 
 impl IpcResponse {
@@ -237,6 +242,9 @@ mod tests {
         assert!(!menu_accepted_handoff(&IpcResponse::err("denied")));
         let ping = IpcResponse::pong();
         assert!(!menu_accepted_handoff(&ping));
+        assert!(req.is_handoff());
+        assert!(!IpcRequest::on(Some("8h".into())).is_handoff());
+        assert!(!IpcRequest::Ping.is_handoff());
     }
 
     #[test]

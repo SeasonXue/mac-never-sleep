@@ -1,8 +1,11 @@
+use std::io::Read;
+
 /// Whether this process should restore clamshell sleep and delete `session.lock`.
 ///
 /// A live peer (the menu, after a foreground handoff) owns the file. Releasing
 /// the previous process must not globally re-enable clamshell sleep or remove
 /// the lock the next launch uses to restore the flag.
+#[cfg(any(test, target_os = "macos"))]
 pub fn should_release_clamshell_lock(
     our_pid: u32,
     lock_pid: Option<u32>,
@@ -13,6 +16,71 @@ pub fn should_release_clamshell_lock(
         Some(pid) if pid == our_pid => true,
         Some(_) => !lock_holder_alive,
     }
+}
+
+/// Whether this process should call `set_clamshell_sleep_disabled(false)`.
+///
+/// A live peer that recorded `clamshell=1` owns the global flag. A live peer
+/// that recorded `clamshell=0` did not take ownership, so the previous process
+/// must still restore clamshell sleep even while leaving the lock file in place.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_restore_clamshell(
+    our_pid: u32,
+    lock: Option<(u32, bool)>,
+    lock_holder_alive: bool,
+) -> bool {
+    match lock {
+        None => true,
+        Some((pid, _)) if pid == our_pid => true,
+        Some((_, claimed)) if lock_holder_alive => !claimed,
+        Some(_) => true,
+    }
+}
+
+pub fn parse_lock_text(s: &str) -> (u32, bool) {
+    let mut pid = 0u32;
+    let mut clamshell = false;
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix("pid=") {
+            pid = v.trim().parse().unwrap_or(0);
+        }
+        if let Some(v) = line.strip_prefix("clamshell=") {
+            clamshell = v.trim() == "1";
+        }
+    }
+    (pid, clamshell)
+}
+
+pub fn read_lock() -> Option<(u32, bool)> {
+    let mut s = String::new();
+    std::fs::File::open(crate::paths::session_lock_path())
+        .ok()?
+        .read_to_string(&mut s)
+        .ok()?;
+    Some(parse_lock_text(&s))
+}
+
+pub fn pid_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let rc = unsafe { libc::kill(pid as i32, 0) };
+    if rc == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Hold phone On/Off while another live process still owns `session.lock`.
+/// Applying Off against an idle menu is a no-op and would drop the command.
+pub fn should_hold_cloud_commands(engine_active: bool, our_pid: u32) -> bool {
+    if engine_active {
+        return false;
+    }
+    matches!(
+        read_lock(),
+        Some((pid, _)) if pid != our_pid && pid_is_alive(pid)
+    )
 }
 
 #[cfg(test)]
@@ -38,8 +106,37 @@ mod tests {
             "MacPlatform::release_power must not blindly restore clamshell sleep"
         );
         assert!(
+            src.contains("should_restore_clamshell"),
+            "a live peer that did not claim clamshell still needs the flag restored"
+        );
+        assert!(
             src.contains("pid_alive"),
             "ownership follows the pid recorded in session.lock"
         );
+    }
+
+    #[test]
+    fn restores_clamshell_when_successor_did_not_claim_it() {
+        assert!(
+            should_restore_clamshell(10, Some((20, false)), true),
+            "menu adopted without lid-awake: the handing-off process must clear the global flag"
+        );
+        assert!(
+            !should_release_clamshell_lock(10, Some(20), true),
+            "keep the menu's session.lock even when it did not take clamshell"
+        );
+    }
+
+    #[test]
+    fn leaves_clamshell_when_successor_claimed_it() {
+        assert!(!should_restore_clamshell(10, Some((20, true)), true));
+        assert!(!should_release_clamshell_lock(10, Some(20), true));
+    }
+
+    #[test]
+    fn restores_clamshell_for_own_or_dead_lock() {
+        assert!(should_restore_clamshell(10, Some((10, true)), true));
+        assert!(should_restore_clamshell(10, Some((20, true)), false));
+        assert!(should_restore_clamshell(10, None, false));
     }
 }

@@ -11,7 +11,6 @@ mod paths;
 mod persist;
 mod platform;
 mod protocol;
-#[cfg(any(test, target_os = "macos"))]
 mod session_lock;
 mod util;
 
@@ -266,6 +265,14 @@ mod tests {
         assert!(
             drain < handle,
             "queued CloudEvent::Pairing must be applied before answering pair"
+        );
+        assert!(
+            chunk.contains("is_handoff"),
+            "a foreground Ping+On handoff must not drain phone Off onto an idle engine"
+        );
+        assert!(
+            chunk.matches("apply_polled_commands").count() >= 2,
+            "apply held phone commands after the menu adopts the live session"
         );
         let handle_ipc_src = rust_fn_src(gui, "handle_ipc");
         assert!(

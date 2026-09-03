@@ -55,7 +55,6 @@ pub fn ipc_socket_path() -> PathBuf {
     data_dir().join("ipc.sock")
 }
 
-#[cfg(any(test, target_os = "macos"))]
 pub fn session_lock_path() -> PathBuf {
     data_dir().join("session.lock")
 }

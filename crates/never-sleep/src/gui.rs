@@ -332,13 +332,18 @@ pub fn run() {
         *control_flow = ControlFlow::WaitUntil(next_wake);
 
         while let Ok(incoming) = ipc_rx.try_recv() {
-            if let Some(handle) = cloud.as_ref() {
-                crate::cloud::apply_polled_commands(
-                    &mut engine,
-                    platform.as_mut(),
-                    handle,
-                    &mut pairing,
-                );
+            let handoff_first = match &incoming {
+                IpcIncoming::Request { req, .. } => req.is_handoff() && !engine.is_active(),
+            };
+            if !handoff_first {
+                if let Some(handle) = cloud.as_ref() {
+                    crate::cloud::apply_polled_commands(
+                        &mut engine,
+                        platform.as_mut(),
+                        handle,
+                        &mut pairing,
+                    );
+                }
             }
             if handle_ipc(
                 &mut engine,
@@ -351,6 +356,16 @@ pub fn run() {
                 *control_flow = ControlFlow::Exit;
                 break;
             } else {
+                if handoff_first {
+                    if let Some(handle) = cloud.as_ref() {
+                        crate::cloud::apply_polled_commands(
+                            &mut engine,
+                            platform.as_mut(),
+                            handle,
+                            &mut pairing,
+                        );
+                    }
+                }
                 refresh_ui(
                     &handles,
                     &mut tray,

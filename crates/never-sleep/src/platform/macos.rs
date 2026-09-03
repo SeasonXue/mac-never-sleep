@@ -450,17 +450,7 @@ fn parse_lock() -> Option<(u32, bool)> {
         .ok()?
         .read_to_string(&mut s)
         .ok()?;
-    let mut pid = 0u32;
-    let mut clamshell = false;
-    for line in s.lines() {
-        if let Some(v) = line.strip_prefix("pid=") {
-            pid = v.trim().parse().unwrap_or(0);
-        }
-        if let Some(v) = line.strip_prefix("clamshell=") {
-            clamshell = v.trim() == "1";
-        }
-    }
-    Some((pid, clamshell))
+    Some(crate::session_lock::parse_lock_text(&s))
 }
 
 pub struct MacPlatform {
@@ -655,18 +645,21 @@ impl Platform for MacPlatform {
         if !had_holds {
             return Ok(());
         }
-        let drop_shared = match parse_lock() {
+        let parsed = parse_lock();
+        let our_pid = std::process::id();
+        let holder_alive = parsed.map(|(pid, _)| pid_alive(pid)).unwrap_or(false);
+        let drop_lock = match parsed {
             None => true,
-            Some((pid, _)) => crate::session_lock::should_release_clamshell_lock(
-                std::process::id(),
-                Some(pid),
-                pid_alive(pid),
-            ),
+            Some((pid, _)) => {
+                crate::session_lock::should_release_clamshell_lock(our_pid, Some(pid), holder_alive)
+            }
         };
+        let restore_clamshell =
+            crate::session_lock::should_restore_clamshell(our_pid, parsed, holder_alive);
         if self.owns_power {
             OWNS_POWER.store(false, Ordering::SeqCst);
             SESSION_ACTIVE.store(false, Ordering::SeqCst);
-            if drop_shared {
+            if drop_lock {
                 CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
                 let _ = fs::remove_file(session_lock_path());
             }
@@ -677,7 +670,7 @@ impl Platform for MacPlatform {
         release_assertion(&mut self.disk_id);
         release_assertion(&mut self.network_id);
         if self.clamshell_on {
-            if drop_shared {
+            if restore_clamshell {
                 set_clamshell_sleep_disabled(false);
                 CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
             }
