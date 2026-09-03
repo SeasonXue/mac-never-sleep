@@ -1010,21 +1010,35 @@ fn handle_ipc(
             ),
             None => IpcResponse::err("pairing_unavailable"),
         },
-        IpcRequest::On { duration } => {
-            let input = match crate::protocol::parse_on_duration_in(
+        IpcRequest::On {
+            duration,
+            remaining_secs,
+            handoff,
+        } => {
+            let parsed = match crate::protocol::parse_on_duration_in(
                 duration.as_deref(),
                 engine.config.lang(),
             ) {
-                Ok(None) => Input::Start,
-                Ok(Some(d)) => Input::StartWith(d),
+                Ok(d) => d,
                 Err(e) => {
                     let _ = reply.send(IpcResponse::err(e));
                     return false;
                 }
             };
+            let input = if handoff {
+                Input::Handoff {
+                    pref: parsed.unwrap_or(engine.config.duration),
+                    remaining_secs,
+                }
+            } else {
+                match parsed {
+                    None => Input::Start,
+                    Some(d) => Input::StartWith(d),
+                }
+            };
             if engine.is_active() && matches!(input, Input::Start) {
                 // already on
-            } else if engine.is_active() {
+            } else if engine.is_active() && !handoff {
                 dispatch(
                     engine,
                     platform,
@@ -1033,7 +1047,7 @@ fn handle_ipc(
                     },
                 );
                 dispatch(engine, platform, input);
-            } else {
+            } else if !engine.is_active() {
                 dispatch(engine, platform, input);
             }
             IpcResponse::ok_status(host_status(engine, platform))

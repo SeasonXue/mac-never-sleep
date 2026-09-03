@@ -11,6 +11,8 @@ mod paths;
 mod persist;
 mod platform;
 mod protocol;
+#[cfg(any(test, target_os = "macos"))]
+mod session_lock;
 mod util;
 
 #[cfg(target_os = "macos")]
@@ -174,9 +176,7 @@ fn cmd_on(for_raw: Option<String>, json: bool) {
             std::process::exit(2);
         }
     };
-    let req = IpcRequest::On {
-        duration: for_raw.clone(),
-    };
+    let req = IpcRequest::on(for_raw.clone());
     if let Some(resp) = try_send(&req) {
         print_resp(&resp, json);
         return;
@@ -271,6 +271,10 @@ mod tests {
         assert!(
             handle_ipc_src.contains("expire_stale_pairing"),
             "IpcRequest::Pair must re-check expires_unix so a disconnected Mac does not keep an expired code"
+        );
+        assert!(
+            handle_ipc_src.contains("handoff") && handle_ipc_src.contains("Input::Handoff"),
+            "menu IPC must adopt a live session with remote display semantics"
         );
         let refresh_src = rust_fn_src(gui, "refresh_ui");
         assert!(

@@ -65,6 +65,13 @@ pub enum Input {
     /// respects `user_present` (never fight someone at the keyboard).
     StartRemote,
     StartRemoteWith(DurationPref),
+    /// Take over a live session from another process (foreground → menu).
+    /// Uses remote display semantics and the leftover duration, not a fresh
+    /// local one-click start.
+    Handoff {
+        pref: DurationPref,
+        remaining_secs: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +139,42 @@ struct Session {
     remote: bool,
 }
 
+struct SessionClocks {
+    started_ms: u64,
+    started_continuous_ms: u64,
+    started_unix: i64,
+    deadline: Option<i64>,
+}
+
+fn session_clocks(pref: DurationPref, host: &HostSnapshot) -> SessionClocks {
+    SessionClocks {
+        started_ms: host.monotonic_ms,
+        started_continuous_ms: host.continuous_ms,
+        started_unix: host.unix_secs,
+        deadline: deadline_unix_secs(host.unix_secs, host.utc_offset_secs, host.unix_secs, pref),
+    }
+}
+
+fn handoff_clocks(
+    pref: DurationPref,
+    remaining_secs: Option<u64>,
+    host: &HostSnapshot,
+) -> SessionClocks {
+    match (pref, remaining_secs) {
+        (DurationPref::Hours { hours }, Some(remaining)) => {
+            let cap = u64::from(hours).saturating_mul(3600);
+            let rem = remaining.min(cap) as i64;
+            SessionClocks {
+                started_ms: host.monotonic_ms,
+                started_continuous_ms: host.continuous_ms,
+                started_unix: host.unix_secs,
+                deadline: Some(host.unix_secs + rem),
+            }
+        }
+        (pref, _) => session_clocks(pref, host),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Engine {
     pub config: AppConfig,
@@ -163,6 +206,10 @@ impl Engine {
             Input::StartWith(pref) => self.start(pref, host, false, &mut effects),
             Input::StartRemote => self.start(self.config.duration, host, true, &mut effects),
             Input::StartRemoteWith(pref) => self.start(pref, host, true, &mut effects),
+            Input::Handoff {
+                pref,
+                remaining_secs,
+            } => self.handoff(pref, remaining_secs, host, &mut effects),
             Input::Toggle => {
                 if self.session.is_some() {
                     self.stop(StopReason::User, host, &mut effects);
@@ -194,15 +241,43 @@ impl Engine {
         if self.session.is_some() {
             return;
         }
+        self.begin_session(pref, session_clocks(pref, host), remote, host, effects);
+    }
+
+    fn handoff(
+        &mut self,
+        pref: DurationPref,
+        remaining_secs: Option<u64>,
+        host: &HostSnapshot,
+        effects: &mut Vec<Effect>,
+    ) {
+        if self.session.is_some() {
+            return;
+        }
+        self.begin_session(
+            pref,
+            handoff_clocks(pref, remaining_secs, host),
+            true,
+            host,
+            effects,
+        );
+    }
+
+    fn begin_session(
+        &mut self,
+        pref: DurationPref,
+        clocks: SessionClocks,
+        remote: bool,
+        host: &HostSnapshot,
+        effects: &mut Vec<Effect>,
+    ) {
         self.config.duration = pref;
-        let deadline =
-            deadline_unix_secs(host.unix_secs, host.utc_offset_secs, host.unix_secs, pref);
         self.session = Some(Session {
-            started_ms: host.monotonic_ms,
-            started_continuous_ms: host.continuous_ms,
-            started_unix: host.unix_secs,
+            started_ms: clocks.started_ms,
+            started_continuous_ms: clocks.started_continuous_ms,
+            started_unix: clocks.started_unix,
             duration: pref,
-            deadline_unix: deadline,
+            deadline_unix: clocks.deadline,
             initial_display_off_sent: false,
             last_sleep_display_ms: None,
             remote,
@@ -226,7 +301,7 @@ impl Engine {
         } else {
             t.notify_started_body_keep_awake(crate::DEFAULT_HOTKEY_LABEL)
         };
-        if let Some(d) = deadline {
+        if let Some(d) = clocks.deadline {
             let rem = d.saturating_sub(host.unix_secs).max(0) as u64;
             body.push_str(&t.remaining_clause(&format_duration(self.config.lang(), rem)));
         }
@@ -540,6 +615,58 @@ mod tests {
             "remote start while someone is present should keep display under local control, got {body}"
         );
         assert!(!has_sleep(&effects));
+    }
+
+    #[test]
+    fn handoff_while_user_present_does_not_sleep_display() {
+        let mut eng = Engine::new(cfg());
+        let mut h = host(0);
+        h.hid_idle_ms = 500;
+        h.lid_closed = false;
+        let effects = eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+            },
+            &h,
+        );
+        assert!(eng.is_active());
+        assert!(
+            !has_sleep(&effects),
+            "adopting a live session must not fight a person at the keyboard"
+        );
+        let mut later_host = host(1_500);
+        later_host.hid_idle_ms = 500;
+        later_host.lid_closed = false;
+        let later = eng.handle(Input::Tick, &later_host);
+        assert!(
+            !has_sleep(&later),
+            "handoff uses remote first-sleep rules so HID idle still wins after the delay"
+        );
+        let body = notify_body(&effects);
+        assert!(
+            !body.contains("will sleep in about"),
+            "must not promise a display sleep while someone is present, got {body}"
+        );
+    }
+
+    #[test]
+    fn handoff_keeps_remaining_hour_not_full_pref() {
+        let mut eng = Engine::new(cfg());
+        let h0 = host(0);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+            },
+            &h0,
+        );
+        assert_eq!(eng.json_status(&h0).remaining_secs, Some(3600));
+        assert_eq!(eng.config.duration, DurationPref::Hours { hours: 8 });
+        let mut h = host(10_000);
+        h.unix_secs = h0.unix_secs;
+        assert_eq!(eng.json_status(&h).remaining_secs, Some(3_590));
+        assert!(eng.is_active());
     }
 
     #[test]

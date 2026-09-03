@@ -55,30 +55,26 @@ pub fn run_foreground(
 
     while running.load(Ordering::SeqCst) && engine.is_active() {
         if try_send(&IpcRequest::Ping).is_some() {
-            let _ = try_send(&IpcRequest::On {
-                duration: Some(crate::protocol::duration_pref_to_ipc(
-                    engine.config.duration,
-                )),
-            });
-            if engine.is_active() {
-                dispatch(
-                    &mut engine,
-                    platform,
-                    Input::Stop {
-                        reason: StopReason::User,
-                    },
-                );
+            let req = handoff_request(&engine, &platform.snapshot());
+            if let Some(resp) = try_send(&req) {
+                if crate::protocol::menu_accepted_handoff(&resp) {
+                    if let Some(handle) = cloud.take() {
+                        handle.detach();
+                    }
+                    if engine.is_active() {
+                        dispatch(
+                            &mut engine,
+                            platform,
+                            Input::Stop {
+                                reason: StopReason::User,
+                            },
+                        );
+                    }
+                    stop_for_quit(&mut engine, platform);
+                    println!("{}", engine.config.tr().foreground_ended());
+                    return Ok(());
+                }
             }
-            stop_for_quit(&mut engine, platform);
-            if let Some(handle) = cloud.take() {
-                crate::cloud::publish_and_flush(
-                    handle,
-                    engine.json_status(&platform.snapshot()),
-                    engine.config.lang(),
-                );
-            }
-            println!("{}", engine.config.tr().foreground_ended());
-            return Ok(());
         }
         dispatch(&mut engine, platform, Input::Tick);
         if let Some(handle) = cloud.as_ref() {
@@ -109,6 +105,15 @@ pub fn run_foreground(
     }
     println!("{}", engine.config.tr().foreground_ended());
     Ok(())
+}
+
+fn handoff_request(engine: &Engine, host: &never_sleep_core::HostSnapshot) -> IpcRequest {
+    IpcRequest::handoff(
+        Some(crate::protocol::duration_pref_to_ipc(
+            engine.config.duration,
+        )),
+        engine.json_status(host).remaining_secs,
+    )
 }
 
 pub fn parse_optional_duration(
@@ -162,9 +167,25 @@ mod tests {
             .find("IpcRequest::Ping")
             .expect("menu presence is detected with Ping");
         let after_ping = &body[ping_at..];
+        let handoff = after_ping
+            .split("return Ok(())")
+            .next()
+            .expect("handoff returns after a successful adopt");
         assert!(
-            after_ping.contains("IpcRequest::On"),
-            "hand the live duration to the menu so remote Off/hotkey target the same session"
+            handoff.contains("handoff_request"),
+            "hand the leftover duration, not the original Hours preference"
+        );
+        assert!(
+            src.contains("remaining_secs"),
+            "handoff IPC must carry the leftover seconds of the live session"
+        );
+        assert!(
+            handoff.contains("menu_accepted_handoff"),
+            "keep the foreground session unless the menu reports ok && active"
+        );
+        assert!(
+            handoff.contains("detach(") && !handoff.contains("publish_and_flush"),
+            "a live handoff must not POST offline:true after the menu is already heartbeating"
         );
         assert!(
             after_ping.contains("StopReason::User") && after_ping.contains("stop_for_quit"),
@@ -174,6 +195,46 @@ mod tests {
             after_ping.contains("return Ok(())"),
             "exit the fallback loop after handoff so Tick cannot re-apply assertions"
         );
+    }
+
+    #[test]
+    fn handoff_request_sends_remaining_secs_not_full_pref() {
+        use never_sleep_core::{AppConfig, DurationPref, HostSnapshot, Input, Thermal};
+        let mut engine = Engine::new(AppConfig {
+            duration: DurationPref::Hours { hours: 8 },
+            display_off_delay_ms: 1_500,
+            ..AppConfig::default()
+        });
+        let host = HostSnapshot {
+            monotonic_ms: 0,
+            continuous_ms: 0,
+            unix_secs: 1_700_000_000,
+            utc_offset_secs: 0,
+            on_ac: true,
+            battery_percent: Some(80),
+            lid_closed: false,
+            display_asleep: Some(false),
+            hid_idle_ms: 60_000,
+            thermal: Thermal::Nominal,
+        };
+        engine.handle(Input::StartWith(DurationPref::Hours { hours: 8 }), &host);
+        let mut later = host.clone();
+        later.monotonic_ms = 7 * 3_600_000;
+        later.continuous_ms = 7 * 3_600_000;
+        later.unix_secs = host.unix_secs;
+        let req = handoff_request(&engine, &later);
+        match req {
+            IpcRequest::On {
+                duration,
+                remaining_secs,
+                handoff,
+            } => {
+                assert_eq!(duration.as_deref(), Some("8h"));
+                assert_eq!(remaining_secs, Some(3600));
+                assert!(handoff);
+            }
+            other => panic!("expected On handoff, got {other:?}"),
+        }
     }
 
     #[test]

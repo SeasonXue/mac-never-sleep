@@ -8,6 +8,12 @@ pub enum IpcRequest {
     On {
         #[serde(default)]
         duration: Option<String>,
+        /// Leftover seconds of a timed session. Only set on an internal handoff.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remaining_secs: Option<u64>,
+        /// Adopt a live session with remote display semantics (do not fight HID).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        handoff: bool,
     },
     Off,
     Toggle,
@@ -32,6 +38,24 @@ pub struct IpcResponse {
     pub pairing_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
+}
+
+impl IpcRequest {
+    pub fn on(duration: Option<String>) -> Self {
+        Self::On {
+            duration,
+            remaining_secs: None,
+            handoff: false,
+        }
+    }
+
+    pub fn handoff(duration: Option<String>, remaining_secs: Option<u64>) -> Self {
+        Self::On {
+            duration,
+            remaining_secs,
+            handoff: true,
+        }
+    }
 }
 
 impl IpcResponse {
@@ -106,6 +130,10 @@ pub fn duration_pref_to_ipc(pref: DurationPref) -> String {
     }
 }
 
+pub fn menu_accepted_handoff(resp: &IpcResponse) -> bool {
+    resp.ok && resp.status.as_ref().is_some_and(|status| status.active)
+}
+
 /// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
 pub fn human_ipc_error(code: &str, lang: Lang) -> String {
     match code {
@@ -143,6 +171,8 @@ mod tests {
             (
                 IpcRequest::On {
                     duration: Some("8h".into()),
+                    remaining_secs: None,
+                    handoff: false,
                 },
                 r#"{"cmd":"on","duration":"8h"}"#,
             ),
@@ -180,6 +210,33 @@ mod tests {
             duration_pref_to_ipc(DurationPref::UntilLocal { hour: 8, minute: 0 }),
             "until=08:00"
         );
+    }
+
+    #[test]
+    fn handoff_on_carries_remaining_secs() {
+        let req = IpcRequest::handoff(Some("8h".into()), Some(3600));
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(
+            json,
+            r#"{"cmd":"on","duration":"8h","remaining_secs":3600,"handoff":true}"#
+        );
+        let back: IpcRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, req);
+        let local = IpcRequest::on(Some("8h".into()));
+        assert_eq!(
+            serde_json::to_string(&local).unwrap(),
+            r#"{"cmd":"on","duration":"8h"}"#
+        );
+        let mut accepted = sample_status();
+        accepted.active = true;
+        assert!(menu_accepted_handoff(&IpcResponse::ok_status(
+            accepted.clone()
+        )));
+        accepted.active = false;
+        assert!(!menu_accepted_handoff(&IpcResponse::ok_status(accepted)));
+        assert!(!menu_accepted_handoff(&IpcResponse::err("denied")));
+        let ping = IpcResponse::pong();
+        assert!(!menu_accepted_handoff(&ping));
     }
 
     #[test]

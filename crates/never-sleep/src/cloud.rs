@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
@@ -42,6 +43,8 @@ pub enum CloudEvent {
 pub(crate) enum ReporterWake {
     Snapshot,
     Shutdown,
+    /// Stop the loop without an offline heartbeat (live handoff to the menu).
+    Detach,
 }
 
 pub struct CloudHandle {
@@ -71,6 +74,17 @@ impl CloudHandle {
     /// Disconnect the reporter and wait until it has POSTed the latest snapshot.
     pub fn flush_and_join(mut self) {
         self.disconnect_and_join();
+    }
+
+    /// Stop heartbeats without marking the Mac offline. The menu reporter owns
+    /// the next POST.
+    pub fn detach(mut self) {
+        if let Some(wake) = self.wake.take() {
+            let _ = wake.try_send(ReporterWake::Detach);
+        }
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
     }
 
     fn disconnect_and_join(&mut self) {
@@ -276,10 +290,45 @@ fn wait_for_complete_identity(path: &Path) -> io::Result<Option<CloudIdentity>> 
 }
 
 fn recover_stranded_identity(path: &Path, identity: CloudIdentity) -> io::Result<CloudIdentity> {
-    if fs::remove_file(path).is_err() {
-        // another process may have already replaced the empty file
+    if let Some(id) = read_complete_identity(path)? {
+        return Ok(id);
     }
-    save_identity(&identity)?;
+    let mut file = match fs::OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return match save_identity(&identity) {
+                Ok(()) => Ok(identity),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    wait_for_complete_identity(path)?.ok_or(err)
+                }
+                Err(err) => Err(err),
+            };
+        }
+        Err(err) => return Err(err),
+    };
+    // SAFETY: `file` is an open fd we own for the duration of this recover;
+    // flock(LOCK_EX) is the POSIX exclusive lock used to serialize stranded
+    // cloud.toml replacement.
+    let lock = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if lock != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    file.seek(SeekFrom::Start(0))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)?;
+    if let Ok(id) = toml::from_str::<CloudIdentity>(&text) {
+        if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
+            restrict_owner_only(path)?;
+            return Ok(id);
+        }
+    }
+    let text = toml::to_string_pretty(&identity)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    restrict_owner_only(path)?;
     Ok(identity)
 }
 
@@ -504,18 +553,20 @@ fn shutting_down_from_wake(
     drained_shutdown: bool,
 ) -> bool {
     match recv {
-        Ok(ReporterWake::Shutdown) => true,
+        Ok(ReporterWake::Shutdown) | Ok(ReporterWake::Detach) => true,
         Ok(ReporterWake::Snapshot) => drained_shutdown,
         Err(RecvTimeoutError::Timeout) => drained_shutdown,
         Err(RecvTimeoutError::Disconnected) => true,
     }
 }
 
-fn drain_reporter_wakes(rx: &mpsc::Receiver<ReporterWake>) -> bool {
+fn drain_reporter_wakes(rx: &mpsc::Receiver<ReporterWake>) -> (bool, bool) {
     let mut shutdown = false;
+    let mut detach = false;
     loop {
         match rx.try_recv() {
             Ok(ReporterWake::Shutdown) => shutdown = true,
+            Ok(ReporterWake::Detach) => detach = true,
             Ok(ReporterWake::Snapshot) => {}
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -524,7 +575,21 @@ fn drain_reporter_wakes(rx: &mpsc::Receiver<ReporterWake>) -> bool {
             }
         }
     }
-    shutdown
+    (shutdown, detach)
+}
+
+fn reporter_marks_offline(
+    recv: Result<ReporterWake, RecvTimeoutError>,
+    drained_shutdown: bool,
+    drained_detach: bool,
+) -> bool {
+    match recv {
+        Ok(ReporterWake::Shutdown) => true,
+        Ok(ReporterWake::Detach) => false,
+        Ok(ReporterWake::Snapshot) => drained_shutdown,
+        Err(RecvTimeoutError::Timeout) => drained_shutdown,
+        Err(RecvTimeoutError::Disconnected) => !drained_detach,
+    }
 }
 
 fn reporter_loop(
@@ -541,8 +606,13 @@ fn reporter_loop(
     loop {
         let shutting_down = {
             let recv = wake_rx.recv_timeout(Duration::from_secs(3));
-            let drained_shutdown = drain_reporter_wakes(&wake_rx);
-            shutting_down_from_wake(recv, drained_shutdown)
+            let (drained_shutdown, drained_detach) = drain_reporter_wakes(&wake_rx);
+            let shutting_down = shutting_down_from_wake(recv, drained_shutdown || drained_detach);
+            let offline = reporter_marks_offline(recv, drained_shutdown, drained_detach);
+            if shutting_down && !offline {
+                break;
+            }
+            offline
         };
         let mut fresh = false;
         if let Some(pair) = take_latest(&latest) {
@@ -885,6 +955,77 @@ mod tests {
         assert_eq!(id.device_id.len(), 32);
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("device_token"));
+    }
+
+    #[test]
+    fn recover_stranded_identity_keeps_a_complete_peer_file() {
+        let _dir = TestDataDir::install();
+        let path = cloud_identity_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let winner = CloudIdentity {
+            device_id: "ab".repeat(16),
+            device_token: "cd".repeat(32),
+        };
+        fs::write(&path, toml::to_string_pretty(&winner).unwrap()).unwrap();
+        let loser = CloudIdentity {
+            device_id: "11".repeat(16),
+            device_token: "22".repeat(32),
+        };
+        let got = recover_stranded_identity(&path, loser).unwrap();
+        assert_eq!(got, winner, "must not unlink a peer that already published");
+        let disk: CloudIdentity = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(disk, winner);
+    }
+
+    #[test]
+    fn recover_stranded_identity_second_claim_reloads_winner() {
+        let _dir = TestDataDir::install();
+        let path = cloud_identity_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"").unwrap();
+        let first = CloudIdentity {
+            device_id: "ab".repeat(16),
+            device_token: "cd".repeat(32),
+        };
+        let second = CloudIdentity {
+            device_id: "11".repeat(16),
+            device_token: "22".repeat(32),
+        };
+        let a = recover_stranded_identity(&path, first.clone()).unwrap();
+        let b = recover_stranded_identity(&path, second).unwrap();
+        assert_eq!(a, first);
+        assert_eq!(b, first, "the losing recoverer must reload the winner");
+    }
+
+    #[test]
+    fn stranded_identity_recovery_is_exclusive_across_threads() {
+        let _dir = TestDataDir::install();
+        let path = cloud_identity_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"").unwrap();
+        let first = CloudIdentity {
+            device_id: "ab".repeat(16),
+            device_token: "cd".repeat(32),
+        };
+        let second = CloudIdentity {
+            device_id: "11".repeat(16),
+            device_token: "22".repeat(32),
+        };
+        let path_a = path.clone();
+        let path_b = path.clone();
+        let id_a = first.clone();
+        let id_b = second.clone();
+        let a = std::thread::spawn(move || recover_stranded_identity(&path_a, id_a));
+        let b = std::thread::spawn(move || recover_stranded_identity(&path_b, id_b));
+        let got_a = a.join().unwrap().expect("thread a");
+        let got_b = b.join().unwrap().expect("thread b");
+        assert_eq!(
+            got_a, got_b,
+            "two recoverers of an empty cloud.toml must share one identity"
+        );
+        let disk: CloudIdentity = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(disk, got_a);
+        assert!(got_a == first || got_a == second);
     }
 
     #[test]
@@ -1266,6 +1407,45 @@ mod tests {
             Err(RecvTimeoutError::Disconnected),
             false
         ));
+        assert!(
+            shutting_down_from_wake(Ok(ReporterWake::Detach), false),
+            "Detach still ends the reporter loop"
+        );
+        assert!(!reporter_marks_offline(
+            Ok(ReporterWake::Detach),
+            false,
+            true
+        ));
+        assert!(reporter_marks_offline(
+            Ok(ReporterWake::Shutdown),
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn detach_emits_a_detach_wake_without_offline() {
+        let (wake_tx, wake_rx) = mpsc::sync_channel(4);
+        let (_event_tx, event_rx) = mpsc::channel();
+        let signals = Arc::new(Mutex::new(Vec::new()));
+        let signals_t = Arc::clone(&signals);
+        let join = thread::spawn(move || {
+            while let Ok(sig) = wake_rx.recv_timeout(Duration::from_millis(400)) {
+                signals_t.lock().unwrap().push(sig);
+            }
+        });
+        let handle = CloudHandle {
+            latest: Arc::new(Mutex::new(None)),
+            wake: Some(wake_tx),
+            events: event_rx,
+            join: Some(join),
+        };
+        handle.detach();
+        assert_eq!(
+            *signals.lock().unwrap(),
+            vec![ReporterWake::Detach],
+            "live handoff must not send Shutdown (offline:true)"
+        );
     }
 
     #[test]

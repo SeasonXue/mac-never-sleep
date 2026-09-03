@@ -142,17 +142,45 @@
 
   function commitClaimedDevice(storage, key, entry, locks) {
     return withStorageLock(locks, key, () => {
-      let devices = [];
-      try {
-        const raw = storage.getItem(key);
-        const parsed = raw ? JSON.parse(raw) : [];
-        devices = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        devices = [];
-      }
-      const next = withDevices(devices, entry);
+      const next = withDevices(parseStoredDevices(storage, key), entry);
       storage.setItem(key, JSON.stringify(next));
       return next;
+    });
+  }
+
+  function parseStoredDevices(storage, key) {
+    try {
+      const raw = storage.getItem(key);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function forgetDevice(storage, key, deviceId, locks) {
+    return withStorageLock(locks, key, () => {
+      const next = parseStoredDevices(storage, key).filter(
+        (d) => d.device_id !== deviceId,
+      );
+      storage.setItem(key, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function runExclusiveClaim(storage, key, locks, acquire) {
+    return withStorageLock(locks, key, async () => {
+      const devices = parseStoredDevices(storage, key);
+      if (!storageCanHold(storage, key, withDevices(devices, claimReservation()))) {
+        return { stored: false };
+      }
+      const acquired = await acquire();
+      if (!acquired || acquired.ok === false) {
+        return acquired || { ok: false };
+      }
+      const next = withDevices(parseStoredDevices(storage, key), acquired.entry);
+      storage.setItem(key, JSON.stringify(next));
+      return { ok: true, devices: next };
     });
   }
 
@@ -387,10 +415,9 @@
       const forget = el("button", "forget", copy.forget);
       forget.type = "button";
       forget.addEventListener("click", () => {
-        saveDevices(
-          loadDevices().filter((d) => d.device_id !== stored.device_id),
+        void forgetDevice(localStorage, STORAGE_KEY, stored.device_id).then(() =>
+          refresh(),
         );
-        refresh();
       });
       card.appendChild(forget);
       list.appendChild(card);
@@ -489,22 +516,34 @@
   async function claim(code) {
     showError("");
     const input = document.getElementById("pair-code");
-    if (!(await canStoreClaim(localStorage, STORAGE_KEY, loadDevices(), claimReservation()))) {
-      showError(copy.storageError);
-      return false;
-    }
     try {
-      const { res, json } = await post("/pair/claim", { pairing_code: code });
-      if (!res.ok || !json.ok) {
-        showError(claimFailureMessage(res, json, copy));
+      const result = await runExclusiveClaim(
+        localStorage,
+        STORAGE_KEY,
+        globalThis.navigator?.locks,
+        async () => {
+          const { res, json } = await post("/pair/claim", { pairing_code: code });
+          if (!res.ok || !json.ok) {
+            return { ok: false, res, json };
+          }
+          return {
+            ok: true,
+            entry: {
+              device_id: json.device_id,
+              device_token: json.device_token,
+              display_name: boundDisplayName(json.display_name),
+            },
+          };
+        },
+      );
+      if (result && result.stored === false) {
+        showError(copy.storageError);
         return false;
       }
-      const entry = {
-        device_id: json.device_id,
-        device_token: json.device_token,
-        display_name: boundDisplayName(json.display_name),
-      };
-      await commitClaimedDevice(localStorage, STORAGE_KEY, entry);
+      if (!result || result.ok === false) {
+        showError(claimFailureMessage(result.res, result.json, copy));
+        return false;
+      }
       input.value = "";
       clearPairingQuery();
       await refresh();

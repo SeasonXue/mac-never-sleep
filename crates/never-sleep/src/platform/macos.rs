@@ -655,11 +655,21 @@ impl Platform for MacPlatform {
         if !had_holds {
             return Ok(());
         }
+        let drop_shared = match parse_lock() {
+            None => true,
+            Some((pid, _)) => crate::session_lock::should_release_clamshell_lock(
+                std::process::id(),
+                Some(pid),
+                pid_alive(pid),
+            ),
+        };
         if self.owns_power {
             OWNS_POWER.store(false, Ordering::SeqCst);
             SESSION_ACTIVE.store(false, Ordering::SeqCst);
-            CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
-            let _ = fs::remove_file(session_lock_path());
+            if drop_shared {
+                CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+                let _ = fs::remove_file(session_lock_path());
+            }
         }
         self.owns_power = false;
         release_assertion(&mut self.idle_id);
@@ -667,9 +677,11 @@ impl Platform for MacPlatform {
         release_assertion(&mut self.disk_id);
         release_assertion(&mut self.network_id);
         if self.clamshell_on {
-            set_clamshell_sleep_disabled(false);
+            if drop_shared {
+                set_clamshell_sleep_disabled(false);
+                CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+            }
             self.clamshell_on = false;
-            CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
         }
         Ok(())
     }

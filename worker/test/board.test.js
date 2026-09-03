@@ -1442,11 +1442,18 @@ test("claim reserves space for the credential when quota is almost full", async 
     false,
   );
 
-  const reserveAt = src.indexOf("canStoreClaim(");
+  const exclusive = src.indexOf("function runExclusiveClaim");
   const claimPost = src.indexOf('post("/pair/claim"');
+  const storageCheck = src.indexOf("storageCanHold", exclusive);
   assert.ok(
-    reserveAt >= 0 && reserveAt < claimPost,
+    exclusive >= 0 && exclusive < claimPost && storageCheck > exclusive && storageCheck < claimPost,
     "do not consume the one-time code before the credential payload fits",
+  );
+  const claimFn = src.slice(src.indexOf("async function claim("));
+  assert.ok(
+    claimFn.indexOf("runExclusiveClaim") >= 0
+      && claimFn.indexOf("runExclusiveClaim") < claimFn.indexOf('post("/pair/claim"'),
+    "probe, /pair/claim, and commit must share one storage reservation",
   );
   assert.match(src, /storageError/);
   assert.equal(boundDisplayName("名".repeat(200)).length, MAX_DISPLAY_NAME_CHARS);
@@ -1639,7 +1646,7 @@ test("claim commits merge under a cross-tab lock", async () => {
     [a.device_id, b.device_id].sort(),
     "the last claim must not discard the other tab's one-time token",
   );
-  assert.match(src, /await commitClaimedDevice\(localStorage/);
+  assert.match(src, /await (?:commitClaimedDevice\(localStorage|runExclusiveClaim\()/);
   assert.match(src, /navigator\?\.locks/);
 });
 
@@ -1696,6 +1703,110 @@ test("capacity probe shares the claim lock so it cannot restore a stale list", a
   assert.equal(probeUsedLock, true, "the capacity probe must run inside the same Web Lock");
   const stored = JSON.parse(storage.getItem(STORAGE_KEY));
   assert.equal(stored[0]?.device_id, real.device_id);
+});
+
+test("claim holds the storage lock through the one-time POST", async () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function withDevices");
+  const end = src.indexOf("\n  async function post(");
+  const { runExclusiveClaim } = new Function(
+    `const LIST_MAX_DEVICES = 32;\nconst MAX_DISPLAY_NAME_CHARS = 128;\n${src.slice(start, end)}\nreturn { runExclusiveClaim };`,
+  )();
+  assert.equal(typeof runExclusiveClaim, "function");
+
+  const STORAGE_KEY = "never-sleep-devices";
+  const storage = quotaStorage(1_000_000);
+  storage.setItem(STORAGE_KEY, "[]");
+  let chain = Promise.resolve();
+  let held = false;
+  const locks = {
+    request(_name, fn) {
+      const run = chain.then(async () => {
+        held = true;
+        try {
+          return await fn();
+        } finally {
+          held = false;
+        }
+      });
+      chain = run.catch(() => {});
+      return run;
+    },
+  };
+  let sawLockDuringAcquire = false;
+  const first = {
+    device_id: "a".repeat(32),
+    device_token: "a".repeat(64),
+    display_name: "A",
+  };
+  const second = {
+    device_id: "b".repeat(32),
+    device_token: "b".repeat(64),
+    display_name: "B",
+  };
+  const results = await Promise.all([
+    runExclusiveClaim(storage, STORAGE_KEY, locks, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      sawLockDuringAcquire = held;
+      return { ok: true, entry: first };
+    }),
+    runExclusiveClaim(storage, STORAGE_KEY, locks, async () => ({
+      ok: true,
+      entry: second,
+    })),
+  ]);
+  assert.equal(sawLockDuringAcquire, true, "the one-time POST must run under the same lock as the probe");
+  assert.equal(results[0].ok, true);
+  assert.equal(results[1].ok, true);
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.deepEqual(
+    stored.map((d) => d.device_id).sort(),
+    [first.device_id, second.device_id].sort(),
+    "a second tab must wait for the in-flight claim instead of racing the one-time code",
+  );
+});
+
+test("forget serializes with claim commits", async () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function withDevices");
+  const end = src.indexOf("\n  async function post(");
+  const { commitClaimedDevice, forgetDevice } = new Function(
+    `const LIST_MAX_DEVICES = 32;\nconst MAX_DISPLAY_NAME_CHARS = 128;\n${src.slice(start, end)}\nreturn { commitClaimedDevice, forgetDevice };`,
+  )();
+  assert.equal(typeof forgetDevice, "function");
+  assert.match(src, /forgetDevice\(localStorage/);
+
+  const STORAGE_KEY = "never-sleep-devices";
+  const storage = quotaStorage(1_000_000);
+  const existing = {
+    device_id: "a".repeat(32),
+    device_token: "a".repeat(64),
+    display_name: "Keep",
+  };
+  storage.setItem(STORAGE_KEY, JSON.stringify([existing]));
+  let chain = Promise.resolve();
+  const locks = {
+    request(_name, fn) {
+      const run = chain.then(() => fn());
+      chain = run.catch(() => {});
+      return run;
+    },
+  };
+  const claimed = {
+    device_id: "b".repeat(32),
+    device_token: "b".repeat(64),
+    display_name: "New",
+  };
+  await Promise.all([
+    forgetDevice(storage, STORAGE_KEY, existing.device_id, locks),
+    commitClaimedDevice(storage, STORAGE_KEY, claimed, locks),
+  ]);
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.deepEqual(
+    stored.map((d) => d.device_id),
+    [claimed.device_id],
+    "forget must not clobber a concurrent claim, and claim must not restore a forgotten device",
+  );
 });
 
 test("capacity probe treats blocked localStorage reads as a miss", async () => {
