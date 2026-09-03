@@ -172,6 +172,26 @@ fn worker_shards_per_device_not_one_global_board() {
     );
     assert!(index.contains("rate:pair-claim"));
     assert!(index.contains("internal/claim-rate"));
+    assert!(index.contains("rate:device"));
+    assert!(index.contains("internal/device-rate"));
+    let after_pair_start = index
+        .split(r#"started.error || "pair_busy""#)
+        .nth(1)
+        .expect("pair/start catch-all");
+    let catch_all_shard = after_pair_start
+        .find("const name = shardName(path, body);")
+        .expect("device catch-all shardName");
+    let catch_all = &after_pair_start[..catch_all_shard];
+    assert!(
+        catch_all.contains("/api/heartbeat") && catch_all.contains("/api/command"),
+        "unknown /api paths must not open device shards"
+    );
+    let not_found_at = catch_all.find("not_found").expect("unknown path 404");
+    let device_rate_at = catch_all.find("rate:device").expect("device rate gate");
+    assert!(
+        not_found_at < device_rate_at,
+        "unknown /api paths must 404 before the device rate shard"
+    );
     let claim_block = index
         .split(r#"path === "/api/pair/claim""#)
         .nth(1)
@@ -194,6 +214,15 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("takePairStartSlot"));
     assert!(board.contains("takeListSlot"));
     assert!(board.contains("takeClaimSlot"));
+    assert!(board.contains("takeDeviceSlot"));
+    assert!(
+        board.contains("LIST_IP_MIN_BOARDS"),
+        "per-IP list cap must be sized for several boards behind one NAT"
+    );
+    assert!(
+        client.contains("retryLater") && client.contains("稍后再试"),
+        "claim 429 must not reuse the invalid-code copy"
+    );
     assert!(
         board.contains("reserved = await reserve(code)")
             && board.contains("if (release) await release(code);\n      continue;"),

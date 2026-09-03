@@ -23,6 +23,7 @@
         remaining: "剩余",
         forget: "从本机列表移除",
         badCode: "配对码无效或已过期。",
+        retryLater: "尝试过于频繁，请稍后再试。",
         offlineCmd: "这台 Mac 当前离线，指令没有生效。",
         badCmd: "无法发送指令。",
         networkError: "网络出错，请检查连接后重试。",
@@ -48,6 +49,7 @@
         remaining: "left",
         forget: "Remove from this phone",
         badCode: "That pairing code is invalid or expired.",
+        retryLater: "Too many attempts. Please try again in a moment.",
         offlineCmd: "This Mac is offline; the command did not apply.",
         badCmd: "Could not send the command.",
         networkError: "Network error. Check the connection and try again.",
@@ -437,6 +439,15 @@
     await refresh();
   }
 
+  function claimFailureMessage(res, json, copy) {
+    const status = Number(res?.status) || 0;
+    const error = json?.error;
+    if (status === 429 || error === "rate_limited" || status >= 500) {
+      return copy.retryLater;
+    }
+    return copy.badCode;
+  }
+
   async function claim(code) {
     showError("");
     const input = document.getElementById("pair-code");
@@ -447,7 +458,7 @@
     try {
       const { res, json } = await post("/pair/claim", { pairing_code: code });
       if (!res.ok || !json.ok) {
-        showError(copy.badCode);
+        showError(claimFailureMessage(res, json, copy));
         return false;
       }
       const devices = withDevices(loadDevices(), {

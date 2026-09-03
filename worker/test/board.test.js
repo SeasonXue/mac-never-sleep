@@ -35,9 +35,11 @@ import {
   LIST_GLOBAL_LIMIT,
   PAIR_CLAIM_IP_LIMIT,
   PAIR_CLAIM_GLOBAL_LIMIT,
+  DEVICE_IP_LIMIT,
   takePairStartSlot,
   takeListSlot,
   takeClaimSlot,
+  takeDeviceSlot,
 } from "../src/board.js";
 
 function sampleStatus(overrides = {}) {
@@ -631,6 +633,15 @@ test("empty lookup boards are not persisted", () => {
     }),
     "put",
     "pair/claim rate-limit hits must persist",
+  );
+  assert.equal(
+    persistBoardAction(null, {
+      devices: {},
+      codes: {},
+      deviceRate: { global: [1_000], ips: { "1.1.1.1": [1_000] } },
+    }),
+    "put",
+    "heartbeat/command rate-limit hits must persist",
   );
 });
 
@@ -1591,9 +1602,115 @@ test("list global rate limit covers aggregate 2.5s board polling", () => {
     "one open board must not hit the per-IP list cap",
   );
   assert.ok(
+    LIST_IP_LIMIT >= pollsPerBoardPerMin * 8,
+    "multiple open boards behind one NAT must not hit the per-IP list cap",
+  );
+  assert.ok(
     LIST_GLOBAL_LIMIT >= pollsPerBoardPerMin * 100,
     "a handful of open boards must not 429 every Mac offline",
   );
+});
+
+test("claim 429 is retryable not a bad pairing code", () => {
+  const { src } = boardClientHelpers();
+  assert.match(src, /retryLater:/);
+  assert.match(src, /稍后再试/);
+  assert.match(src, /try again in a moment/);
+  const start = src.indexOf("function claimFailureMessage");
+  assert.notEqual(start, -1, "claim must classify retryable failures");
+  const end = src.indexOf("\n  async function claim(");
+  assert.ok(end > start, "claimFailureMessage must sit next to claim()");
+  const claimFailureMessage = new Function(
+    `${src.slice(start, end)}\nreturn claimFailureMessage;`,
+  )();
+  const copy = { badCode: "bad", retryLater: "retry" };
+  assert.equal(
+    claimFailureMessage(
+      { status: 429 },
+      { ok: false, error: "rate_limited" },
+      copy,
+    ),
+    "retry",
+    "a rate-limit 429 is not an invalid pairing code",
+  );
+  assert.equal(
+    claimFailureMessage({ status: 503 }, { ok: false }, copy),
+    "retry",
+    "a transient 5xx must ask the user to retry",
+  );
+  assert.equal(
+    claimFailureMessage(
+      { status: 404 },
+      { ok: false, error: "unknown_code" },
+      copy,
+    ),
+    "bad",
+  );
+  const claimAt = src.indexOf("async function claim(");
+  const beginAt = src.indexOf("let claimPromise");
+  const claimFn = src.slice(claimAt, beginAt);
+  assert.match(
+    claimFn,
+    /claimFailureMessage/,
+    "claim() must not map every failure to copy.badCode",
+  );
+});
+
+test("device routes are rate-limited before opening shards", () => {
+  let state = { global: [], ips: {} };
+  for (let i = 0; i < DEVICE_IP_LIMIT; i += 1) {
+    const allowed = takeDeviceSlot(state, "203.0.113.14", 7_000);
+    assert.equal(allowed.ok, true);
+    state = allowed.state;
+  }
+  const denied = takeDeviceSlot(state, "203.0.113.14", 7_000);
+  assert.equal(denied.ok, false);
+  assert.equal(denied.status, 429);
+
+  let flooded = { global: [], ips: {} };
+  const floodCap = 8;
+  for (let i = 0; i < floodCap; i += 1) {
+    const allowed = takeDeviceSlot(flooded, `198.51.100.${i % 250}`, 8_000, {
+      ipLimit: floodCap,
+      globalLimit: floodCap,
+    });
+    assert.equal(allowed.ok, true);
+    flooded = allowed.state;
+  }
+  const globalDenied = takeDeviceSlot(flooded, "203.0.113.15", 8_000, {
+    ipLimit: floodCap,
+    globalLimit: floodCap,
+  });
+  assert.equal(
+    globalDenied.ok,
+    false,
+    "unique device ids must not open unbounded shards",
+  );
+
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  const board = fs.readFileSync(path.join(root, "worker/src/board.js"), "utf8");
+  const afterBusy = index.indexOf('started.error || "pair_busy"');
+  const lastShard = index.lastIndexOf("const name = shardName(path, body);");
+  assert.ok(afterBusy >= 0 && lastShard > afterBusy);
+  const region = index.slice(afterBusy, lastShard);
+  assert.ok(
+    region.includes('"/api/heartbeat"') && region.includes('"/api/command"'),
+    "only heartbeat and command may reach the device catch-all",
+  );
+  const notFoundAt = region.indexOf("not_found");
+  const rateAt = region.indexOf("rate:device");
+  assert.ok(
+    notFoundAt >= 0,
+    "unknown /api paths must 404 before opening a device shard",
+  );
+  assert.ok(rateAt >= 0, "heartbeat/command must hit rate:device");
+  assert.ok(
+    notFoundAt < rateAt,
+    "unknown /api paths must 404 before the rate shard",
+  );
+  assert.ok(region.includes("internal/device-rate"));
+  assert.match(board, /export function takeDeviceSlot/);
 });
 
 test("pair/claim is rate-limited before opening pair shards", () => {

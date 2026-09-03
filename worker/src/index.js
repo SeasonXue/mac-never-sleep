@@ -295,6 +295,23 @@ async function routeApi(request, env) {
     );
   }
 
+  if (path !== "/api/heartbeat" && path !== "/api/command") {
+    return jsonResponse({ ok: false, error: "not_found" }, 404);
+  }
+  const gated = await stubFetch(
+    env,
+    "rate:device",
+    "https://do/internal/device-rate",
+    { ip: clientIp(request) },
+    origin,
+  );
+  const gate = await gated.json().catch(() => ({}));
+  if (!gate.ok) {
+    return jsonResponse(
+      { ok: false, error: gate.error || "rate_limited" },
+      gate.status || 429,
+    );
+  }
   const name = shardName(path, body);
   if (!name) {
     return jsonResponse({ ok: false, error: "bad_identity" }, 400);
