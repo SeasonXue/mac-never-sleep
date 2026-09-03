@@ -20,8 +20,7 @@ use tray_icon::{
 
 use crate::apply::{dispatch, stop_for_quit};
 use crate::cloud::{
-    apply_polled_commands, cloud_enabled, default_display_name, load_or_create_identity,
-    spawn_reporter, CloudHandle,
+    cloud_enabled, default_display_name, load_or_create_identity, spawn_reporter, CloudHandle,
 };
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
@@ -667,11 +666,7 @@ fn refresh_ui(
     pairing: &mut Option<(String, String)>,
 ) {
     if let Some(handle) = cloud {
-        handle.push_status(
-            engine.json_status(&platform.snapshot()),
-            engine.config.lang(),
-        );
-        apply_polled_commands(engine, platform, handle, pairing);
+        crate::cloud::sync_cloud(engine, platform, handle, pairing);
     }
     let host = platform.snapshot();
     let vm = engine.view(&host);

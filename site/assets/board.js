@@ -1,5 +1,6 @@
 (() => {
   const STORAGE_KEY = "never-sleep-devices";
+  const LIST_MAX_DEVICES = 32;
   const zh = document.documentElement.lang.startsWith("zh");
 
   const copy = zh
@@ -301,6 +302,7 @@
         device_token: json.device_token,
         display_name: json.display_name,
       });
+      while (devices.length > LIST_MAX_DEVICES) devices.shift();
       saveDevices(devices);
       input.value = "";
       await refresh();

@@ -48,11 +48,10 @@ pub fn run_foreground(
     while running.load(Ordering::SeqCst) && engine.is_active() {
         dispatch(&mut engine, platform, Input::Tick);
         if let Some(handle) = cloud.as_ref() {
-            handle.push_status(
-                engine.json_status(&platform.snapshot()),
-                engine.config.lang(),
-            );
-            crate::cloud::apply_polled_commands(&mut engine, platform, handle, &mut pairing);
+            crate::cloud::sync_cloud(&mut engine, platform, handle, &mut pairing);
+        }
+        if !engine.is_active() {
+            break;
         }
         thread::sleep(Duration::from_millis(HEARTBEAT_MS));
     }
@@ -67,6 +66,12 @@ pub fn run_foreground(
         );
     }
     stop_for_quit(&mut engine, platform);
+    if let Some(handle) = cloud.as_ref() {
+        handle.push_status(
+            engine.json_status(&platform.snapshot()),
+            engine.config.lang(),
+        );
+    }
     println!("{}", engine.config.tr().foreground_ended());
     Ok(())
 }

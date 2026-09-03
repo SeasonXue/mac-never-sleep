@@ -106,6 +106,8 @@ export function shardName(path, body) {
 
 export const LIST_MAX_DEVICES = 32;
 export const PAIR_RESERVE_ATTEMPTS = 8;
+/** Drop undelivered commands after a few missed heartbeats, not hours later. */
+export const COMMAND_TTL_SECS = HEARTBEAT_TTL_SECS * 4;
 const U32_MAX = 0xffffffff;
 /** `JsonStatus` counters are `Option<u64>`; JSON numbers stay exact through 2^53-1. */
 const MAX_STATUS_SECS = Number.MAX_SAFE_INTEGER;
@@ -123,6 +125,15 @@ export function capListEntries(entries) {
     if (out.length >= LIST_MAX_DEVICES) break;
   }
   return out;
+}
+
+export function fitStoredDevices(devices, entry, max = LIST_MAX_DEVICES) {
+  const next = (Array.isArray(devices) ? devices : []).filter(
+    (item) => item?.device_id !== entry.device_id,
+  );
+  next.push(entry);
+  while (next.length > max) next.shift();
+  return next;
 }
 
 export function boardHasState(data) {
@@ -313,6 +324,18 @@ export class Board {
     return expired;
   }
 
+  expireOffers() {
+    return this.#purgeCodes(this.nowSecs());
+  }
+
+  nextAlarmUnix() {
+    let next = null;
+    for (const offer of this.codes.values()) {
+      if (next == null || offer.expires < next) next = offer.expires;
+    }
+    return next;
+  }
+
   livePairing(deviceId) {
     const now = this.nowSecs();
     for (const [code, offer] of this.codes) {
@@ -498,8 +521,16 @@ export class Board {
         ? ackCommandIds.filter((id) => typeof id === "string")
         : [],
     );
-    device.commands = (device.commands || []).filter((item) => !acks.has(item.id));
-    const pending = [...device.commands];
+    device.commands = (device.commands || []).filter((item) => {
+      if (acks.has(item.id)) return false;
+      const queued = typeof item.queued_at === "number" ? item.queued_at : 0;
+      return now - queued <= COMMAND_TTL_SECS;
+    });
+    const pending = device.commands.map((item) => {
+      const out = { id: item.id, cmd: item.cmd };
+      if (item.duration) out.duration = item.duration;
+      return out;
+    });
     const expiredCodes = this.#purgeCodes(now);
     let pairing = null;
     const chinese = isChineseLang(lang);
@@ -565,6 +596,7 @@ export class Board {
     const item = {
       id: randomHex(8),
       cmd,
+      queued_at: now,
     };
     if (cmd === "on" && duration != null && duration !== "") {
       if (typeof duration !== "string" || !isAllowedDuration(duration)) {

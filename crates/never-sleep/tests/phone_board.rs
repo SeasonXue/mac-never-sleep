@@ -89,6 +89,9 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
         "list transport failures must mark cached devices offline"
     );
     assert!(js.contains("withListFailure(lastStatuses)"));
+    assert!(js.contains("LIST_MAX_DEVICES = 32"));
+    assert!(js.contains("while (devices.length > LIST_MAX_DEVICES)"));
+    assert!(js.contains("devices.shift()"));
 }
 
 #[test]
@@ -117,9 +120,14 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(index.contains("publishReservedPairing"));
     assert!(index.contains("blockConcurrencyWhile"));
     assert!(index.contains("createSerialQueue"));
+    assert!(index.contains("setAlarm"));
+    assert!(index.contains("alarm()"));
     let board = read("worker/src/board.js");
     assert!(board.contains("pairingCodeIsLive"));
     assert!(board.contains("LIST_MAX_DEVICES = 32"));
+    assert!(board.contains("COMMAND_TTL_SECS"));
+    assert!(board.contains("fitStoredDevices"));
+    assert!(board.contains("expireOffers"));
     assert!(board.contains("isAllowedDuration"));
     assert!(board.contains("error: \"taken\""));
     assert!(

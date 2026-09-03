@@ -467,6 +467,20 @@ pub fn apply_polled_commands(
     }
 }
 
+/// Apply remote commands first, then queue the resulting snapshot.
+pub fn sync_cloud(
+    engine: &mut Engine,
+    platform: &mut dyn Platform,
+    handle: &CloudHandle,
+    pairing: &mut Option<(String, String)>,
+) {
+    apply_polled_commands(engine, platform, handle, pairing);
+    handle.push_status(
+        engine.json_status(&platform.snapshot()),
+        engine.config.lang(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,6 +642,32 @@ mod tests {
         assert!(inbox.ack_ids().is_empty());
     }
 
+    #[test]
+    fn sync_cloud_reports_inactive_after_remote_off() {
+        let _dir = TestDataDir::install();
+        let (status_tx, status_rx) = mpsc::sync_channel(4);
+        let (event_tx, event_rx) = mpsc::channel();
+        event_tx
+            .send(CloudEvent::Commands(vec![RemoteCommand::off("c-off")]))
+            .unwrap();
+        let handle = CloudHandle {
+            status_tx,
+            events: event_rx,
+        };
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        crate::apply::dispatch(&mut engine, &mut platform, never_sleep_core::Input::Start);
+        assert!(engine.is_active());
+        let mut pairing = None;
+        sync_cloud(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(!engine.is_active());
+        let (status, _) = status_rx.try_recv().unwrap();
+        assert!(
+            !status.active,
+            "phone must see standby ended before the reporter exits"
+        );
+    }
+
     struct ScriptedTransport {
         pair: Mutex<Vec<Result<CloudPost, String>>>,
         beat: Mutex<Vec<Result<CloudPost, String>>>,
@@ -725,6 +765,7 @@ mod tests {
         assert!(src.contains("needs_pair_start"));
         assert!(src.contains("on_unauthorized"));
         assert!(src.contains("apply_effects_or_abort"));
+        assert!(src.contains("fn sync_cloud"));
     }
 
     #[test]

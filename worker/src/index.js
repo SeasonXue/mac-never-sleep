@@ -29,11 +29,16 @@ export class BoardHub {
     ctx.blockConcurrencyWhile(async () => {
       this.stored = (await ctx.storage.get("board")) || null;
       this.board = Board.fromJSON(this.stored);
+      await this.#scheduleAlarm();
     });
   }
 
   fetch(request) {
     return this.enqueue(() => this.#apply(request));
+  }
+
+  alarm() {
+    return this.enqueue(() => this.#onAlarm());
   }
 
   async #apply(request) {
@@ -43,6 +48,17 @@ export class BoardHub {
     const response = path.startsWith("/internal/")
       ? await handleInternal(this.board, request)
       : await handleApi(this.board, request);
+    await this.#persist();
+    return response;
+  }
+
+  async #onAlarm() {
+    this.board.nowSecs = () => Math.floor(Date.now() / 1000);
+    this.board.expireOffers();
+    await this.#persist();
+  }
+
+  async #persist() {
     const next = this.board.toJSON();
     const action = persistBoardAction(this.stored, next);
     if (action === "put") {
@@ -53,7 +69,16 @@ export class BoardHub {
       this.stored = null;
       this.board = Board.fromJSON(null);
     }
-    return response;
+    await this.#scheduleAlarm();
+  }
+
+  async #scheduleAlarm() {
+    const next = this.board.nextAlarmUnix();
+    if (next == null) {
+      await this.ctx.storage.deleteAlarm();
+    } else {
+      await this.ctx.storage.setAlarm(next * 1000);
+    }
   }
 }
 

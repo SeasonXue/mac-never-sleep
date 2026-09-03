@@ -3,6 +3,9 @@ import test from "node:test";
 import {
   Board,
   capListEntries,
+  COMMAND_TTL_SECS,
+  createSerialQueue,
+  fitStoredDevices,
   handleApi,
   HEARTBEAT_TTL_SECS,
   isAllowedDuration,
@@ -13,7 +16,6 @@ import {
   persistBoardAction,
   publicSiteOrigin,
   publishReservedPairing,
-  createSerialQueue,
   sanitizeStatus,
   shardName,
 } from "../src/board.js";
@@ -768,4 +770,64 @@ test("pair shard reservation is create-if-absent and retries on collision", asyn
     startDevice: async (code) => ({ ok: true, pairing_code: code }),
   });
   assert.equal(result.pairing_code, "ZZZZYYYY");
+});
+
+test("fitStoredDevices evicts the oldest Mac when the phone list is full", () => {
+  const first = { device_id: "aa".repeat(16), device_token: "t" };
+  const extra = { device_id: "zz".repeat(16), device_token: "t" };
+  const full = Array.from({ length: LIST_MAX_DEVICES }, (_, i) => ({
+    device_id: String(i).padStart(32, "0"),
+    device_token: "t",
+  }));
+  full[0] = first;
+  const next = fitStoredDevices(full, extra);
+  assert.equal(next.length, LIST_MAX_DEVICES);
+  assert.equal(next[next.length - 1].device_id, extra.device_id);
+  assert.equal(
+    next.some((d) => d.device_id === first.device_id),
+    false,
+  );
+  const same = fitStoredDevices(full, first);
+  assert.equal(same.length, LIST_MAX_DEVICES);
+  assert.equal(same[same.length - 1].device_id, first.device_id);
+});
+
+test("stale commands expire after the delivery window", async () => {
+  let now = 1_000;
+  const board = new Board(() => now);
+  const id = identity();
+  await post(board, "/api/pair/start", id);
+  await post(board, "/api/heartbeat", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    status: sampleStatus(),
+  });
+  await post(board, "/api/command", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    cmd: "on",
+  });
+  now = 1_000 + COMMAND_TTL_SECS + 1;
+  const beat = await json(
+    await post(board, "/api/heartbeat", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      status: sampleStatus(),
+    }),
+  );
+  assert.equal(beat.body.commands.length, 0);
+});
+
+test("expired pairing offers are dropped without a later heartbeat", () => {
+  const board = new Board(() => 1_000);
+  board.startPairing({
+    deviceId: identity().device_id,
+    deviceToken: identity().device_token,
+    displayName: identity().display_name,
+  });
+  assert.equal(board.nextAlarmUnix(), 1_000 + PAIRING_TTL_SECS);
+  board.nowSecs = () => 1_000 + PAIRING_TTL_SECS + 1;
+  const expired = board.expireOffers();
+  assert.equal(expired.length, 1);
+  assert.equal(board.nextAlarmUnix(), null);
 });
