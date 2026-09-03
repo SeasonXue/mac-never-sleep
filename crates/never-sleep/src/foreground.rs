@@ -5,7 +5,7 @@ use std::time::Duration;
 use never_sleep_core::{DurationPref, Engine, Input, Lang, StopReason, HEARTBEAT_MS};
 
 use crate::apply::{dispatch, stop_for_quit};
-use crate::ipc::try_send;
+use crate::ipc::{menu_socket_absent, try_send};
 use crate::persist::load_config;
 use crate::platform::Platform;
 use crate::protocol::{self, IpcRequest};
@@ -32,7 +32,7 @@ pub fn run_foreground(
     });
 
     let cloud_ok = crate::cloud::cloud_enabled();
-    let mut cloud = if cloud_ok && try_send(&IpcRequest::Ping).is_none() {
+    let mut cloud = if cloud_ok && menu_socket_absent() {
         spawn_foreground_reporter(engine.config.lang())
     } else {
         None
@@ -88,7 +88,7 @@ pub fn run_foreground(
             if let Some(handle) = cloud.as_ref() {
                 handle.resume();
             }
-        } else if cloud.is_none() && cloud_ok {
+        } else if cloud.is_none() && cloud_ok && menu_socket_absent() {
             cloud = spawn_foreground_reporter(engine.config.lang());
         }
         dispatch(&mut engine, platform, Input::Tick);
@@ -304,6 +304,10 @@ mod tests {
         assert!(
             after_ping.contains("cloud.is_none()"),
             "do not start a second reporter while this process already has one"
+        );
+        assert!(
+            after_ping.contains("menu_socket_absent"),
+            "a timed-out Ping while the menu still owns the socket must not start a second reporter"
         );
     }
 

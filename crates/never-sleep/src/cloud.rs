@@ -293,7 +293,9 @@ impl CommandInbox {
         out
     }
 
-    /// Record ids the engine actually applied. Only these go out as acks.
+    /// Record ids this process applied, including ids a donor already applied
+    /// that this inbox has not listed yet. Those still go out as acks so the
+    /// Worker drops them before a relaunch can replay a timed On.
     pub fn mark_applied<I, S>(&mut self, ids: I)
     where
         I: IntoIterator<Item = S>,
@@ -301,7 +303,8 @@ impl CommandInbox {
     {
         for id in ids {
             let id = id.as_ref();
-            if self.known.contains(id) && !self.seen.iter().any(|seen| seen == id) {
+            self.known.insert(id.to_string());
+            if !self.seen.iter().any(|seen| seen == id) {
                 self.seen.push(id.to_string());
             }
         }
@@ -1693,6 +1696,23 @@ mod tests {
         );
         inbox.retain_pending(&[]);
         assert!(inbox.ack_ids().is_empty());
+    }
+
+    #[test]
+    fn transferred_ids_are_acked_before_the_inbox_sees_them() {
+        let mut inbox = CommandInbox::default();
+        inbox.mark_applied(["phone-on"]);
+        assert_eq!(
+            inbox.ack_ids(),
+            ["phone-on"],
+            "a donor-applied id must go out as an ack even before this reporter lists it"
+        );
+        let replayed = inbox.take_new(vec![RemoteCommand::on("phone-on", Some("8h".into()))]);
+        assert!(
+            replayed.is_empty(),
+            "the Worker-delivered copy must not be applied after the transferred ack"
+        );
+        assert_eq!(inbox.ack_ids(), ["phone-on"]);
     }
 
     #[test]

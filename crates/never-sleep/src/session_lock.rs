@@ -47,6 +47,28 @@ pub fn should_clear_unclaimed_clamshell(claiming: bool) -> bool {
     !claiming
 }
 
+/// Whether a failed `set_clamshell_sleep_disabled(false)` must abort adopt.
+///
+/// Ordinary lid-open / display-off starts also call restore because they are
+/// not claiming the flag. The private selector is often unavailable there; that
+/// must not tear down a successful idle assertion. Abort only when a live
+/// foreign lock actually recorded `clamshell=1`.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_fail_unclaimed_clamshell_restore(
+    claiming: bool,
+    lock: Option<(u32, bool)>,
+    lock_holder_alive: bool,
+    our_pid: u32,
+) -> bool {
+    if claiming {
+        return false;
+    }
+    matches!(
+        lock,
+        Some((pid, true)) if pid != our_pid && lock_holder_alive
+    )
+}
+
 pub fn parse_lock_text(s: &str) -> (u32, bool) {
     let mut pid = 0u32;
     let mut clamshell = false;
@@ -219,5 +241,45 @@ mod tests {
             fail_arm.contains("owns_power = true") && fail_arm.contains("release_power"),
             "keep ownership so release_power sees a live donor lock and does not clear the flag"
         );
+        assert!(
+            fail_arm.contains("should_fail_unclaimed_clamshell_restore"),
+            "restore failure is fatal only when a live donor recorded clamshell=1"
+        );
+    }
+
+    #[test]
+    fn restore_failure_is_fatal_only_with_live_inherited_clamshell() {
+        assert!(
+            !should_fail_unclaimed_clamshell_restore(false, None, false, 10),
+            "lid-open display-off with no donor must still start if IOKit restore is unavailable"
+        );
+        assert!(!should_fail_unclaimed_clamshell_restore(
+            false,
+            Some((10, true)),
+            true,
+            10
+        ));
+        assert!(!should_fail_unclaimed_clamshell_restore(
+            false,
+            Some((20, false)),
+            true,
+            10
+        ));
+        assert!(!should_fail_unclaimed_clamshell_restore(
+            true,
+            Some((20, true)),
+            true,
+            10
+        ));
+        assert!(
+            should_fail_unclaimed_clamshell_restore(false, Some((20, true)), true, 10),
+            "handoff must not ack if inherited clamshell=1 cannot be restored"
+        );
+        assert!(!should_fail_unclaimed_clamshell_restore(
+            false,
+            Some((20, true)),
+            false,
+            10
+        ));
     }
 }

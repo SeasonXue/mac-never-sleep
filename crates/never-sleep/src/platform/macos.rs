@@ -616,9 +616,20 @@ impl Platform for MacPlatform {
 
         if crate::session_lock::should_clear_unclaimed_clamshell(plan.disable_clamshell_sleep) {
             if !set_clamshell_sleep_disabled(false) {
-                self.owns_power = true;
-                let _ = self.release_power();
-                return Err(t.clamshell_restore_failed().into());
+                let parsed = parse_lock();
+                let holder_alive = parsed
+                    .map(|(pid, _)| crate::session_lock::pid_is_alive(pid))
+                    .unwrap_or(false);
+                if crate::session_lock::should_fail_unclaimed_clamshell_restore(
+                    plan.disable_clamshell_sleep,
+                    parsed,
+                    holder_alive,
+                    std::process::id(),
+                ) {
+                    self.owns_power = true;
+                    let _ = self.release_power();
+                    return Err(t.clamshell_restore_failed().into());
+                }
             }
             self.clamshell_on = false;
         } else {

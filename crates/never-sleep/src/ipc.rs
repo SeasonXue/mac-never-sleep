@@ -1,6 +1,4 @@
-#[cfg(any(test, target_os = "macos"))]
-use std::io::{self, ErrorKind};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -30,12 +28,22 @@ fn connect_live() -> io::Result<UnixStream> {
     UnixStream::connect(ipc_socket_path())
 }
 
-#[cfg(any(test, target_os = "macos"))]
 fn is_absent(err: &io::Error) -> bool {
     matches!(
         err.kind(),
         ErrorKind::ConnectionRefused | ErrorKind::NotFound | ErrorKind::ConnectionReset
     )
+}
+
+/// True when nothing is listening on the menu socket.
+///
+/// `try_send` maps a 3s read timeout to `None`, which is not absence: the menu
+/// may be blocked in a dialog. Connecting is enough to know the owner is live.
+pub fn menu_socket_absent() -> bool {
+    match UnixStream::connect(ipc_socket_path()) {
+        Ok(_) => false,
+        Err(e) => is_absent(&e),
+    }
 }
 
 pub fn send(req: &IpcRequest) -> Result<IpcResponse, String> {
@@ -140,5 +148,11 @@ mod tests {
         assert!(is_absent(&err));
         let err = io::Error::from(ErrorKind::PermissionDenied);
         assert!(!is_absent(&err));
+        assert!(
+            !is_absent(&io::Error::from(ErrorKind::TimedOut)),
+            "a busy menu that misses the 3s read must not look like it exited"
+        );
+        assert!(!is_absent(&io::Error::from(ErrorKind::WouldBlock)));
+        assert!(is_absent(&io::Error::from(ErrorKind::ConnectionRefused)));
     }
 }
