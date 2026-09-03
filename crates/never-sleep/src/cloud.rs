@@ -276,6 +276,8 @@ struct HeartbeatBody<'a> {
     lang: &'a str,
     ack_command_ids: &'a [String],
     status: &'a JsonStatus,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    offline: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -304,6 +306,7 @@ pub fn heartbeat_request_json(
     status: &JsonStatus,
     lang: &str,
     ack_command_ids: &[String],
+    offline: bool,
 ) -> String {
     serde_json::to_string(&HeartbeatBody {
         device_id: &identity.device_id,
@@ -312,6 +315,7 @@ pub fn heartbeat_request_json(
         lang,
         ack_command_ids,
         status,
+        offline,
     })
     .expect("heartbeat json")
 }
@@ -489,6 +493,7 @@ fn reporter_loop(
             lang.cloud_tag(),
             status,
             &event_tx,
+            shutting_down,
         );
         if shutting_down {
             break;
@@ -506,6 +511,7 @@ pub(crate) fn reporter_tick(
     lang: &str,
     status: &JsonStatus,
     event_tx: &mpsc::Sender<CloudEvent>,
+    offline: bool,
 ) {
     if gate.needs_pair_start() {
         let body = serde_json::to_string(&PairStartBody {
@@ -527,7 +533,14 @@ pub(crate) fn reporter_tick(
         }
     }
 
-    let body = heartbeat_request_json(identity, display_name, status, lang, inbox.ack_ids());
+    let body = heartbeat_request_json(
+        identity,
+        display_name,
+        status,
+        lang,
+        inbox.ack_ids(),
+        offline,
+    );
     match transport.post_json("/api/heartbeat", &body) {
         Ok(CloudPost::Unauthorized) => gate.on_unauthorized(),
         Ok(CloudPost::Ok(raw)) => {
@@ -754,6 +767,7 @@ mod tests {
             &sample_status(),
             "zh",
             &["cmd-1".into()],
+            false,
         ))
         .unwrap();
         assert_eq!(v["device_id"], id.device_id);
@@ -764,6 +778,33 @@ mod tests {
         assert_eq!(v["status"]["active"], true);
         assert_eq!(v["status"]["display"], "asleep");
         assert!(v["cmd"].is_null());
+        assert!(
+            v["offline"].is_null(),
+            "live heartbeats must omit the quit offline marker"
+        );
+    }
+
+    #[test]
+    fn shutdown_heartbeat_json_marks_the_mac_offline() {
+        let id = CloudIdentity {
+            device_id: "ab".repeat(16),
+            device_token: "cd".repeat(32),
+        };
+        let v: serde_json::Value = serde_json::from_str(&heartbeat_request_json(
+            &id,
+            "Studio",
+            &sample_status(),
+            "en",
+            &[],
+            true,
+        ))
+        .unwrap();
+        assert_eq!(v["offline"], true);
+        let src = include_str!("cloud.rs");
+        assert!(
+            src.contains("heartbeat_request_json(") && src.contains("shutting_down"),
+            "the quit flush must send offline:true on the last heartbeat"
+        );
     }
 
     #[test]
@@ -1071,7 +1112,7 @@ mod tests {
         let status = sample_status();
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx,
+            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
         );
         assert!(
             !gate.needs_pair_start(),
@@ -1086,7 +1127,7 @@ mod tests {
         );
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx,
+            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
         );
         assert_eq!(
             *transport.pair_calls.lock().unwrap(),
@@ -1136,13 +1177,13 @@ mod tests {
         let status = sample_status();
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx,
+            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
         );
         assert!(gate.needs_pair_start(), "first pair/start timed out");
         assert_eq!(*transport.pair_calls.lock().unwrap(), 1);
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx,
+            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
         );
         assert!(
             !gate.needs_pair_start(),
@@ -1151,7 +1192,7 @@ mod tests {
         assert_eq!(*transport.pair_calls.lock().unwrap(), 2);
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx,
+            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
         );
         assert!(
             gate.needs_pair_start(),
@@ -1160,7 +1201,7 @@ mod tests {
         assert_eq!(*transport.pair_calls.lock().unwrap(), 2);
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx,
+            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
         );
         assert!(!gate.needs_pair_start());
         assert_eq!(*transport.pair_calls.lock().unwrap(), 3);

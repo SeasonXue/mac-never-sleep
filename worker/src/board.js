@@ -135,15 +135,18 @@ export const PAIR_CLAIM_IP_LIMIT = 20;
 export const PAIR_CLAIM_IP_WINDOW_SECS = 60;
 export const PAIR_CLAIM_GLOBAL_LIMIT = 180;
 export const PAIR_CLAIM_GLOBAL_WINDOW_SECS = 60;
-/** Must match `HEARTBEAT_MS` / reporter snapshot cadence. */
-export const DEVICE_HEARTBEAT_INTERVAL_MS = 2000;
+/** Must match `PANEL_TICK_ACTIVE_MS` while Screen-Off Standby is running. */
+export const DEVICE_HEARTBEAT_INTERVAL_MS = 1000;
 export const DEVICE_IP_MIN_MACS = 8;
+const DEVICE_BEATS_PER_MAC_PER_MIN = Math.ceil(
+  60_000 / DEVICE_HEARTBEAT_INTERVAL_MS,
+);
 export const DEVICE_IP_LIMIT =
-  Math.ceil(60_000 / DEVICE_HEARTBEAT_INTERVAL_MS) * DEVICE_IP_MIN_MACS;
+  DEVICE_BEATS_PER_MAC_PER_MIN * (DEVICE_IP_MIN_MACS + 1);
 export const DEVICE_IP_WINDOW_SECS = 60;
 export const DEVICE_GLOBAL_MIN_MACS = 200;
 export const DEVICE_GLOBAL_LIMIT =
-  Math.ceil(60_000 / DEVICE_HEARTBEAT_INTERVAL_MS) * DEVICE_GLOBAL_MIN_MACS;
+  DEVICE_BEATS_PER_MAC_PER_MIN * (DEVICE_GLOBAL_MIN_MACS + 1);
 export const DEVICE_GLOBAL_WINDOW_SECS = 60;
 const PAIR_START_IP_MAP_MAX = 2048;
 
@@ -823,6 +826,7 @@ export class Board {
     ackCommandIds,
     lang,
     origin,
+    offline,
   }) {
     const now = this.nowSecs();
     const device = this.devices.get(deviceId);
@@ -833,7 +837,11 @@ export class Board {
     if (status && typeof status === "object") {
       device.status = sanitizeStatus(status);
     }
-    device.lastSeen = now;
+    if (offline === true) {
+      device.lastSeen = now - HEARTBEAT_TTL_SECS - 1;
+    } else {
+      device.lastSeen = now;
+    }
     const acks = new Set(
       Array.isArray(ackCommandIds)
         ? ackCommandIds.filter((id) => typeof id === "string")
@@ -1012,6 +1020,7 @@ export async function handleApi(board, request, env = {}) {
         ackCommandIds: body.ack_command_ids,
         lang: body.lang,
         origin,
+        offline: body.offline,
       });
       break;
     case "/api/list":

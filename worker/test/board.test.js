@@ -36,6 +36,10 @@ import {
   PAIR_CLAIM_IP_LIMIT,
   PAIR_CLAIM_GLOBAL_LIMIT,
   DEVICE_IP_LIMIT,
+  DEVICE_GLOBAL_LIMIT,
+  DEVICE_HEARTBEAT_INTERVAL_MS,
+  DEVICE_IP_MIN_MACS,
+  DEVICE_GLOBAL_MIN_MACS,
   takePairStartSlot,
   takeListSlot,
   takeClaimSlot,
@@ -175,6 +179,53 @@ test("offline after heartbeat TTL", async () => {
     true,
     "last status is retained for last-seen; the phone must key off online",
   );
+});
+
+test("shutdown heartbeat marks the Mac offline immediately", async () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  await post(board, "/api/pair/start", id);
+  await post(board, "/api/heartbeat", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    status: sampleStatus({ active: false }),
+  });
+  let listed = await json(
+    await post(board, "/api/list", {
+      devices: [{ device_id: id.device_id, device_token: id.device_token }],
+    }),
+  );
+  assert.equal(listed.body.devices[0].online, true);
+
+  const gone = await json(
+    await post(board, "/api/heartbeat", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      status: sampleStatus({ active: false }),
+      offline: true,
+    }),
+  );
+  assert.equal(gone.body.ok, true);
+  listed = await json(
+    await post(board, "/api/list", {
+      devices: [{ device_id: id.device_id, device_token: id.device_token }],
+    }),
+  );
+  assert.equal(
+    listed.body.devices[0].online,
+    false,
+    "a quit heartbeat must not keep the Mac online for the TTL",
+  );
+  const cmd = await json(
+    await post(board, "/api/command", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      cmd: "on",
+    }),
+  );
+  assert.equal(cmd.status, 409);
+  assert.equal(cmd.body.error, "offline");
+  assert.equal(cmd.body.accepted, false);
 });
 
 test("authorized on/off queues a command; bad token is rejected", async () => {
@@ -1711,6 +1762,33 @@ test("device routes are rate-limited before opening shards", () => {
   );
   assert.ok(region.includes("internal/device-rate"));
   assert.match(board, /export function takeDeviceSlot/);
+});
+
+test("device rate limit covers the active one-second panel clock", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const panel = fs.readFileSync(
+    path.join(root, "crates/never-sleep/src/panel.rs"),
+    "utf8",
+  );
+  assert.match(panel, /PANEL_TICK_ACTIVE_MS:\s*u64\s*=\s*1_000/);
+  assert.equal(
+    DEVICE_HEARTBEAT_INTERVAL_MS,
+    1000,
+    "device caps must follow the active panel clock, not idle HEARTBEAT_MS",
+  );
+  const beatsPerMacPerMin = Math.ceil(60_000 / DEVICE_HEARTBEAT_INTERVAL_MS);
+  assert.ok(
+    DEVICE_IP_LIMIT >= beatsPerMacPerMin * DEVICE_IP_MIN_MACS,
+    "eight active Macs behind one NAT must not 429 heartbeats",
+  );
+  assert.ok(
+    DEVICE_IP_LIMIT > beatsPerMacPerMin * DEVICE_IP_MIN_MACS,
+    "leave room for command and UI-triggered refreshes on the same IP",
+  );
+  assert.ok(
+    DEVICE_GLOBAL_LIMIT >= beatsPerMacPerMin * DEVICE_GLOBAL_MIN_MACS,
+    "aggregate active heartbeats must not 429 every Mac offline",
+  );
 });
 
 test("pair/claim is rate-limited before opening pair shards", () => {

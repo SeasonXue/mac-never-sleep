@@ -220,6 +220,15 @@ fn worker_shards_per_device_not_one_global_board() {
         "per-IP list cap must be sized for several boards behind one NAT"
     );
     assert!(
+        board.contains("DEVICE_HEARTBEAT_INTERVAL_MS = 1000")
+            || board.contains("DEVICE_ACTIVE_TICK_MS = 1000"),
+        "device caps must follow the active one-second panel clock"
+    );
+    assert!(
+        board.contains("offline === true"),
+        "quit heartbeats must mark the Mac offline before the TTL"
+    );
+    assert!(
         client.contains("retryLater") && client.contains("稍后再试"),
         "claim 429 must not reuse the invalid-code copy"
     );

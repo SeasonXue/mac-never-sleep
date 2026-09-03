@@ -349,6 +349,7 @@ pub fn run() {
             ) {
                 flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
                 *control_flow = ControlFlow::Exit;
+                break;
             } else {
                 refresh_ui(
                     &handles,
@@ -362,6 +363,9 @@ pub fn run() {
                     &mut pairing,
                 );
             }
+        }
+        if matches!(*control_flow, ControlFlow::Exit) {
+            return;
         }
 
         match event {

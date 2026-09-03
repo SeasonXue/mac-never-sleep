@@ -276,6 +276,19 @@ mod tests {
             gui.contains("publish_and_flush") || gui.contains("flush_and_join"),
             "menu process quit must wait for the inactive heartbeat"
         );
+        assert!(
+            chunk.contains("break"),
+            "queued IPC after quit must not restart standby"
+        );
+        let after_ipc = gui
+            .split("while let Ok(incoming) = ipc_rx.try_recv()")
+            .nth(1)
+            .expect("gui ipc loop");
+        let before_match = after_ipc.split("match event").next().unwrap();
+        assert!(
+            before_match.contains("ControlFlow::Exit") && before_match.contains("return"),
+            "a coincident hotkey must not run after IPC quit is accepted"
+        );
     }
 
     #[test]
