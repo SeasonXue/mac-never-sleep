@@ -128,6 +128,9 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("COMMAND_TTL_SECS"));
     assert!(board.contains("fitStoredDevices"));
     assert!(board.contains("expireOffers"));
+    assert!(board.contains("#dropUnverifiedDevices") || board.contains("lastSeen != null"));
+    assert!(board.contains("collectListParts"));
+    assert!(index.contains("collectListParts"));
     assert!(board.contains("isAllowedDuration"));
     assert!(board.contains("error: \"taken\""));
     assert!(

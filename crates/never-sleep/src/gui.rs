@@ -314,7 +314,7 @@ pub fn run() {
     } else {
         None
     };
-    let cloud = cloud_identity.as_ref().map(|identity| {
+    let mut cloud = cloud_identity.as_ref().map(|identity| {
         spawn_reporter(
             identity.clone(),
             default_display_name(),
@@ -334,24 +334,28 @@ pub fn run() {
                     &mut pairing,
                 );
             }
-            handle_ipc(
+            if handle_ipc(
                 &mut engine,
                 platform.as_mut(),
                 incoming,
                 &pairing,
                 cloud_identity.as_ref(),
-            );
-            refresh_ui(
-                &handles,
-                &mut tray,
-                &mut tray_active,
-                &mut popover,
-                &mut engine,
-                platform.as_mut(),
-                &mut next_wake,
-                cloud.as_ref(),
-                &mut pairing,
-            );
+            ) {
+                flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
+                *control_flow = ControlFlow::Exit;
+            } else {
+                refresh_ui(
+                    &handles,
+                    &mut tray,
+                    &mut tray_active,
+                    &mut popover,
+                    &mut engine,
+                    platform.as_mut(),
+                    &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
+                );
+            }
         }
 
         match event {
@@ -407,17 +411,21 @@ pub fn run() {
                     id,
                     popover.as_mut(),
                 );
-                refresh_ui(
-                    &handles,
-                    &mut tray,
-                    &mut tray_active,
-                    &mut popover,
-                    &mut engine,
-                    platform.as_mut(),
-                    &mut next_wake,
-                    cloud.as_ref(),
-                    &mut pairing,
-                );
+                if matches!(*control_flow, ControlFlow::Exit) {
+                    flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
+                } else {
+                    refresh_ui(
+                        &handles,
+                        &mut tray,
+                        &mut tray_active,
+                        &mut popover,
+                        &mut engine,
+                        platform.as_mut(),
+                        &mut next_wake,
+                        cloud.as_ref(),
+                        &mut pairing,
+                    );
+                }
             }
             Event::UserEvent(UserEvent::Hotkey) => {
                 dispatch(&mut engine, platform.as_mut(), Input::Toggle);
@@ -464,17 +472,21 @@ pub fn run() {
                     &mut toggle_gate,
                     control_flow,
                 );
-                refresh_ui(
-                    &handles,
-                    &mut tray,
-                    &mut tray_active,
-                    &mut popover,
-                    &mut engine,
-                    platform.as_mut(),
-                    &mut next_wake,
-                    cloud.as_ref(),
-                    &mut pairing,
-                );
+                if matches!(*control_flow, ControlFlow::Exit) {
+                    flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
+                } else {
+                    refresh_ui(
+                        &handles,
+                        &mut tray,
+                        &mut tray_active,
+                        &mut popover,
+                        &mut engine,
+                        platform.as_mut(),
+                        &mut next_wake,
+                        cloud.as_ref(),
+                        &mut pairing,
+                    );
+                }
             }
             Event::WindowEvent {
                 window_id,
@@ -742,6 +754,20 @@ fn refresh_ui(
     *next_wake = Instant::now() + Duration::from_millis(delay);
 }
 
+fn flush_cloud_on_quit(
+    engine: &Engine,
+    platform: &mut dyn Platform,
+    cloud: &mut Option<CloudHandle>,
+) {
+    if let Some(handle) = cloud.take() {
+        crate::cloud::publish_and_flush(
+            handle,
+            engine.json_status(&platform.snapshot()),
+            engine.config.lang(),
+        );
+    }
+}
+
 fn handle_menu_event(
     engine: &mut Engine,
     platform: &mut dyn Platform,
@@ -930,12 +956,13 @@ fn handle_ipc(
     incoming: IpcIncoming,
     pairing: &Option<(String, String)>,
     identity: Option<&never_sleep_core::CloudIdentity>,
-) {
+) -> bool {
     let IpcIncoming::Request { req, reply } = incoming;
     let host_status = |engine: &Engine, platform: &mut dyn Platform| {
         let host = platform.snapshot();
         engine.json_status(&host)
     };
+    let mut quitting = false;
     let resp = match req {
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
@@ -956,7 +983,7 @@ fn handle_ipc(
                 Ok(Some(d)) => Input::StartWith(d),
                 Err(e) => {
                     let _ = reply.send(IpcResponse::err(e));
-                    return;
+                    return false;
                 }
             };
             if engine.is_active() && matches!(input, Input::Start) {
@@ -993,10 +1020,12 @@ fn handle_ipc(
         }
         IpcRequest::Quit => {
             stop_for_quit(engine, platform);
-            std::process::exit(0);
+            quitting = true;
+            IpcResponse::ok_status(host_status(engine, platform))
         }
     };
     let _ = reply.send(resp);
+    quitting
 }
 
 fn show_menu_help(engine: &Engine, popover: Option<&mut Popover>) {

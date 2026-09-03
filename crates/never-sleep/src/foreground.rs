@@ -67,11 +67,11 @@ pub fn run_foreground(
     }
     stop_for_quit(&mut engine, platform);
     if let Some(handle) = cloud {
-        handle.push_status(
+        crate::cloud::publish_and_flush(
+            handle,
             engine.json_status(&platform.snapshot()),
             engine.config.lang(),
         );
-        handle.flush_and_join();
     }
     println!("{}", engine.config.tr().foreground_ended());
     Ok(())
@@ -107,12 +107,8 @@ mod tests {
             .next()
             .unwrap();
         assert!(
-            body.contains("flush_and_join"),
+            body.contains("publish_and_flush") || body.contains("flush_and_join"),
             "process exit must wait for the inactive heartbeat POST"
-        );
-        assert!(
-            body.contains("push_status"),
-            "the final snapshot still has to be queued"
         );
     }
 }

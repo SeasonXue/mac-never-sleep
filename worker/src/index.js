@@ -1,6 +1,7 @@
 import {
   Board,
   capListEntries,
+  collectListParts,
   createSerialQueue,
   formatPairingCode,
   handleApi,
@@ -130,21 +131,17 @@ async function routeApi(request, env) {
 
   if (path === "/api/list") {
     const entries = capListEntries(body.devices);
-    const devices = [];
-    const parts = await Promise.all(
-      entries.map(async (entry) => {
-        const res = await stubFetch(
-          env,
-          `device:${entry.device_id}`,
-          url.href,
-          { devices: [entry] },
-          origin,
-        );
-        const json = await res.json().catch(() => ({}));
-        return Array.isArray(json.devices) ? json.devices : [];
-      }),
-    );
-    for (const part of parts) devices.push(...part);
+    const devices = await collectListParts(async (entry) => {
+      const res = await stubFetch(
+        env,
+        `device:${entry.device_id}`,
+        url.href,
+        { devices: [entry] },
+        origin,
+      );
+      const json = await res.json().catch(() => ({}));
+      return Array.isArray(json.devices) ? json.devices : [];
+    }, entries);
     return jsonResponse({ ok: true, devices });
   }
 

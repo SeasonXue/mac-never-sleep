@@ -267,6 +267,15 @@ mod tests {
             drain < handle,
             "queued CloudEvent::Pairing must be applied before answering pair"
         );
+        let quit = rust_fn_src(gui, "handle_ipc");
+        assert!(
+            !quit.contains("process::exit"),
+            "IPC quit must not skip CloudHandle flush"
+        );
+        assert!(
+            gui.contains("publish_and_flush") || gui.contains("flush_and_join"),
+            "menu process quit must wait for the inactive heartbeat"
+        );
     }
 
     #[test]

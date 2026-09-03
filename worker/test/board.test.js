@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   Board,
   capListEntries,
+  collectListParts,
   COMMAND_TTL_SECS,
   createSerialQueue,
   fitStoredDevices,
@@ -830,4 +831,53 @@ test("expired pairing offers are dropped without a later heartbeat", () => {
   const expired = board.expireOffers();
   assert.equal(expired.length, 1);
   assert.equal(board.nextAlarmUnix(), null);
+});
+
+test("unverified devices expire with the pairing offer", () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  board.startPairing({
+    deviceId: id.device_id,
+    deviceToken: id.device_token,
+    displayName: id.display_name,
+  });
+  const stored = board.toJSON();
+  assert.ok(stored.devices[id.device_id]);
+  board.nowSecs = () => 1_000 + PAIRING_TTL_SECS + 1;
+  board.expireOffers();
+  const empty = board.toJSON();
+  assert.equal(Object.keys(empty.devices || {}).length, 0);
+  assert.equal(persistBoardAction(stored, empty), "delete");
+});
+
+test("a heartbeat keeps the device after the pairing offer expires", async () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  await post(board, "/api/pair/start", id);
+  await post(board, "/api/heartbeat", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    status: sampleStatus({ active: true }),
+  });
+  board.nowSecs = () => 1_000 + PAIRING_TTL_SECS + 1;
+  board.expireOffers();
+  assert.equal(
+    board.toJSON().devices[id.device_id].status.active,
+    true,
+    "verified Macs must not be deleted with the pairing code",
+  );
+});
+
+test("list fan-out keeps healthy Macs when one shard fails", async () => {
+  const devices = await collectListParts(
+    async (entry) => {
+      if (entry.device_id === "bad") throw new Error("do down");
+      return [{ device_id: entry.device_id }];
+    },
+    [{ device_id: "good" }, { device_id: "bad" }, { device_id: "also" }],
+  );
+  assert.deepEqual(
+    devices.map((d) => d.device_id),
+    ["good", "also"],
+  );
 });

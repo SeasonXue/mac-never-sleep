@@ -136,6 +136,18 @@ export function fitStoredDevices(devices, entry, max = LIST_MAX_DEVICES) {
   return next;
 }
 
+export async function collectListParts(fetchEntry, entries) {
+  const settled = await Promise.allSettled(
+    (Array.isArray(entries) ? entries : []).map((entry) => fetchEntry(entry)),
+  );
+  const devices = [];
+  for (const item of settled) {
+    if (item.status !== "fulfilled") continue;
+    if (Array.isArray(item.value)) devices.push(...item.value);
+  }
+  return devices;
+}
+
 export function boardHasState(data) {
   if (!data || typeof data !== "object") return false;
   const devices = data.devices || {};
@@ -325,7 +337,24 @@ export class Board {
   }
 
   expireOffers() {
-    return this.#purgeCodes(this.nowSecs());
+    const now = this.nowSecs();
+    const expired = this.#purgeCodes(now);
+    this.#dropUnverifiedDevices(now);
+    return expired;
+  }
+
+  #dropUnverifiedDevices(now) {
+    for (const [id, device] of this.devices) {
+      if (device.lastSeen != null) continue;
+      let liveOffer = false;
+      for (const offer of this.codes.values()) {
+        if (offer.deviceId === id && offer.expires > now) {
+          liveOffer = true;
+          break;
+        }
+      }
+      if (!liveOffer) this.devices.delete(id);
+    }
   }
 
   nextAlarmUnix() {

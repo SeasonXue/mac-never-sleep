@@ -77,6 +77,12 @@ impl Drop for CloudHandle {
     }
 }
 
+/// Queue a snapshot and wait until the reporter has POSTed it (or disconnected).
+pub fn publish_and_flush(handle: CloudHandle, status: JsonStatus, lang: Lang) {
+    handle.push_status(status, lang);
+    handle.flush_and_join();
+}
+
 /// Retry pair/start until it succeeds, and again after unauthorized heartbeats
 /// or an expired pairing offer.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
