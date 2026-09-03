@@ -121,8 +121,17 @@ export const PAIR_START_GLOBAL_LIMIT = 60;
 export const PAIR_START_GLOBAL_WINDOW_SECS = 60;
 export const LIST_IP_LIMIT = 40;
 export const LIST_IP_WINDOW_SECS = 60;
-export const LIST_GLOBAL_LIMIT = 240;
+/** Must match `setInterval(refresh, …)` in site/assets/board.js. */
+export const LIST_POLL_INTERVAL_MS = 2500;
+/** Concurrent open boards the global list cap is sized to survive. */
+export const LIST_GLOBAL_MIN_BOARDS = 200;
+export const LIST_GLOBAL_LIMIT =
+  Math.ceil(60_000 / LIST_POLL_INTERVAL_MS) * LIST_GLOBAL_MIN_BOARDS;
 export const LIST_GLOBAL_WINDOW_SECS = 60;
+export const PAIR_CLAIM_IP_LIMIT = 20;
+export const PAIR_CLAIM_IP_WINDOW_SECS = 60;
+export const PAIR_CLAIM_GLOBAL_LIMIT = 180;
+export const PAIR_CLAIM_GLOBAL_WINDOW_SECS = 60;
 const PAIR_START_IP_MAP_MAX = 2048;
 
 function prunePairStartHits(hits, now, windowSecs) {
@@ -174,6 +183,15 @@ export function takeListSlot(state, ip, nowSecs, limits = {}) {
     ipWindowSecs: limits.ipWindowSecs ?? LIST_IP_WINDOW_SECS,
     globalLimit: limits.globalLimit ?? LIST_GLOBAL_LIMIT,
     globalWindowSecs: limits.globalWindowSecs ?? LIST_GLOBAL_WINDOW_SECS,
+  });
+}
+
+export function takeClaimSlot(state, ip, nowSecs, limits = {}) {
+  return takePairStartSlot(state, ip, nowSecs, {
+    ipLimit: limits.ipLimit ?? PAIR_CLAIM_IP_LIMIT,
+    ipWindowSecs: limits.ipWindowSecs ?? PAIR_CLAIM_IP_WINDOW_SECS,
+    globalLimit: limits.globalLimit ?? PAIR_CLAIM_GLOBAL_LIMIT,
+    globalWindowSecs: limits.globalWindowSecs ?? PAIR_CLAIM_GLOBAL_WINDOW_SECS,
   });
 }
 
@@ -243,7 +261,11 @@ export function boardHasState(data) {
   if (Object.keys(devices).length > 0 || Object.keys(codes).length > 0) {
     return true;
   }
-  return pairStartHasHits(data.pairStart) || pairStartHasHits(data.listRate);
+  return (
+    pairStartHasHits(data.pairStart) ||
+    pairStartHasHits(data.listRate) ||
+    pairStartHasHits(data.claimRate)
+  );
 }
 
 export function persistBoardAction(previous, next) {
@@ -443,6 +465,7 @@ export class Board {
     this.codes = new Map();
     this.pairStart = { global: [], ips: {} };
     this.listRate = { global: [], ips: {} };
+    this.claimRate = { global: [], ips: {} };
   }
 
   static fromJSON(data) {
@@ -476,6 +499,17 @@ export class Board {
             : {},
       };
     }
+    if (data.claimRate && typeof data.claimRate === "object") {
+      board.claimRate = {
+        global: Array.isArray(data.claimRate.global)
+          ? [...data.claimRate.global]
+          : [],
+        ips:
+          data.claimRate.ips && typeof data.claimRate.ips === "object"
+            ? structuredClone(data.claimRate.ips)
+            : {},
+      };
+    }
     return board;
   }
 
@@ -495,6 +529,9 @@ export class Board {
     if (pairStartHasHits(this.listRate)) {
       out.listRate = structuredClone(this.listRate);
     }
+    if (pairStartHasHits(this.claimRate)) {
+      out.claimRate = structuredClone(this.claimRate);
+    }
     return out;
   }
 
@@ -511,6 +548,16 @@ export class Board {
   takeList(ip) {
     const result = takeListSlot(this.listRate, ip, this.nowSecs());
     this.listRate = result.state;
+    return {
+      ok: result.ok,
+      error: result.error,
+      status: result.status,
+    };
+  }
+
+  takeClaim(ip) {
+    const result = takeClaimSlot(this.claimRate, ip, this.nowSecs());
+    this.claimRate = result.state;
     return {
       ok: result.ok,
       error: result.error,
@@ -868,6 +915,8 @@ export async function handleInternal(board, request) {
     result = board.takePairStart(body.ip);
   } else if (path === "/internal/list-rate") {
     result = board.takeList(body.ip);
+  } else if (path === "/internal/claim-rate") {
+    result = board.takeClaim(body.ip);
   } else {
     return jsonResponse({ ok: false, error: "not_found" }, 404);
   }

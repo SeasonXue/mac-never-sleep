@@ -33,8 +33,11 @@ import {
   PAIR_START_IP_LIMIT,
   LIST_IP_LIMIT,
   LIST_GLOBAL_LIMIT,
+  PAIR_CLAIM_IP_LIMIT,
+  PAIR_CLAIM_GLOBAL_LIMIT,
   takePairStartSlot,
   takeListSlot,
+  takeClaimSlot,
 } from "../src/board.js";
 
 function sampleStatus(overrides = {}) {
@@ -619,6 +622,15 @@ test("empty lookup boards are not persisted", () => {
     }),
     "put",
     "list rate-limit hits must persist",
+  );
+  assert.equal(
+    persistBoardAction(null, {
+      devices: {},
+      codes: {},
+      claimRate: { global: [1_000], ips: { "1.1.1.1": [1_000] } },
+    }),
+    "put",
+    "pair/claim rate-limit hits must persist",
   );
 });
 
@@ -1539,17 +1551,18 @@ test("list fan-out is rate-limited before selecting shards", () => {
   assert.equal(denied.status, 429);
 
   let flooded = { global: [], ips: {} };
-  for (let i = 0; i < LIST_GLOBAL_LIMIT; i += 1) {
+  const floodCap = 8;
+  for (let i = 0; i < floodCap; i += 1) {
     const allowed = takeListSlot(flooded, `198.51.100.${i % 250}`, 4_000, {
-      ipLimit: LIST_GLOBAL_LIMIT,
-      globalLimit: LIST_GLOBAL_LIMIT,
+      ipLimit: floodCap,
+      globalLimit: floodCap,
     });
     assert.equal(allowed.ok, true);
     flooded = allowed.state;
   }
   const globalDenied = takeListSlot(flooded, "203.0.113.9", 4_000, {
-    ipLimit: LIST_GLOBAL_LIMIT,
-    globalLimit: LIST_GLOBAL_LIMIT,
+    ipLimit: floodCap,
+    globalLimit: floodCap,
   });
   assert.equal(
     globalDenied.ok,
@@ -1564,6 +1577,63 @@ test("list fan-out is rate-limited before selecting shards", () => {
   assert.ok(
     rateAt >= 0 && rateAt < fanoutAt,
     "do not fan out /api/list before the rate gate",
+  );
+});
+
+test("list global rate limit covers aggregate 2.5s board polling", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const client = fs.readFileSync(path.join(root, "site/assets/board.js"), "utf8");
+  const pollMs = Number(/setInterval\(refresh,\s*(\d+)\)/.exec(client)?.[1]);
+  assert.equal(pollMs, 2500, "open boards poll this often");
+  const pollsPerBoardPerMin = Math.ceil(60_000 / pollMs);
+  assert.ok(
+    LIST_IP_LIMIT >= pollsPerBoardPerMin,
+    "one open board must not hit the per-IP list cap",
+  );
+  assert.ok(
+    LIST_GLOBAL_LIMIT >= pollsPerBoardPerMin * 100,
+    "a handful of open boards must not 429 every Mac offline",
+  );
+});
+
+test("pair/claim is rate-limited before opening pair shards", () => {
+  let state = { global: [], ips: {} };
+  for (let i = 0; i < PAIR_CLAIM_IP_LIMIT; i += 1) {
+    const allowed = takeClaimSlot(state, "203.0.113.11", 5_000);
+    assert.equal(allowed.ok, true);
+    state = allowed.state;
+  }
+  const denied = takeClaimSlot(state, "203.0.113.11", 5_000);
+  assert.equal(denied.ok, false);
+  assert.equal(denied.status, 429);
+
+  let flooded = { global: [], ips: {} };
+  const floodCap = 8;
+  for (let i = 0; i < floodCap; i += 1) {
+    const allowed = takeClaimSlot(flooded, `198.51.100.${i % 250}`, 6_000, {
+      ipLimit: floodCap,
+      globalLimit: floodCap,
+    });
+    assert.equal(allowed.ok, true);
+    flooded = allowed.state;
+  }
+  const globalDenied = takeClaimSlot(flooded, "203.0.113.12", 6_000, {
+    ipLimit: floodCap,
+    globalLimit: floodCap,
+  });
+  assert.equal(globalDenied.ok, false, "unique codes must not open unbounded pair shards");
+
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  const claimAt = index.indexOf('path === "/api/pair/claim"');
+  const startAt = index.indexOf('path === "/api/pair/start"');
+  assert.ok(claimAt >= 0 && startAt > claimAt);
+  const block = index.slice(claimAt, startAt);
+  const rateAt = block.indexOf("rate:pair-claim");
+  const peekAt = block.indexOf("internal/pair-peek");
+  assert.ok(
+    rateAt >= 0 && rateAt < peekAt,
+    "do not open pair shards before the claim rate gate",
   );
 });
 

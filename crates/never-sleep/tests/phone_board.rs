@@ -170,9 +170,30 @@ fn worker_shards_per_device_not_one_global_board() {
         list_rate_at < list_fanout_at,
         "do not fan out /api/list before the rate gate"
     );
+    assert!(index.contains("rate:pair-claim"));
+    assert!(index.contains("internal/claim-rate"));
+    let claim_block = index
+        .split(r#"path === "/api/pair/claim""#)
+        .nth(1)
+        .expect("pair/claim route");
+    let claim_rate_at = claim_block
+        .find("rate:pair-claim")
+        .expect("claim rate gate");
+    let claim_peek_at = claim_block.find("internal/pair-peek").expect("pair-peek");
+    assert!(
+        claim_rate_at < claim_peek_at,
+        "do not open pair shards before the claim rate gate"
+    );
+    let client = read("site/assets/board.js");
+    assert!(
+        client.contains("setInterval(refresh, 2500)"),
+        "list global cap is sized from this poll interval"
+    );
+    assert!(board.contains("LIST_GLOBAL_MIN_BOARDS"));
     assert!(index.contains("clientIp"));
     assert!(board.contains("takePairStartSlot"));
     assert!(board.contains("takeListSlot"));
+    assert!(board.contains("takeClaimSlot"));
     assert!(
         board.contains("reserved = await reserve(code)")
             && board.contains("if (release) await release(code);\n      continue;"),

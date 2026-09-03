@@ -177,6 +177,20 @@ async function routeApi(request, env) {
     if (!name) {
       return jsonResponse({ ok: false, error: "unknown_code" }, 404);
     }
+    const gated = await stubFetch(
+      env,
+      "rate:pair-claim",
+      "https://do/internal/claim-rate",
+      { ip: clientIp(request) },
+      origin,
+    );
+    const gate = await gated.json().catch(() => ({}));
+    if (!gate.ok) {
+      return jsonResponse(
+        { ok: false, error: gate.error || "rate_limited" },
+        gate.status || 429,
+      );
+    }
     const peek = await stubFetch(
       env,
       name,
