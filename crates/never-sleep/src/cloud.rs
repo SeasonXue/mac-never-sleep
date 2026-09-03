@@ -6,11 +6,18 @@ use std::path::Path;
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+fn unix_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 use never_sleep_core::{
     apply_remote_command, identity_from_bytes, CloudIdentity, Engine, JsonStatus, Lang,
-    RemoteCommand, PUBLIC_SITE_ORIGIN,
+    RemoteCommand, PAIRING_TTL_SECS, PUBLIC_SITE_ORIGIN,
 };
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +29,11 @@ pub const CLOUD_URL_ENV: &str = "NEVER_SLEEP_CLOUD_URL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloudEvent {
-    Pairing { code: String, url: String },
+    Pairing {
+        code: String,
+        url: String,
+        expires_unix: u64,
+    },
     PairingCleared,
     Commands(Vec<RemoteCommand>),
 }
@@ -525,7 +536,12 @@ pub(crate) fn reporter_tick(
             Ok(CloudPost::Ok(raw)) => {
                 if let Ok((code, url)) = parse_pair_start_response(&raw) {
                     gate.on_pair_start_ok();
-                    let _ = event_tx.send(CloudEvent::Pairing { code, url });
+                    let expires_unix = unix_now_secs() + PAIRING_TTL_SECS;
+                    let _ = event_tx.send(CloudEvent::Pairing {
+                        code,
+                        url,
+                        expires_unix,
+                    });
                 }
             }
             Ok(CloudPost::Unauthorized) => gate.on_unauthorized(),
@@ -563,7 +579,12 @@ fn emit_outcome(
         let _ = event_tx.send(CloudEvent::PairingCleared);
     } else if let (Some(code), Some(url)) = (outcome.pairing_code, outcome.pairing_url) {
         gate.on_pair_start_ok();
-        let _ = event_tx.send(CloudEvent::Pairing { code, url });
+        let expires_unix = unix_now_secs() + PAIRING_TTL_SECS;
+        let _ = event_tx.send(CloudEvent::Pairing {
+            code,
+            url,
+            expires_unix,
+        });
     }
     let pending = outcome.commands;
     let commands = inbox.take_new(pending.clone());
@@ -614,7 +635,17 @@ pub fn apply_polled_commands(
             CloudEvent::Commands(commands) => {
                 apply_cloud_commands(engine, platform, &commands);
             }
-            CloudEvent::Pairing { code, url } => *pairing = Some((code, url)),
+            CloudEvent::Pairing {
+                code,
+                url,
+                expires_unix,
+            } => {
+                if unix_now_secs() < expires_unix {
+                    *pairing = Some((code, url));
+                } else {
+                    *pairing = None;
+                }
+            }
             CloudEvent::PairingCleared => *pairing = None,
         }
     }
@@ -850,6 +881,27 @@ mod tests {
     }
 
     #[test]
+    fn expired_pairing_event_does_not_set_gui_code() {
+        let (event_tx, event_rx) = mpsc::channel();
+        event_tx
+            .send(CloudEvent::Pairing {
+                code: "AB7K-2Q9M".into(),
+                url: "https://example/board/?code=AB7K-2Q9M".into(),
+                expires_unix: 1, // epoch+1 is always in the past
+            })
+            .unwrap();
+        let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
+        let mut pairing = Some(("OLD-CODE".into(), "https://example/board/".into()));
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(
+            pairing.is_none(),
+            "an expired pairing code must be cleared, not shown"
+        );
+    }
+
+    #[test]
     fn pairing_cleared_event_drops_gui_code() {
         let (event_tx, event_rx) = mpsc::channel();
         event_tx.send(CloudEvent::PairingCleared).unwrap();
@@ -1029,6 +1081,7 @@ mod tests {
             .send(CloudEvent::Pairing {
                 code: "AB7K-2Q9M".into(),
                 url: "https://example/board/?code=AB7K-2Q9M".into(),
+                expires_unix: u64::MAX,
             })
             .unwrap();
         let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
@@ -1118,13 +1171,15 @@ mod tests {
             !gate.needs_pair_start(),
             "an authenticated heartbeat that returns a live pairing must stop calling pair/start"
         );
-        assert_eq!(
-            event_rx.try_recv().unwrap(),
-            CloudEvent::Pairing {
-                code: "AB7K-2Q9M".into(),
-                url: "https://x/board/?code=AB7K-2Q9M".into(),
+        {
+            let event = event_rx.try_recv().unwrap();
+            if let CloudEvent::Pairing { code, url, .. } = event {
+                assert_eq!(code, "AB7K-2Q9M");
+                assert_eq!(url, "https://x/board/?code=AB7K-2Q9M");
+            } else {
+                panic!("expected CloudEvent::Pairing");
             }
-        );
+        }
 
         reporter_tick(
             &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,

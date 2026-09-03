@@ -1485,14 +1485,10 @@ test("claim reservation covers a max-length display name near quota", () => {
   const longPayload = JSON.stringify(withDevices(existing, reserved));
   assert.ok(longPayload.length > shortPayload.length);
 
-  const probeKey = `${STORAGE_KEY}:probe`;
   const existingRaw = JSON.stringify(existing);
+  // storageCanHold overwrites the real key; quota must fit shortPayload but not longPayload.
   const storage = quotaStorage(
-    STORAGE_KEY.length +
-      existingRaw.length +
-      probeKey.length +
-      shortPayload.length +
-      8,
+    STORAGE_KEY.length + shortPayload.length + 8,
   );
   storage.setItem(STORAGE_KEY, existingRaw);
 
@@ -1557,14 +1553,10 @@ test("claim reservation covers JSON-escaped and emoji display names near quota",
   assert.ok(quotesPayload.length > asciiPayload.length);
   assert.ok(reservedPayload.length >= quotesPayload.length);
 
-  const probeKey = `${STORAGE_KEY}:probe`;
   const existingRaw = JSON.stringify(existing);
+  // storageCanHold overwrites the real key; quota must fit asciiPayload but not quotesPayload.
   const storage = quotaStorage(
-    STORAGE_KEY.length +
-      existingRaw.length +
-      probeKey.length +
-      asciiPayload.length +
-      8,
+    STORAGE_KEY.length + asciiPayload.length + 8,
   );
   storage.setItem(STORAGE_KEY, existingRaw);
 
@@ -1582,6 +1574,22 @@ test("claim reservation covers JSON-escaped and emoji display names near quota",
     canStoreClaim(storage, STORAGE_KEY, existing, reserved),
     false,
     "do not consume the one-time code when the serialized name will not fit",
+  );
+});
+
+test("rate-limit state is bounded regardless of concurrent callers", () => {
+  const globalLimit = DEVICE_GLOBAL_LIMIT;
+  const ipLimit = DEVICE_IP_LIMIT;
+  let state = { global: [], ips: {} };
+  for (let i = 0; i < globalLimit; i += 1) {
+    const res = takeDeviceSlot(state, `203.0.113.${i % 256}`, 1_000);
+    state = res.state;
+  }
+  const stateJson = JSON.stringify(state);
+  const stateBytes = new TextEncoder().encode(stateJson).byteLength;
+  assert.ok(
+    stateBytes < 128 * 1024,
+    `rate-limit state must fit in 128 KiB, was ${stateBytes} bytes`,
   );
 });
 

@@ -489,6 +489,14 @@ pub fn run() {
                 }
             }
             Event::UserEvent(UserEvent::Ui(command)) => {
+                if let Some(handle) = cloud.as_ref() {
+                    crate::cloud::apply_polled_commands(
+                        &mut engine,
+                        platform.as_mut(),
+                        handle,
+                        &mut pairing,
+                    );
+                }
                 handle_ui_command(
                     command,
                     &mut engine,

@@ -148,12 +148,22 @@ export const DEVICE_GLOBAL_MIN_MACS = 200;
 export const DEVICE_GLOBAL_LIMIT =
   DEVICE_BEATS_PER_MAC_PER_MIN * (DEVICE_GLOBAL_MIN_MACS + 1);
 export const DEVICE_GLOBAL_WINDOW_SECS = 60;
-const PAIR_START_IP_MAP_MAX = 2048;
+const RATE_IP_MAP_MAX = 2048;
 
-function prunePairStartHits(hits, now, windowSecs) {
-  return (hits || []).filter(
-    (t) => typeof t === "number" && now - t < windowSecs,
-  );
+/**
+ * Fixed-window bucket: { count, windowStart }.
+ * O(1) memory per bucket regardless of request volume; safe to persist in DO storage.
+ */
+function bucketTake(bucket, nowSecs, windowSecs, limit) {
+  const start = typeof bucket?.windowStart === "number" ? bucket.windowStart : 0;
+  if (nowSecs - start >= windowSecs) {
+    return { ok: true, bucket: { count: 1, windowStart: nowSecs } };
+  }
+  const count = (typeof bucket?.count === "number" ? bucket.count : 0) + 1;
+  if (count > limit) {
+    return { ok: false, bucket: { count: bucket.count, windowStart: start } };
+  }
+  return { ok: true, bucket: { count, windowStart: start } };
 }
 
 /** Decide whether /api/pair/start may allocate Durable Object shards. */
@@ -163,34 +173,24 @@ export function takePairStartSlot(state, ip, nowSecs, limits = {}) {
   const globalLimit = limits.globalLimit ?? PAIR_START_GLOBAL_LIMIT;
   const globalWindow = limits.globalWindowSecs ?? PAIR_START_GLOBAL_WINDOW_SECS;
   const key = typeof ip === "string" && ip.trim() ? ip.trim() : "unknown";
-  const global = prunePairStartHits(state?.global, nowSecs, globalWindow);
-  const ips = {};
-  for (const [addr, hits] of Object.entries(state?.ips || {})) {
-    const kept = prunePairStartHits(hits, nowSecs, ipWindow);
-    if (kept.length) ips[addr] = kept;
+  const globalResult = bucketTake(state?.global, nowSecs, globalWindow, globalLimit);
+  if (!globalResult.ok) {
+    return { ok: false, error: "rate_limited", status: 429, state };
   }
-  const ipHits = ips[key] || [];
-  if (global.length >= globalLimit || ipHits.length >= ipLimit) {
-    return {
-      ok: false,
-      error: "rate_limited",
-      status: 429,
-      state: { global, ips },
-    };
+  const ips = state?.ips && typeof state.ips === "object" ? { ...state.ips } : {};
+  const ipResult = bucketTake(ips[key], nowSecs, ipWindow, ipLimit);
+  if (!ipResult.ok) {
+    return { ok: false, error: "rate_limited", status: 429, state };
   }
-  ips[key] = [...ipHits, nowSecs];
+  ips[key] = ipResult.bucket;
   const names = Object.keys(ips);
-  if (names.length > PAIR_START_IP_MAP_MAX) {
-    names.sort((a, b) => Math.max(...ips[a]) - Math.max(...ips[b]));
-    for (const drop of names.slice(0, names.length - PAIR_START_IP_MAP_MAX)) {
+  if (names.length > RATE_IP_MAP_MAX) {
+    names.sort((a, b) => (ips[a]?.windowStart ?? 0) - (ips[b]?.windowStart ?? 0));
+    for (const drop of names.slice(0, names.length - RATE_IP_MAP_MAX)) {
       delete ips[drop];
     }
   }
-  return {
-    ok: true,
-    status: 200,
-    state: { global: [...global, nowSecs], ips },
-  };
+  return { ok: true, status: 200, state: { global: globalResult.bucket, ips } };
 }
 
 export function takeListSlot(state, ip, nowSecs, limits = {}) {
@@ -275,7 +275,7 @@ export async function collectListParts(fetchEntry, entries) {
 
 function pairStartHasHits(pairStart) {
   if (!pairStart || typeof pairStart !== "object") return false;
-  if (Array.isArray(pairStart.global) && pairStart.global.length > 0) return true;
+  if (pairStart.global && typeof pairStart.global === "object" && pairStart.global.count > 0) return true;
   return Object.keys(pairStart.ips || {}).length > 0;
 }
 
@@ -489,10 +489,10 @@ export class Board {
     this.devices = new Map();
     /** @type {Map<string, { deviceId: string, expires: number, token?: string, displayName?: string }>} */
     this.codes = new Map();
-    this.pairStart = { global: [], ips: {} };
-    this.listRate = { global: [], ips: {} };
-    this.claimRate = { global: [], ips: {} };
-    this.deviceRate = { global: [], ips: {} };
+    this.pairStart = { global: null, ips: {} };
+    this.listRate = { global: null, ips: {} };
+    this.claimRate = { global: null, ips: {} };
+    this.deviceRate = { global: null, ips: {} };
   }
 
   static fromJSON(data) {
@@ -504,50 +504,17 @@ export class Board {
     for (const [code, offer] of Object.entries(data.codes || {})) {
       board.codes.set(code, structuredClone(offer));
     }
-    if (data.pairStart && typeof data.pairStart === "object") {
-      board.pairStart = {
-        global: Array.isArray(data.pairStart.global)
-          ? [...data.pairStart.global]
-          : [],
-        ips:
-          data.pairStart.ips && typeof data.pairStart.ips === "object"
-            ? structuredClone(data.pairStart.ips)
-            : {},
+    function loadRate(src) {
+      if (!src || typeof src !== "object") return { global: null, ips: {} };
+      return {
+        global: src.global && typeof src.global === "object" ? structuredClone(src.global) : null,
+        ips: src.ips && typeof src.ips === "object" ? structuredClone(src.ips) : {},
       };
     }
-    if (data.listRate && typeof data.listRate === "object") {
-      board.listRate = {
-        global: Array.isArray(data.listRate.global)
-          ? [...data.listRate.global]
-          : [],
-        ips:
-          data.listRate.ips && typeof data.listRate.ips === "object"
-            ? structuredClone(data.listRate.ips)
-            : {},
-      };
-    }
-    if (data.claimRate && typeof data.claimRate === "object") {
-      board.claimRate = {
-        global: Array.isArray(data.claimRate.global)
-          ? [...data.claimRate.global]
-          : [],
-        ips:
-          data.claimRate.ips && typeof data.claimRate.ips === "object"
-            ? structuredClone(data.claimRate.ips)
-            : {},
-      };
-    }
-    if (data.deviceRate && typeof data.deviceRate === "object") {
-      board.deviceRate = {
-        global: Array.isArray(data.deviceRate.global)
-          ? [...data.deviceRate.global]
-          : [],
-        ips:
-          data.deviceRate.ips && typeof data.deviceRate.ips === "object"
-            ? structuredClone(data.deviceRate.ips)
-            : {},
-      };
-    }
+    if (data.pairStart) board.pairStart = loadRate(data.pairStart);
+    if (data.listRate) board.listRate = loadRate(data.listRate);
+    if (data.claimRate) board.claimRate = loadRate(data.claimRate);
+    if (data.deviceRate) board.deviceRate = loadRate(data.deviceRate);
     return board;
   }
 

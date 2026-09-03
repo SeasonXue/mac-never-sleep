@@ -225,6 +225,15 @@ fn worker_shards_per_device_not_one_global_board() {
         "device caps must follow the active one-second panel clock"
     );
     assert!(
+        board.contains("bucketTake") || board.contains("windowStart"),
+        "rate-limit state must use bounded buckets, not unbounded timestamp arrays"
+    );
+    let cloud_src = read("crates/never-sleep/src/cloud.rs");
+    assert!(
+        cloud_src.contains("expires_unix"),
+        "CloudEvent::Pairing must carry expires_unix so stale codes are not displayed"
+    );
+    assert!(
         board.contains("offline === true"),
         "quit heartbeats must mark the Mac offline before the TTL"
     );

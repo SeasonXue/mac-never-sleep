@@ -307,6 +307,15 @@ mod tests {
             menu_action.contains("apply_polled_commands"),
             "menu toggle must drain cloud commands before dispatching"
         );
+        let ui_block = gui
+            .split("UserEvent::Ui(command)")
+            .nth(1)
+            .expect("gui Ui handler");
+        let ui_action = ui_block.split("handle_ui_command").next().unwrap();
+        assert!(
+            ui_action.contains("apply_polled_commands"),
+            "panel Ui commands must drain cloud commands before dispatching"
+        );
     }
 
     #[test]
