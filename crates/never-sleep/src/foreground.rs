@@ -88,6 +88,9 @@ pub fn run_foreground(
                     return Ok(());
                 }
             }
+            if let Some(handle) = cloud.as_ref() {
+                handle.resume();
+            }
         }
         dispatch(&mut engine, platform, Input::Tick);
         if let Some(handle) = cloud.as_ref() {
@@ -243,6 +246,21 @@ mod tests {
         assert!(
             after_ping.contains("return Ok(())"),
             "exit the fallback loop after handoff so Tick cannot re-apply assertions"
+        );
+        let accept_at = loop_body
+            .find("menu_accepted_handoff")
+            .expect("accepted handoff");
+        let resume_at = loop_body
+            .find("resume(")
+            .expect("unpark the reporter when the menu does not take over");
+        assert!(
+            accept_at < resume_at,
+            "only resume after the adopt decision, never instead of quiesce"
+        );
+        let after_accept = &loop_body[loop_body.find("return Ok(())").expect("success return")..];
+        assert!(
+            after_accept.contains("resume("),
+            "Ping-then-gone or a rejected On must resume heartbeats; paused has no other exit"
         );
     }
 

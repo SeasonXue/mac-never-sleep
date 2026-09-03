@@ -130,6 +130,17 @@ impl CloudHandle {
         }
     }
 
+    /// Unpark heartbeats after a handoff that was not accepted.
+    pub fn resume(&self) {
+        if let Ok(mut idle) = self.idle.0.lock() {
+            *idle = false;
+        }
+        self.paused.store(false, Ordering::SeqCst);
+        if let Some(wake) = &self.wake {
+            let _ = wake.try_send(ReporterWake::Snapshot);
+        }
+    }
+
     fn notify_idle(&self) {
         signal_reporter_idle(&self.idle);
     }
@@ -722,17 +733,22 @@ fn signal_reporter_idle(idle: &Arc<(Mutex<bool>, Condvar)>) {
 enum QuiescePark {
     Break,
     Shutdown,
+    Resume,
 }
 
 fn park_quiesced_reporter(
     wake_rx: &mpsc::Receiver<ReporterWake>,
     detached: &AtomicBool,
+    paused: &AtomicBool,
     idle: &Arc<(Mutex<bool>, Condvar)>,
 ) -> QuiescePark {
     signal_reporter_idle(idle);
     loop {
         if detached.load(Ordering::SeqCst) {
             return QuiescePark::Break;
+        }
+        if !paused.load(Ordering::SeqCst) {
+            return QuiescePark::Resume;
         }
         match wake_rx.recv_timeout(Duration::from_millis(200)) {
             Ok(ReporterWake::Shutdown) => return QuiescePark::Shutdown,
@@ -774,9 +790,10 @@ fn reporter_loop(
     let mut last: Option<(JsonStatus, Lang)> = None;
     loop {
         if paused.load(Ordering::SeqCst) && !detached.load(Ordering::SeqCst) {
-            match park_quiesced_reporter(&wake_rx, &detached, &idle) {
+            match park_quiesced_reporter(&wake_rx, &detached, &paused, &idle) {
                 QuiescePark::Break => break,
                 QuiescePark::Shutdown => {}
+                QuiescePark::Resume => {}
             }
         }
         let shutting_down = {
@@ -830,8 +847,9 @@ fn reporter_loop(
             break;
         }
         if paused.load(Ordering::SeqCst) {
-            match park_quiesced_reporter(&wake_rx, &detached, &idle) {
+            match park_quiesced_reporter(&wake_rx, &detached, &paused, &idle) {
                 QuiescePark::Break => break,
+                QuiescePark::Resume => {}
                 QuiescePark::Shutdown => {
                     inbox.mark_applied(take_applied_ids(&applied_ids));
                     reporter_tick(
@@ -1758,6 +1776,39 @@ mod tests {
         assert!(
             wake_rx.try_recv().is_err(),
             "the Detach wake itself may be dropped when the channel is full"
+        );
+    }
+
+    #[test]
+    fn resume_unparks_a_quiesced_reporter() {
+        let (wake_tx, wake_rx) = mpsc::sync_channel(4);
+        let (_event_tx, event_rx) = mpsc::channel();
+        let paused = Arc::new(AtomicBool::new(true));
+        let idle = Arc::new((Mutex::new(true), Condvar::new()));
+        let handle = CloudHandle {
+            latest: Arc::new(Mutex::new(None)),
+            wake: Some(wake_tx),
+            events: event_rx,
+            join: None,
+            held_commands: Mutex::new(Vec::new()),
+            applied_ids: Arc::new(Mutex::new(Vec::new())),
+            detached: Arc::new(AtomicBool::new(false)),
+            paused: Arc::clone(&paused),
+            idle: Arc::clone(&idle),
+        };
+        handle.resume();
+        assert!(
+            !paused.load(Ordering::SeqCst),
+            "a rejected handoff must let the foreground reporter tick again"
+        );
+        assert!(
+            !*idle.0.lock().unwrap(),
+            "the next quiesce must wait for a fresh idle signal"
+        );
+        assert_eq!(
+            wake_rx.try_recv(),
+            Ok(ReporterWake::Snapshot),
+            "wake the parked recv so it notices paused=false"
         );
     }
 
