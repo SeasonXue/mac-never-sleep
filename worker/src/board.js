@@ -156,9 +156,12 @@ export function boardHasState(data) {
 }
 
 export function persistBoardAction(previous, next) {
-  if (boardHasState(next)) return "put";
-  if (previous == null) return "skip";
-  return "delete";
+  if (!boardHasState(next)) {
+    if (previous == null) return "skip";
+    return "delete";
+  }
+  if (JSON.stringify(previous) === JSON.stringify(next)) return "skip";
+  return "put";
 }
 
 /** Run async work one-at-a-time so overlapping callers cannot share a snapshot. */

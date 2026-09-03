@@ -591,6 +591,25 @@ test("empty lookup boards are not persisted", () => {
   );
 });
 
+test("unchanged list snapshots skip Durable Object writes", () => {
+  const stored = {
+    devices: { ab: { token: "x", lastSeen: 1, status: { active: true } } },
+    codes: {},
+  };
+  assert.equal(
+    persistBoardAction(stored, stored),
+    "skip",
+    "read-only /api/list must not rewrite an unchanged shard",
+  );
+  assert.equal(
+    persistBoardAction(stored, JSON.parse(JSON.stringify(stored))),
+    "skip",
+  );
+  const mutated = JSON.parse(JSON.stringify(stored));
+  mutated.devices.ab.lastSeen = 2;
+  assert.equal(persistBoardAction(stored, mutated), "put");
+});
+
 test("command duration must be a Rust-parseable string", async () => {
   const board = new Board(() => 1_000);
   const id = identity();
@@ -885,15 +904,21 @@ test("list fan-out keeps healthy Macs when one shard fails", async () => {
   );
 });
 
-test("language href keeps the pairing code until claim succeeds", () => {
+function boardClientHelpers() {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const src = fs.readFileSync(path.join(root, "site/assets/board.js"), "utf8");
   const start = src.indexOf("function hrefWithPairingCode");
   assert.notEqual(start, -1, "board.js must expose hrefWithPairingCode");
-  const end = src.indexOf("\n  function ", start + 10);
-  const hrefWithPairingCode = new Function(
-    `${src.slice(start, end)}\nreturn hrefWithPairingCode;`,
+  const end = src.indexOf("\n  function syncLanguageLinks");
+  assert.ok(end > start, "pairing href helpers must sit together");
+  const helpers = new Function(
+    `${src.slice(start, end)}\nreturn { hrefWithPairingCode, languageHrefAfterClaim, waitForClaimThenLanguageHref };`,
   )();
+  return { src, ...helpers };
+}
+
+test("language href keeps the pairing code until claim succeeds", () => {
+  const { src, hrefWithPairingCode } = boardClientHelpers();
   assert.equal(
     hrefWithPairingCode("../zh/board/", "AB7K-2Q9M"),
     "../zh/board/?code=AB7K-2Q9M",
@@ -907,4 +932,41 @@ test("language href keeps the pairing code until claim succeeds", () => {
   assert.ok(saveAt >= 0 && clearAt > saveAt, "strip ?code= only after the token is stored");
   assert.match(src, /history\.replaceState/);
   assert.match(src, /syncLanguageLinks/);
+});
+
+test("language links wait for in-flight claim before navigating", async () => {
+  const { src, waitForClaimThenLanguageHref } = boardClientHelpers();
+  let resolveClaim;
+  const claimPromise = new Promise((resolve) => {
+    resolveClaim = resolve;
+  });
+  const pending = waitForClaimThenLanguageHref(
+    "../zh/board/?code=AB7K-2Q9M",
+    "AB7K-2Q9M",
+    claimPromise,
+  );
+  let settled = false;
+  pending.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  assert.equal(settled, false, "navigation must wait for the in-flight claim");
+  resolveClaim(true);
+  assert.equal(
+    await pending,
+    "../zh/board/",
+    "drop ?code= after the in-flight claim stores the token",
+  );
+  assert.equal(
+    await waitForClaimThenLanguageHref(
+      "../zh/board/",
+      "AB7K-2Q9M",
+      Promise.resolve(false),
+    ),
+    "../zh/board/?code=AB7K-2Q9M",
+    "keep the code if claim did not store a token",
+  );
+  assert.match(src, /preventDefault/);
+  assert.match(src, /waitForClaimThenLanguageHref/);
+  assert.match(src, /claimPromise/);
 });

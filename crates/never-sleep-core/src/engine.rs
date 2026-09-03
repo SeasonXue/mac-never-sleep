@@ -214,7 +214,11 @@ impl Engine {
         effects.push(Effect::ApplyPower(plan));
 
         let t = self.config.tr();
-        let mut body = if self.config.screen_off {
+        let deferred_sleep =
+            remote && self.config.screen_off && host.user_present(self.config.user_idle_resleep_ms);
+        let mut body = if deferred_sleep {
+            t.notify_started_body_remote_user_present(crate::DEFAULT_HOTKEY_LABEL)
+        } else if self.config.screen_off {
             t.notify_started_body_screen_off(
                 self.config.display_off_delay_ms.max(1).div_ceil(1000),
                 crate::DEFAULT_HOTKEY_LABEL,
@@ -506,6 +510,36 @@ mod tests {
         // host Some(false) wins — but debounce 3s
         let e = eng.handle(Input::Tick, &h);
         assert!(!has_sleep(&e));
+    }
+
+    fn notify_body(effects: &[Effect]) -> String {
+        effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::Notify { body, .. } => Some(body.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn remote_on_while_user_present_does_not_promise_display_sleep() {
+        let mut eng = Engine::new(cfg());
+        let mut h = host(0);
+        h.hid_idle_ms = 500;
+        h.lid_closed = false;
+        let effects = eng.handle(Input::StartRemote, &h);
+        assert!(eng.is_active());
+        let body = notify_body(&effects);
+        assert!(
+            !body.contains("will sleep in about"),
+            "must not tell the person at the keyboard the display is about to sleep, got {body}"
+        );
+        assert!(
+            body.contains("local control"),
+            "remote start while someone is present should keep display under local control, got {body}"
+        );
+        assert!(!has_sleep(&effects));
     }
 
     #[test]

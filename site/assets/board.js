@@ -122,6 +122,23 @@
     return `${path}?code=${encodeURIComponent(code)}`;
   }
 
+  function languageHrefAfterClaim(href, code, claimSaved) {
+    const path = String(href || "").split("?")[0];
+    return claimSaved ? path : hrefWithPairingCode(path, code);
+  }
+
+  async function waitForClaimThenLanguageHref(href, code, claimPromise) {
+    let saved = false;
+    if (claimPromise) {
+      try {
+        saved = (await claimPromise) === true;
+      } catch {
+        saved = false;
+      }
+    }
+    return languageHrefAfterClaim(href, code, saved);
+  }
+
   function syncLanguageLinks(code) {
     document.querySelectorAll(".language-row a[hreflang]").forEach((link) => {
       link.setAttribute("href", hrefWithPairingCode(link.getAttribute("href"), code));
@@ -312,7 +329,7 @@
       const { res, json } = await post("/pair/claim", { pairing_code: code });
       if (!res.ok || !json.ok) {
         showError(copy.badCode);
-        return;
+        return false;
       }
       const devices = loadDevices().filter((d) => d.device_id !== json.device_id);
       devices.push({
@@ -325,15 +342,36 @@
       input.value = "";
       clearPairingQuery();
       await refresh();
+      return true;
     } catch {
       showError(copy.networkError);
+      return false;
     }
   }
+
+  let claimPromise = null;
+
+  function beginClaim(code) {
+    claimPromise = claim(code);
+    return claimPromise;
+  }
+
+  document.querySelectorAll(".language-row a[hreflang]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      if (!claimPromise) return;
+      event.preventDefault();
+      const href = link.getAttribute("href") || "";
+      const code = new URLSearchParams(location.search).get("code") || "";
+      waitForClaimThenLanguageHref(href, code, claimPromise).then((next) => {
+        location.assign(next);
+      });
+    });
+  });
 
   document.getElementById("pair-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const code = document.getElementById("pair-code").value;
-    if (code.trim()) claim(code);
+    if (code.trim()) beginClaim(code);
   });
 
   const params = new URLSearchParams(location.search);
@@ -341,7 +379,7 @@
   if (initial) {
     syncLanguageLinks(initial);
     document.getElementById("pair-code").value = initial;
-    claim(initial);
+    beginClaim(initial);
   } else {
     refresh();
   }

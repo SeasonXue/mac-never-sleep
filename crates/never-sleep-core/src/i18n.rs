@@ -520,6 +520,17 @@ impl Tr {
         }
     }
 
+    pub fn notify_started_body_remote_user_present(self, hotkey: &str) -> String {
+        match self.lang {
+            Lang::En => format!(
+                "Standby is on; the display stays under local control until you step away. Press {hotkey} to end."
+            ),
+            Lang::Zh => {
+                format!("待命已开启；有人在用时屏幕仍由本机控制，离开后才会关屏。按 {hotkey} 结束。")
+            }
+        }
+    }
+
     pub fn remaining_clause(self, duration: &str) -> String {
         match self.lang {
             Lang::En => format!(" {duration} left."),
@@ -1051,5 +1062,18 @@ mod tests {
             Tr::new(Lang::En).notify_ended_user_body(),
             "Normal sleep policy restored."
         );
+    }
+
+    #[test]
+    fn remote_user_present_start_copy_explains_local_display_control() {
+        let en = Tr::new(Lang::En).notify_started_body_remote_user_present("⌥⌘P");
+        let zh = Tr::new(Lang::Zh).notify_started_body_remote_user_present("⌥⌘P");
+        assert!(en.contains("local control"));
+        assert!(en.contains("⌥⌘P"));
+        assert!(!en.contains("will sleep in about"));
+        assert!(zh.contains("本机控制"));
+        assert!(zh.contains("⌥⌘P"));
+        assert!(!zh.contains("秒后关闭屏幕"));
+        assert_ne!(en, zh);
     }
 }
