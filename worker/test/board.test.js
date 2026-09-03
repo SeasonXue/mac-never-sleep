@@ -13,6 +13,7 @@ import {
   persistBoardAction,
   publicSiteOrigin,
   publishReservedPairing,
+  createSerialQueue,
   sanitizeStatus,
   shardName,
 } from "../src/board.js";
@@ -676,6 +677,64 @@ test("pair/start uses a reserved pairing code when provided", async () => {
   assert.equal(started.status, 200);
   assert.equal(started.body.pairing_code, "AB7K-2Q9M");
   assert.equal(started.body.expires_unix, 2000);
+});
+
+test("independent snapshots drop a racing command on last write", async () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  await post(board, "/api/pair/start", id);
+  await post(board, "/api/heartbeat", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    status: sampleStatus(),
+  });
+  const snap = board.toJSON();
+  const phone = Board.fromJSON(snap);
+  phone.nowSecs = () => 1_000;
+  const mac = Board.fromJSON(snap);
+  mac.nowSecs = () => 1_000;
+  await post(phone, "/api/command", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    cmd: "on",
+  });
+  await post(mac, "/api/heartbeat", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    status: sampleStatus(),
+  });
+  const restored = Board.fromJSON(mac.toJSON());
+  restored.nowSecs = () => 1_000;
+  const beat = await json(
+    await post(restored, "/api/heartbeat", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      status: sampleStatus(),
+    }),
+  );
+  assert.equal(
+    beat.body.commands.length,
+    0,
+    "last snapshot wins and the queued on is gone",
+  );
+});
+
+test("serial queue finishes one request before starting the next", async () => {
+  const enqueue = createSerialQueue();
+  const order = [];
+  const first = enqueue(async () => {
+    order.push("a-start");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    order.push("a-end");
+    return 1;
+  });
+  const second = enqueue(async () => {
+    order.push("b-start");
+    order.push("b-end");
+    return 2;
+  });
+  assert.deepEqual(await Promise.all([first, second]), [1, 2]);
+  assert.deepEqual(order, ["a-start", "a-end", "b-start", "b-end"]);
 });
 
 test("pair shard reservation is create-if-absent and retries on collision", async () => {

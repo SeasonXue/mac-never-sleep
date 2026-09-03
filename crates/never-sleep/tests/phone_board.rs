@@ -115,6 +115,8 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(index.contains("capListEntries"));
     assert!(index.contains("persistBoardAction"));
     assert!(index.contains("publishReservedPairing"));
+    assert!(index.contains("blockConcurrencyWhile"));
+    assert!(index.contains("createSerialQueue"));
     let board = read("worker/src/board.js");
     assert!(board.contains("pairingCodeIsLive"));
     assert!(board.contains("LIST_MAX_DEVICES = 32"));

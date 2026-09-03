@@ -1,6 +1,7 @@
 import {
   Board,
   capListEntries,
+  createSerialQueue,
   formatPairingCode,
   handleApi,
   handleInternal,
@@ -22,23 +23,35 @@ import {
 export class BoardHub {
   constructor(ctx) {
     this.ctx = ctx;
+    this.stored = null;
+    this.board = new Board();
+    this.enqueue = createSerialQueue();
+    ctx.blockConcurrencyWhile(async () => {
+      this.stored = (await ctx.storage.get("board")) || null;
+      this.board = Board.fromJSON(this.stored);
+    });
   }
 
-  async fetch(request) {
-    const stored = (await this.ctx.storage.get("board")) || null;
-    const board = Board.fromJSON(stored);
-    board.nowSecs = () => Math.floor(Date.now() / 1000);
+  fetch(request) {
+    return this.enqueue(() => this.#apply(request));
+  }
+
+  async #apply(request) {
+    this.board.nowSecs = () => Math.floor(Date.now() / 1000);
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const response = path.startsWith("/internal/")
-      ? await handleInternal(board, request)
-      : await handleApi(board, request);
-    const next = board.toJSON();
-    const action = persistBoardAction(stored, next);
+      ? await handleInternal(this.board, request)
+      : await handleApi(this.board, request);
+    const next = this.board.toJSON();
+    const action = persistBoardAction(this.stored, next);
     if (action === "put") {
       await this.ctx.storage.put("board", next);
+      this.stored = next;
     } else if (action === "delete") {
       await this.ctx.storage.delete("board");
+      this.stored = null;
+      this.board = Board.fromJSON(null);
     }
     return response;
   }

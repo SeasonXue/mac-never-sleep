@@ -138,6 +138,19 @@ export function persistBoardAction(previous, next) {
   return "delete";
 }
 
+/** Run async work one-at-a-time so overlapping callers cannot share a snapshot. */
+export function createSerialQueue() {
+  let tail = Promise.resolve();
+  return (work) => {
+    const run = tail.then(work);
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+}
+
 function isUntilClock(raw) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(raw);
   if (!m) return false;
@@ -274,10 +287,10 @@ export class Board {
     const board = new Board();
     if (!data) return board;
     for (const [id, device] of Object.entries(data.devices || {})) {
-      board.devices.set(id, device);
+      board.devices.set(id, structuredClone(device));
     }
     for (const [code, offer] of Object.entries(data.codes || {})) {
-      board.codes.set(code, offer);
+      board.codes.set(code, structuredClone(offer));
     }
     return board;
   }
