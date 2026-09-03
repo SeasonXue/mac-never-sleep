@@ -6,7 +6,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -46,6 +46,8 @@ pub(crate) enum ReporterWake {
     Shutdown,
     /// Stop the loop without an offline heartbeat (live handoff to the menu).
     Detach,
+    /// Finish the in-flight POST, then park until Detach or Shutdown.
+    Quiesce,
 }
 
 pub struct CloudHandle {
@@ -57,8 +59,12 @@ pub struct CloudHandle {
     events: mpsc::Receiver<CloudEvent>,
     join: Option<thread::JoinHandle<()>>,
     held_commands: Mutex<Vec<RemoteCommand>>,
+    applied_ids: Arc<Mutex<Vec<String>>>,
     /// Set before the wake sender is dropped so a full channel cannot lose Detach.
     detached: Arc<AtomicBool>,
+    /// Stop POSTing so handoff can drain the last commands without a racing ack.
+    paused: Arc<AtomicBool>,
+    idle: Arc<(Mutex<bool>, Condvar)>,
 }
 
 impl CloudHandle {
@@ -84,12 +90,65 @@ impl CloudHandle {
     /// the next POST.
     pub fn detach(mut self) {
         self.detached.store(true, Ordering::SeqCst);
+        self.paused.store(true, Ordering::SeqCst);
+        self.notify_idle();
         if let Some(wake) = self.wake.take() {
             let _ = wake.try_send(ReporterWake::Detach);
         }
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
+    }
+
+    /// Wait until the reporter has finished its in-flight POST (or there is no
+    /// live thread). Further heartbeats stay parked until `detach` / shutdown.
+    pub fn quiesce(&self) {
+        if self.join.is_none() {
+            return;
+        }
+        self.paused.store(true, Ordering::SeqCst);
+        if let Some(wake) = &self.wake {
+            let _ = wake.try_send(ReporterWake::Quiesce);
+        }
+        let (lock, cv) = &*self.idle;
+        let started = std::time::Instant::now();
+        let Ok(mut idle) = lock.lock() else {
+            return;
+        };
+        while !*idle {
+            let wait = Duration::from_secs(8).saturating_sub(started.elapsed());
+            if wait.is_zero() {
+                break;
+            }
+            let (guard, result) = cv
+                .wait_timeout(idle, wait)
+                .unwrap_or_else(|e| e.into_inner());
+            idle = guard;
+            if result.timed_out() {
+                break;
+            }
+        }
+    }
+
+    fn notify_idle(&self) {
+        signal_reporter_idle(&self.idle);
+    }
+
+    fn mark_applied(&self, ids: Vec<String>) {
+        if ids.is_empty() {
+            return;
+        }
+        if let Ok(mut slot) = self.applied_ids.lock() {
+            slot.extend(ids);
+        }
+    }
+
+    #[cfg(test)]
+    fn take_applied(&self) -> Vec<String> {
+        self.applied_ids
+            .lock()
+            .map(|mut slot| std::mem::take(&mut *slot))
+            .unwrap_or_default()
     }
 
     fn disconnect_and_join(&mut self) {
@@ -180,11 +239,24 @@ impl CommandInbox {
         let mut out = Vec::new();
         for cmd in commands {
             if self.known.insert(cmd.id.clone()) {
-                self.seen.push(cmd.id.clone());
                 out.push(cmd);
             }
         }
         out
+    }
+
+    /// Record ids the engine actually applied. Only these go out as acks.
+    pub fn mark_applied<I, S>(&mut self, ids: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        for id in ids {
+            let id = id.as_ref();
+            if self.known.contains(id) && !self.seen.iter().any(|seen| seen == id) {
+                self.seen.push(id.to_string());
+            }
+        }
     }
 
     /// Keep every delivered id the Worker still lists. Call after a successful
@@ -529,10 +601,16 @@ pub(crate) trait CloudTransport {
 pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang) -> CloudHandle {
     let latest = Arc::new(Mutex::new(None));
     let detached = Arc::new(AtomicBool::new(false));
+    let paused = Arc::new(AtomicBool::new(false));
+    let idle = Arc::new((Mutex::new(false), Condvar::new()));
+    let applied_ids = Arc::new(Mutex::new(Vec::new()));
     let (wake_tx, wake_rx) = mpsc::sync_channel(2);
     let (event_tx, event_rx) = mpsc::channel();
     let latest_for_thread = Arc::clone(&latest);
     let detached_for_thread = Arc::clone(&detached);
+    let paused_for_thread = Arc::clone(&paused);
+    let idle_for_thread = Arc::clone(&idle);
+    let applied_for_thread = Arc::clone(&applied_ids);
     let join = thread::Builder::new()
         .name("never-sleep-cloud".into())
         .spawn(move || {
@@ -546,6 +624,9 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
                 latest_for_thread,
                 event_tx,
                 detached_for_thread,
+                paused_for_thread,
+                idle_for_thread,
+                applied_for_thread,
             );
         })
         .ok();
@@ -555,7 +636,10 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
         events: event_rx,
         join,
         held_commands: Mutex::new(Vec::new()),
+        applied_ids,
         detached,
+        paused,
+        idle,
     }
 }
 
@@ -578,7 +662,7 @@ fn shutting_down_from_wake(
 ) -> bool {
     match recv {
         Ok(ReporterWake::Shutdown) | Ok(ReporterWake::Detach) => true,
-        Ok(ReporterWake::Snapshot) => drained_shutdown,
+        Ok(ReporterWake::Snapshot) | Ok(ReporterWake::Quiesce) => drained_shutdown,
         Err(RecvTimeoutError::Timeout) => drained_shutdown,
         Err(RecvTimeoutError::Disconnected) => true,
     }
@@ -591,7 +675,7 @@ fn drain_reporter_wakes(rx: &mpsc::Receiver<ReporterWake>) -> (bool, bool) {
         match rx.try_recv() {
             Ok(ReporterWake::Shutdown) => shutdown = true,
             Ok(ReporterWake::Detach) => detach = true,
-            Ok(ReporterWake::Snapshot) => {}
+            Ok(ReporterWake::Snapshot) | Ok(ReporterWake::Quiesce) => {}
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => {
                 shutdown = true;
@@ -610,7 +694,7 @@ fn reporter_marks_offline(
     match recv {
         Ok(ReporterWake::Shutdown) => true,
         Ok(ReporterWake::Detach) => false,
-        Ok(ReporterWake::Snapshot) => drained_shutdown,
+        Ok(ReporterWake::Snapshot) | Ok(ReporterWake::Quiesce) => drained_shutdown,
         Err(RecvTimeoutError::Timeout) => drained_shutdown,
         Err(RecvTimeoutError::Disconnected) => !drained_detach,
     }
@@ -628,6 +712,51 @@ fn reporter_goes_offline(
     reporter_marks_offline(recv, drained_shutdown, drained_detach)
 }
 
+fn signal_reporter_idle(idle: &Arc<(Mutex<bool>, Condvar)>) {
+    if let Ok(mut flag) = idle.0.lock() {
+        *flag = true;
+        idle.1.notify_all();
+    }
+}
+
+enum QuiescePark {
+    Break,
+    Shutdown,
+}
+
+fn park_quiesced_reporter(
+    wake_rx: &mpsc::Receiver<ReporterWake>,
+    detached: &AtomicBool,
+    idle: &Arc<(Mutex<bool>, Condvar)>,
+) -> QuiescePark {
+    signal_reporter_idle(idle);
+    loop {
+        if detached.load(Ordering::SeqCst) {
+            return QuiescePark::Break;
+        }
+        match wake_rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(ReporterWake::Shutdown) => return QuiescePark::Shutdown,
+            Ok(ReporterWake::Detach) => return QuiescePark::Break,
+            Ok(_) => signal_reporter_idle(idle),
+            Err(RecvTimeoutError::Disconnected) => {
+                return if detached.load(Ordering::SeqCst) {
+                    QuiescePark::Break
+                } else {
+                    QuiescePark::Shutdown
+                };
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+fn take_applied_ids(slot: &Mutex<Vec<String>>) -> Vec<String> {
+    slot.lock()
+        .map(|mut ids| std::mem::take(&mut *ids))
+        .unwrap_or_default()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn reporter_loop(
     identity: CloudIdentity,
     display_name: String,
@@ -636,13 +765,28 @@ fn reporter_loop(
     latest: Arc<Mutex<Option<(JsonStatus, Lang)>>>,
     event_tx: mpsc::Sender<CloudEvent>,
     detached: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    idle: Arc<(Mutex<bool>, Condvar)>,
+    applied_ids: Arc<Mutex<Vec<String>>>,
 ) {
     let mut gate = ReporterGate::default();
     let mut inbox = CommandInbox::default();
     let mut last: Option<(JsonStatus, Lang)> = None;
     loop {
+        if paused.load(Ordering::SeqCst) && !detached.load(Ordering::SeqCst) {
+            match park_quiesced_reporter(&wake_rx, &detached, &idle) {
+                QuiescePark::Break => break,
+                QuiescePark::Shutdown => {}
+            }
+        }
         let shutting_down = {
-            let recv = wake_rx.recv_timeout(Duration::from_secs(3));
+            let recv = if paused.load(Ordering::SeqCst) && detached.load(Ordering::SeqCst) {
+                Ok(ReporterWake::Detach)
+            } else if paused.load(Ordering::SeqCst) {
+                Ok(ReporterWake::Shutdown)
+            } else {
+                wake_rx.recv_timeout(Duration::from_secs(3))
+            };
             let (drained_shutdown, drained_detach) = drain_reporter_wakes(&wake_rx);
             let shutting_down = shutting_down_from_wake(recv, drained_shutdown || drained_detach);
             let offline = reporter_goes_offline(
@@ -670,6 +814,7 @@ fn reporter_loop(
             }
             continue;
         };
+        inbox.mark_applied(take_applied_ids(&applied_ids));
         reporter_tick(
             &mut gate,
             &mut inbox,
@@ -683,6 +828,26 @@ fn reporter_loop(
         );
         if shutting_down {
             break;
+        }
+        if paused.load(Ordering::SeqCst) {
+            match park_quiesced_reporter(&wake_rx, &detached, &idle) {
+                QuiescePark::Break => break,
+                QuiescePark::Shutdown => {
+                    inbox.mark_applied(take_applied_ids(&applied_ids));
+                    reporter_tick(
+                        &mut gate,
+                        &mut inbox,
+                        &transport,
+                        &identity,
+                        &display_name,
+                        lang.cloud_tag(),
+                        status,
+                        &event_tx,
+                        true,
+                    );
+                    break;
+                }
+            }
         }
     }
 }
@@ -827,7 +992,9 @@ pub fn apply_polled_commands(
                     handle.hold_commands(commands);
                     continue;
                 }
+                let ids: Vec<String> = commands.iter().map(|c| c.id.clone()).collect();
                 apply_cloud_commands(engine, platform, &commands);
+                handle.mark_applied(ids);
             }
             CloudEvent::Pairing {
                 code,
@@ -878,7 +1045,10 @@ mod tests {
             events,
             join: None,
             held_commands: Mutex::new(Vec::new()),
+            applied_ids: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+            idle: Arc::new((Mutex::new(false), Condvar::new())),
         }
     }
 
@@ -1377,12 +1547,23 @@ mod tests {
         assert_eq!(first.len(), 1);
         let again = inbox.take_new(vec![RemoteCommand::on("seed", None)]);
         assert!(again.is_empty());
+        assert!(
+            inbox.ack_ids().is_empty(),
+            "do not ack a command until the engine applied it"
+        );
+        inbox.mark_applied(["seed"]);
         assert_eq!(inbox.ack_ids(), ["seed"]);
         let batch: Vec<_> = (0..70)
             .map(|i| RemoteCommand::on(format!("c{i}"), None))
             .collect();
         let many = inbox.take_new(batch.clone());
         assert_eq!(many.len(), 70);
+        assert_eq!(
+            inbox.ack_ids().len(),
+            1,
+            "unapplied commands must not be acked by a Snapshot heartbeat"
+        );
+        inbox.mark_applied(batch.iter().map(|c| c.id.as_str()));
         assert_eq!(inbox.ack_ids().len(), 71);
         inbox.retain_pending(&batch);
         assert_eq!(
@@ -1396,6 +1577,26 @@ mod tests {
         );
         inbox.retain_pending(&[]);
         assert!(inbox.ack_ids().is_empty());
+    }
+
+    #[test]
+    fn apply_polled_commands_marks_ids_so_the_next_heartbeat_can_ack() {
+        let (event_tx, event_rx) = mpsc::channel();
+        event_tx
+            .send(CloudEvent::Commands(vec![RemoteCommand::off("end")]))
+            .unwrap();
+        let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
+        let mut pairing = None;
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        engine.handle(never_sleep_core::Input::Start, &platform.snapshot());
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(!engine.is_active());
+        assert_eq!(
+            handle.take_applied(),
+            vec!["end".to_string()],
+            "the reporter must not ack Off until this process applied it"
+        );
     }
 
     #[test]
@@ -1460,7 +1661,10 @@ mod tests {
             events: event_rx,
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
+            applied_ids: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+            idle: Arc::new((Mutex::new(false), Condvar::new())),
         };
         let mut inactive = sample_status();
         inactive.active = false;
@@ -1495,6 +1699,10 @@ mod tests {
         assert!(
             shutting_down_from_wake(Ok(ReporterWake::Detach), false),
             "Detach still ends the reporter loop"
+        );
+        assert!(
+            !shutting_down_from_wake(Ok(ReporterWake::Quiesce), false),
+            "Quiesce parks the reporter; it is not Shutdown"
         );
         assert!(!reporter_marks_offline(
             Ok(ReporterWake::Detach),
@@ -1535,7 +1743,10 @@ mod tests {
             events: event_rx,
             join: None,
             held_commands: Mutex::new(Vec::new()),
+            applied_ids: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::clone(&detached),
+            paused: Arc::new(AtomicBool::new(false)),
+            idle: Arc::new((Mutex::new(false), Condvar::new())),
         };
         handle.detach();
         assert!(
@@ -1567,7 +1778,10 @@ mod tests {
             events: event_rx,
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
+            applied_ids: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+            idle: Arc::new((Mutex::new(false), Condvar::new())),
         };
         handle.detach();
         assert_eq!(
@@ -1594,7 +1808,10 @@ mod tests {
             events: event_rx,
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
+            applied_ids: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+            idle: Arc::new((Mutex::new(false), Condvar::new())),
         };
         let mut inactive = sample_status();
         inactive.active = false;

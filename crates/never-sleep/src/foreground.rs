@@ -61,6 +61,13 @@ pub fn run_foreground(
             break;
         }
         if try_send(&IpcRequest::Ping).is_some() {
+            if let Some(handle) = cloud.as_ref() {
+                handle.quiesce();
+                crate::cloud::apply_polled_commands(&mut engine, platform, handle, &mut pairing);
+            }
+            if !engine.is_active() {
+                break;
+            }
             let req = handoff_request(&engine, &platform.snapshot());
             if let Some(resp) = try_send(&req) {
                 if crate::protocol::menu_accepted_handoff(&resp) {
@@ -192,12 +199,30 @@ mod tests {
         let drain_at = loop_body
             .find("apply_polled_commands")
             .expect("drain the foreground reporter before handing off");
+        let quiesce_at = loop_body
+            .find("quiesce(")
+            .expect("quiesce the reporter so an in-flight heartbeat cannot ack during IPC");
         let adopt_at = loop_body
             .find("handoff_request")
             .expect("handoff_request after drain");
         assert!(
-            drain_at < adopt_at,
-            "a queued phone Off must be applied before detach() drops the reporter"
+            drain_at < quiesce_at,
+            "apply queued commands before waiting for the in-flight heartbeat"
+        );
+        assert!(
+            quiesce_at < adopt_at,
+            "a heartbeat that returns Off during Ping must be drained before detach()"
+        );
+        let after_quiesce = &loop_body[quiesce_at..];
+        let second_drain = after_quiesce
+            .find("apply_polled_commands")
+            .expect("drain commands delivered by the in-flight heartbeat");
+        let adopt_after = after_quiesce
+            .find("handoff_request")
+            .expect("handoff after the post-quiesce drain");
+        assert!(
+            second_drain < adopt_after,
+            "transfer the last phone Off before relinquishing the reporter"
         );
         assert!(
             handoff.contains("menu_accepted_handoff"),
