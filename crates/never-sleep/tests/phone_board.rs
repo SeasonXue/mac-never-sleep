@@ -111,12 +111,12 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(index.contains("device:"));
     assert!(index.contains("pair:"));
     assert!(index.contains("shardName"));
-    assert!(index.contains("pairingCodeIsLive"));
     assert!(index.contains("expired_codes"));
     assert!(index.contains("capListEntries"));
     assert!(index.contains("persistBoardAction"));
     assert!(index.contains("publishReservedPairing"));
     let board = read("worker/src/board.js");
+    assert!(board.contains("pairingCodeIsLive"));
     assert!(board.contains("LIST_MAX_DEVICES = 32"));
     assert!(board.contains("isAllowedDuration"));
     assert!(board.contains("error: \"taken\""));
