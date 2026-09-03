@@ -71,6 +71,7 @@ pub enum Input {
     Handoff {
         pref: DurationPref,
         remaining_secs: Option<u64>,
+        elapsed_secs: Option<u64>,
     },
 }
 
@@ -164,20 +165,41 @@ fn clocks_from_remaining(host: &HostSnapshot, remaining: u64) -> SessionClocks {
     }
 }
 
+fn backdate_starts(clocks: &mut SessionClocks, host: &HostSnapshot, elapsed_secs: Option<u64>) {
+    let Some(elapsed) = elapsed_secs else {
+        return;
+    };
+    let elapsed_ms = elapsed.saturating_mul(1_000);
+    clocks.started_ms = host.monotonic_ms.saturating_sub(elapsed_ms);
+    clocks.started_continuous_ms = host.continuous_ms.saturating_sub(elapsed_ms);
+    clocks.started_unix = host.unix_secs.saturating_sub(elapsed as i64);
+}
+
 fn handoff_clocks(
     pref: DurationPref,
     remaining_secs: Option<u64>,
+    elapsed_secs: Option<u64>,
     host: &HostSnapshot,
 ) -> SessionClocks {
     match (pref, remaining_secs) {
-        (DurationPref::Indefinite, _) | (_, None) => session_clocks(pref, host),
-        (DurationPref::Hours { hours }, Some(remaining)) => {
-            let cap = u64::from(hours).saturating_mul(3600);
-            clocks_from_remaining(host, remaining.min(cap))
+        (DurationPref::Indefinite, _) => {
+            let mut clocks = session_clocks(pref, host);
+            backdate_starts(&mut clocks, host, elapsed_secs);
+            clocks
         }
-        (DurationPref::UntilLocal { .. }, Some(remaining)) => {
-            clocks_from_remaining(host, remaining.min(86_400))
+        (_, Some(remaining)) => {
+            let rem = match pref {
+                DurationPref::Hours { hours } => {
+                    remaining.min(u64::from(hours).saturating_mul(3600))
+                }
+                DurationPref::UntilLocal { .. } => remaining.min(86_400),
+                DurationPref::Indefinite => remaining,
+            };
+            let mut clocks = clocks_from_remaining(host, rem);
+            backdate_starts(&mut clocks, host, elapsed_secs);
+            clocks
         }
+        (_, None) => session_clocks(pref, host),
     }
 }
 
@@ -215,7 +237,8 @@ impl Engine {
             Input::Handoff {
                 pref,
                 remaining_secs,
-            } => self.handoff(pref, remaining_secs, host, &mut effects),
+                elapsed_secs,
+            } => self.handoff(pref, remaining_secs, elapsed_secs, host, &mut effects),
             Input::Toggle => {
                 if self.session.is_some() {
                     self.stop(StopReason::User, host, &mut effects);
@@ -254,6 +277,7 @@ impl Engine {
         &mut self,
         pref: DurationPref,
         remaining_secs: Option<u64>,
+        elapsed_secs: Option<u64>,
         host: &HostSnapshot,
         effects: &mut Vec<Effect>,
     ) {
@@ -265,7 +289,7 @@ impl Engine {
         }
         self.begin_session(
             pref,
-            handoff_clocks(pref, remaining_secs, host),
+            handoff_clocks(pref, remaining_secs, elapsed_secs, host),
             true,
             host,
             effects,
@@ -636,6 +660,7 @@ mod tests {
             Input::Handoff {
                 pref: DurationPref::Hours { hours: 8 },
                 remaining_secs: Some(3600),
+                elapsed_secs: None,
             },
             &h,
         );
@@ -667,6 +692,7 @@ mod tests {
             Input::Handoff {
                 pref: DurationPref::Hours { hours: 8 },
                 remaining_secs: Some(3600),
+                elapsed_secs: None,
             },
             &h0,
         );
@@ -686,6 +712,7 @@ mod tests {
             Input::Handoff {
                 pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
                 remaining_secs: Some(0),
+                elapsed_secs: None,
             },
             &h,
         );
@@ -708,6 +735,7 @@ mod tests {
             Input::Handoff {
                 pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
                 remaining_secs: Some(90),
+                elapsed_secs: None,
             },
             &h0,
         );
@@ -726,6 +754,7 @@ mod tests {
             Input::Handoff {
                 pref: DurationPref::Hours { hours: 8 },
                 remaining_secs: Some(0),
+                elapsed_secs: None,
             },
             &host(0),
         );
@@ -734,6 +763,28 @@ mod tests {
             !effects.iter().any(|e| matches!(e, Effect::ApplyPower(_))),
             "zero leftover seconds must not re-apply power just to tick-stop"
         );
+    }
+
+    #[test]
+    fn handoff_preserves_elapsed_with_remaining() {
+        let mut eng = Engine::new(cfg());
+        let h = host(7 * 3_600_000);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+                elapsed_secs: Some(7 * 3600),
+            },
+            &h,
+        );
+        let st = eng.json_status(&h);
+        assert_eq!(st.remaining_secs, Some(3600));
+        assert_eq!(
+            st.elapsed_secs,
+            Some(7 * 3600),
+            "adopting a 7h-old session must not reset the panel and phone elapsed clock"
+        );
+        assert!(eng.is_active());
     }
 
     #[test]

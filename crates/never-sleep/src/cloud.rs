@@ -1319,6 +1319,7 @@ mod tests {
             never_sleep_core::Input::Handoff {
                 pref: never_sleep_core::DurationPref::Hours { hours: 8 },
                 remaining_secs: Some(3600),
+                elapsed_secs: None,
             },
             &host,
         );

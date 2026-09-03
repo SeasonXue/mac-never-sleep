@@ -1028,6 +1028,7 @@ fn handle_ipc(
         IpcRequest::On {
             duration,
             remaining_secs,
+            elapsed_secs,
             handoff,
         } => {
             let parsed = match crate::protocol::parse_on_duration_in(
@@ -1044,6 +1045,7 @@ fn handle_ipc(
                 Input::Handoff {
                     pref: parsed.unwrap_or(engine.config.duration),
                     remaining_secs,
+                    elapsed_secs,
                 }
             } else {
                 match parsed {

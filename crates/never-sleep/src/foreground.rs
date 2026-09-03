@@ -54,6 +54,12 @@ pub fn run_foreground(
     println!("{}", t.foreground_status_hint());
 
     while running.load(Ordering::SeqCst) && engine.is_active() {
+        if let Some(handle) = cloud.as_ref() {
+            crate::cloud::apply_polled_commands(&mut engine, platform, handle, &mut pairing);
+        }
+        if !engine.is_active() {
+            break;
+        }
         if try_send(&IpcRequest::Ping).is_some() {
             let req = handoff_request(&engine, &platform.snapshot());
             if let Some(resp) = try_send(&req) {
@@ -108,11 +114,13 @@ pub fn run_foreground(
 }
 
 fn handoff_request(engine: &Engine, host: &never_sleep_core::HostSnapshot) -> IpcRequest {
+    let status = engine.json_status(host);
     IpcRequest::handoff(
         Some(crate::protocol::duration_pref_to_ipc(
             engine.config.duration,
         )),
-        engine.json_status(host).remaining_secs,
+        status.remaining_secs,
+        status.elapsed_secs,
     )
 }
 
@@ -176,8 +184,20 @@ mod tests {
             "hand the leftover duration, not the original Hours preference"
         );
         assert!(
-            src.contains("remaining_secs"),
-            "handoff IPC must carry the leftover seconds of the live session"
+            src.contains("remaining_secs") && src.contains("elapsed_secs"),
+            "handoff IPC must carry leftover and elapsed seconds of the live session"
+        );
+        let loop_at = body.find("while running").expect("foreground loop");
+        let loop_body = &body[loop_at..];
+        let drain_at = loop_body
+            .find("apply_polled_commands")
+            .expect("drain the foreground reporter before handing off");
+        let adopt_at = loop_body
+            .find("handoff_request")
+            .expect("handoff_request after drain");
+        assert!(
+            drain_at < adopt_at,
+            "a queued phone Off must be applied before detach() drops the reporter"
         );
         assert!(
             handoff.contains("menu_accepted_handoff"),
@@ -231,10 +251,12 @@ mod tests {
             IpcRequest::On {
                 duration,
                 remaining_secs,
+                elapsed_secs,
                 handoff,
             } => {
                 assert_eq!(duration.as_deref(), Some("8h"));
                 assert_eq!(remaining_secs, Some(3600));
+                assert_eq!(elapsed_secs, Some(7 * 3600));
                 assert!(handoff);
             }
             other => panic!("expected On handoff, got {other:?}"),

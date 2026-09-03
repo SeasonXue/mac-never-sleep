@@ -11,6 +11,9 @@ pub enum IpcRequest {
         /// Leftover seconds of a timed session. Only set on an internal handoff.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         remaining_secs: Option<u64>,
+        /// Elapsed seconds of the live session. Only set on an internal handoff.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        elapsed_secs: Option<u64>,
         /// Adopt a live session with remote display semantics (do not fight HID).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         handoff: bool,
@@ -45,14 +48,20 @@ impl IpcRequest {
         Self::On {
             duration,
             remaining_secs: None,
+            elapsed_secs: None,
             handoff: false,
         }
     }
 
-    pub fn handoff(duration: Option<String>, remaining_secs: Option<u64>) -> Self {
+    pub fn handoff(
+        duration: Option<String>,
+        remaining_secs: Option<u64>,
+        elapsed_secs: Option<u64>,
+    ) -> Self {
         Self::On {
             duration,
             remaining_secs,
+            elapsed_secs,
             handoff: true,
         }
     }
@@ -177,6 +186,7 @@ mod tests {
                 IpcRequest::On {
                     duration: Some("8h".into()),
                     remaining_secs: None,
+                    elapsed_secs: None,
                     handoff: false,
                 },
                 r#"{"cmd":"on","duration":"8h"}"#,
@@ -219,11 +229,11 @@ mod tests {
 
     #[test]
     fn handoff_on_carries_remaining_secs() {
-        let req = IpcRequest::handoff(Some("8h".into()), Some(3600));
+        let req = IpcRequest::handoff(Some("8h".into()), Some(3600), Some(7 * 3600));
         let json = serde_json::to_string(&req).unwrap();
         assert_eq!(
             json,
-            r#"{"cmd":"on","duration":"8h","remaining_secs":3600,"handoff":true}"#
+            r#"{"cmd":"on","duration":"8h","remaining_secs":3600,"elapsed_secs":25200,"handoff":true}"#
         );
         let back: IpcRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(back, req);
