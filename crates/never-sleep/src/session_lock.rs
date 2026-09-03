@@ -191,4 +191,33 @@ mod tests {
             "restore via ApplyPower must happen before the IPC ok that lets the donor detach"
         );
     }
+
+    #[test]
+    fn unclaimed_clamshell_restore_failure_does_not_write_lock() {
+        let macos = include_str!("platform/macos.rs");
+        let apply = macos.split("fn apply_power").nth(1).expect("apply_power");
+        let clear_at = apply
+            .find("should_clear_unclaimed_clamshell")
+            .expect("inherited clear");
+        let clear_arm = &apply[clear_at..];
+        let restore_fail = clear_arm
+            .find("if !set_clamshell_sleep_disabled(false)")
+            .expect("restore failure must be checked");
+        let fail_arm = &clear_arm[restore_fail..];
+        let err_at = fail_arm
+            .find("return Err")
+            .expect("adopt fails if restore fails");
+        let write_at = apply
+            .find("write_lock")
+            .expect("success path still records the lock");
+        let fail_abs = clear_at + restore_fail + err_at;
+        assert!(
+            fail_abs < write_at,
+            "a failed IOKit restore must not write clamshell=0 before returning Err"
+        );
+        assert!(
+            fail_arm.contains("owns_power = true") && fail_arm.contains("release_power"),
+            "keep ownership so release_power sees a live donor lock and does not clear the flag"
+        );
+    }
 }

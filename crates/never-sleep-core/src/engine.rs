@@ -184,7 +184,7 @@ fn handoff_clocks(
                 DurationPref::Hours { hours } => {
                     remaining.min(u64::from(hours).saturating_mul(3600))
                 }
-                DurationPref::UntilLocal { .. } => remaining.min(86_400),
+                DurationPref::UntilLocal { .. } => remaining.min(2 * 86_400),
                 DurationPref::Indefinite => remaining,
             };
             clocks_from_remaining(host, rem)
@@ -748,6 +748,26 @@ mod tests {
             eng.config.duration,
             DurationPref::UntilLocal { hour: 8, minute: 0 }
         );
+    }
+
+    #[test]
+    fn handoff_until_local_preserves_dst_25h_remaining() {
+        let mut eng = Engine::new(cfg());
+        let h = host(0);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
+                remaining_secs: Some(25 * 3600),
+                elapsed_secs: None,
+            },
+            &h,
+        );
+        assert_eq!(
+            eng.json_status(&h).remaining_secs,
+            Some(25 * 3600),
+            "a fall-back 25-hour UntilLocal leftover must not be capped at 24h"
+        );
+        assert!(eng.is_active());
     }
 
     #[test]

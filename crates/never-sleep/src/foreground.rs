@@ -33,17 +33,7 @@ pub fn run_foreground(
 
     let cloud_ok = crate::cloud::cloud_enabled();
     let mut cloud = if cloud_ok && try_send(&IpcRequest::Ping).is_none() {
-        match crate::cloud::load_or_create_identity() {
-            Ok(identity) => Some(crate::cloud::spawn_reporter(
-                identity,
-                crate::cloud::default_display_name(),
-                engine.config.lang(),
-            )),
-            Err(err) => {
-                eprintln!("never-sleep cloud identity: {err}");
-                None
-            }
-        }
+        spawn_foreground_reporter(engine.config.lang())
     } else {
         None
     };
@@ -68,7 +58,14 @@ pub fn run_foreground(
             if !engine.is_active() {
                 break;
             }
-            let req = handoff_request(&engine, &platform.snapshot());
+            let req = handoff_request(
+                &engine,
+                &platform.snapshot(),
+                cloud
+                    .as_ref()
+                    .map(crate::cloud::CloudHandle::applied_command_ids)
+                    .unwrap_or_default(),
+            );
             if let Some(resp) = try_send(&req) {
                 if crate::protocol::menu_accepted_handoff(&resp) {
                     if let Some(handle) = cloud.take() {
@@ -91,6 +88,8 @@ pub fn run_foreground(
             if let Some(handle) = cloud.as_ref() {
                 handle.resume();
             }
+        } else if cloud.is_none() && cloud_ok {
+            cloud = spawn_foreground_reporter(engine.config.lang());
         }
         dispatch(&mut engine, platform, Input::Tick);
         if let Some(handle) = cloud.as_ref() {
@@ -123,7 +122,11 @@ pub fn run_foreground(
     Ok(())
 }
 
-fn handoff_request(engine: &Engine, host: &never_sleep_core::HostSnapshot) -> IpcRequest {
+fn handoff_request(
+    engine: &Engine,
+    host: &never_sleep_core::HostSnapshot,
+    applied_command_ids: Vec<String>,
+) -> IpcRequest {
     let status = engine.json_status(host);
     IpcRequest::handoff(
         Some(crate::protocol::duration_pref_to_ipc(
@@ -132,6 +135,21 @@ fn handoff_request(engine: &Engine, host: &never_sleep_core::HostSnapshot) -> Ip
         status.remaining_secs,
         status.elapsed_secs,
     )
+    .with_applied_command_ids(applied_command_ids)
+}
+
+fn spawn_foreground_reporter(lang: Lang) -> Option<crate::cloud::CloudHandle> {
+    match crate::cloud::load_or_create_identity() {
+        Ok(identity) => Some(crate::cloud::spawn_reporter(
+            identity,
+            crate::cloud::default_display_name(),
+            lang,
+        )),
+        Err(err) => {
+            eprintln!("never-sleep cloud identity: {err}");
+            None
+        }
+    }
 }
 
 pub fn parse_optional_duration(
@@ -265,6 +283,31 @@ mod tests {
     }
 
     #[test]
+    fn transient_menu_gone_starts_a_reporter() {
+        let src = include_str!("foreground.rs");
+        let start = src.find("pub fn run_foreground").expect("run_foreground");
+        let body = src[start..]
+            .split("pub fn parse_optional_duration")
+            .next()
+            .unwrap();
+        let loop_at = body.find("while running").expect("foreground loop");
+        let loop_body = &body[loop_at..];
+        let ping_at = loop_body
+            .find("IpcRequest::Ping")
+            .expect("loop Ping decides whether a menu is live");
+        let after_ping = &loop_body[ping_at..];
+        assert!(
+            after_ping.contains("spawn_foreground_reporter")
+                || after_ping.contains("spawn_reporter"),
+            "Ping failure with no live menu must create a reporter so the phone board can recover"
+        );
+        assert!(
+            after_ping.contains("cloud.is_none()"),
+            "do not start a second reporter while this process already has one"
+        );
+    }
+
+    #[test]
     fn handoff_request_sends_remaining_secs_not_full_pref() {
         use never_sleep_core::{AppConfig, DurationPref, HostSnapshot, Input, Thermal};
         let mut engine = Engine::new(AppConfig {
@@ -289,18 +332,20 @@ mod tests {
         later.monotonic_ms = 7 * 3_600_000;
         later.continuous_ms = 7 * 3_600_000;
         later.unix_secs = host.unix_secs;
-        let req = handoff_request(&engine, &later);
+        let req = handoff_request(&engine, &later, vec!["phone-on".into()]);
         match req {
             IpcRequest::On {
                 duration,
                 remaining_secs,
                 elapsed_secs,
                 handoff,
+                applied_command_ids,
             } => {
                 assert_eq!(duration.as_deref(), Some("8h"));
                 assert_eq!(remaining_secs, Some(3600));
                 assert_eq!(elapsed_secs, Some(7 * 3600));
                 assert!(handoff);
+                assert_eq!(applied_command_ids, vec!["phone-on"]);
             }
             other => panic!("expected On handoff, got {other:?}"),
         }

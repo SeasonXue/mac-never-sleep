@@ -615,7 +615,11 @@ impl Platform for MacPlatform {
         }
 
         if crate::session_lock::should_clear_unclaimed_clamshell(plan.disable_clamshell_sleep) {
-            set_clamshell_sleep_disabled(false);
+            if !set_clamshell_sleep_disabled(false) {
+                self.owns_power = true;
+                let _ = self.release_power();
+                return Err(t.clamshell_restore_failed().into());
+            }
             self.clamshell_on = false;
         } else {
             set_clamshell_sleep_disabled(true);

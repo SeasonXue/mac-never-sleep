@@ -718,6 +718,13 @@ impl Tr {
         )
     }
 
+    pub fn clamshell_restore_failed(self) -> &'static str {
+        self.pick(
+            "Could not restore clamshell sleep after adopting without lid-awake",
+            "接管后未能恢复合盖睡眠（本次未占用合盖标志）",
+        )
+    }
+
     pub fn displaysleep_and_wrangler_failed(self) -> &'static str {
         self.pick(
             "pmset displaysleepnow failed, and IODisplayWrangler was not found",
@@ -1075,5 +1082,15 @@ mod tests {
         assert!(zh.contains("⌥⌘P"));
         assert!(!zh.contains("秒后关闭屏幕"));
         assert_ne!(en, zh);
+    }
+
+    #[test]
+    fn clamshell_restore_failed_is_bilingual() {
+        let en = Tr::new(Lang::En).clamshell_restore_failed();
+        let zh = Tr::new(Lang::Zh).clamshell_restore_failed();
+        assert!(en.contains("clamshell"));
+        assert!(zh.contains("合盖"));
+        assert_ne!(en, zh);
+        assert!(!zh.contains("熄屏待命"));
     }
 }

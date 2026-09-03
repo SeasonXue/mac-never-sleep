@@ -60,6 +60,9 @@ pub struct CloudHandle {
     join: Option<thread::JoinHandle<()>>,
     held_commands: Mutex<Vec<RemoteCommand>>,
     applied_ids: Arc<Mutex<Vec<String>>>,
+    /// Ids this process applied (or the donor already applied). Never drained
+    /// by the reporter; used to skip a held command after handoff.
+    applied_history: Mutex<Vec<String>>,
     /// Set before the wake sender is dropped so a full channel cannot lose Detach.
     detached: Arc<AtomicBool>,
     /// Stop POSTing so handoff can drain the last commands without a racing ack.
@@ -150,8 +153,42 @@ impl CloudHandle {
             return;
         }
         if let Ok(mut slot) = self.applied_ids.lock() {
-            slot.extend(ids);
+            slot.extend(ids.iter().cloned());
         }
+        if let Ok(mut hist) = self.applied_history.lock() {
+            for id in &ids {
+                if !hist.iter().any(|seen| seen == id) {
+                    hist.push(id.clone());
+                }
+            }
+        }
+    }
+
+    pub fn applied_command_ids(&self) -> Vec<String> {
+        self.applied_history
+            .lock()
+            .map(|hist| hist.clone())
+            .unwrap_or_default()
+    }
+
+    /// Drop held commands the donor already applied, and ack them so the Worker
+    /// does not keep replaying the same On after this process takes over.
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn skip_applied(&self, ids: Vec<String>) {
+        if ids.is_empty() {
+            return;
+        }
+        if let Ok(mut held) = self.held_commands.lock() {
+            held.retain(|cmd| !ids.iter().any(|id| id == &cmd.id));
+        }
+        self.mark_applied(ids);
+    }
+
+    fn already_applied(&self, id: &str) -> bool {
+        self.applied_history
+            .lock()
+            .map(|hist| hist.iter().any(|seen| seen == id))
+            .unwrap_or(false)
     }
 
     #[cfg(test)]
@@ -648,6 +685,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
         join,
         held_commands: Mutex::new(Vec::new()),
         applied_ids,
+        applied_history: Mutex::new(Vec::new()),
         detached,
         paused,
         idle,
@@ -1003,6 +1041,13 @@ pub fn apply_polled_commands(
     for event in handle.poll_events() {
         match event {
             CloudEvent::Commands(commands) => {
+                let commands: Vec<RemoteCommand> = commands
+                    .into_iter()
+                    .filter(|cmd| !handle.already_applied(&cmd.id))
+                    .collect();
+                if commands.is_empty() {
+                    continue;
+                }
                 if crate::session_lock::should_hold_cloud_commands(
                     engine.is_active(),
                     std::process::id(),
@@ -1064,6 +1109,7 @@ mod tests {
             join: None,
             held_commands: Mutex::new(Vec::new()),
             applied_ids: Arc::new(Mutex::new(Vec::new())),
+            applied_history: Mutex::new(Vec::new()),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
@@ -1547,6 +1593,58 @@ mod tests {
     }
 
     #[test]
+    fn donor_applied_phone_on_is_not_replayed_after_handoff() {
+        let _guard = TestDataDir::install();
+        crate::paths::ensure_data_dir().unwrap();
+        std::fs::write(crate::paths::session_lock_path(), "pid=1\nclamshell=1\n").unwrap();
+        let (event_tx, event_rx) = mpsc::channel();
+        event_tx
+            .send(CloudEvent::Commands(vec![RemoteCommand::on(
+                "phone-on",
+                Some("8h".into()),
+            )]))
+            .unwrap();
+        let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
+        let mut pairing = None;
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(!engine.is_active(), "idle menu must hold the On");
+        handle.skip_applied(vec!["phone-on".into()]);
+        let host = platform.snapshot();
+        engine.handle(
+            never_sleep_core::Input::Handoff {
+                pref: never_sleep_core::DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+                elapsed_secs: Some(7 * 3600),
+            },
+            &host,
+        );
+        assert!(engine.is_active(), "handoff must start the adopted session");
+        assert_eq!(engine.json_status(&host).remaining_secs, Some(3600));
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(
+            engine.is_active(),
+            "held On must not stop the adopted session"
+        );
+        assert_eq!(
+            engine.json_status(&platform.snapshot()).remaining_secs,
+            Some(3600),
+            "replaying the held 8h On would reset the adopted leftover"
+        );
+        let gui = include_str!("gui.rs");
+        assert!(
+            gui.contains("skip_applied"),
+            "menu must drop donor-applied command ids before draining held phone commands"
+        );
+        let fg = include_str!("foreground.rs");
+        assert!(
+            fg.contains("applied_command_ids"),
+            "handoff IPC must carry ids the foreground reporter already applied"
+        );
+    }
+
+    #[test]
     fn hostname_from_c_buffer_reads_gethostname_bytes() {
         assert_eq!(
             hostname_from_c_buffer(b"Studio.local\0trailing"),
@@ -1680,6 +1778,7 @@ mod tests {
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
             applied_ids: Arc::new(Mutex::new(Vec::new())),
+            applied_history: Mutex::new(Vec::new()),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
@@ -1762,6 +1861,7 @@ mod tests {
             join: None,
             held_commands: Mutex::new(Vec::new()),
             applied_ids: Arc::new(Mutex::new(Vec::new())),
+            applied_history: Mutex::new(Vec::new()),
             detached: Arc::clone(&detached),
             paused: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
@@ -1792,6 +1892,7 @@ mod tests {
             join: None,
             held_commands: Mutex::new(Vec::new()),
             applied_ids: Arc::new(Mutex::new(Vec::new())),
+            applied_history: Mutex::new(Vec::new()),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::clone(&paused),
             idle: Arc::clone(&idle),
@@ -1830,6 +1931,7 @@ mod tests {
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
             applied_ids: Arc::new(Mutex::new(Vec::new())),
+            applied_history: Mutex::new(Vec::new()),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
@@ -1860,6 +1962,7 @@ mod tests {
             join: Some(join),
             held_commands: Mutex::new(Vec::new()),
             applied_ids: Arc::new(Mutex::new(Vec::new())),
+            applied_history: Mutex::new(Vec::new()),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),

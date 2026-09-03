@@ -335,6 +335,13 @@ pub fn run() {
             let handoff_first = match &incoming {
                 IpcIncoming::Request { req, .. } => req.is_handoff() && !engine.is_active(),
             };
+            if let IpcIncoming::Request { req, .. } = &incoming {
+                if req.is_handoff() {
+                    if let Some(handle) = cloud.as_ref() {
+                        handle.skip_applied(req.applied_command_ids().to_vec());
+                    }
+                }
+            }
             if !handoff_first {
                 if let Some(handle) = cloud.as_ref() {
                     crate::cloud::apply_polled_commands(
@@ -1030,6 +1037,7 @@ fn handle_ipc(
             remaining_secs,
             elapsed_secs,
             handoff,
+            ..
         } => {
             let parsed = match crate::protocol::parse_on_duration_in(
                 duration.as_deref(),

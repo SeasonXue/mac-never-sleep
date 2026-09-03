@@ -17,6 +17,9 @@ pub enum IpcRequest {
         /// Adopt a live session with remote display semantics (do not fight HID).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         handoff: bool,
+        /// Command ids the donor already applied. Only set on an internal handoff.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        applied_command_ids: Vec<String>,
     },
     Off,
     Toggle,
@@ -50,6 +53,7 @@ impl IpcRequest {
             remaining_secs: None,
             elapsed_secs: None,
             handoff: false,
+            applied_command_ids: Vec::new(),
         }
     }
 
@@ -63,6 +67,37 @@ impl IpcRequest {
             remaining_secs,
             elapsed_secs,
             handoff: true,
+            applied_command_ids: Vec::new(),
+        }
+    }
+
+    pub fn with_applied_command_ids(self, ids: Vec<String>) -> Self {
+        match self {
+            Self::On {
+                duration,
+                remaining_secs,
+                elapsed_secs,
+                handoff,
+                ..
+            } => Self::On {
+                duration,
+                remaining_secs,
+                elapsed_secs,
+                handoff,
+                applied_command_ids: ids,
+            },
+            other => other,
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn applied_command_ids(&self) -> &[String] {
+        match self {
+            Self::On {
+                applied_command_ids,
+                ..
+            } => applied_command_ids,
+            _ => &[],
         }
     }
 
@@ -188,6 +223,7 @@ mod tests {
                     remaining_secs: None,
                     elapsed_secs: None,
                     handoff: false,
+                    applied_command_ids: Vec::new(),
                 },
                 r#"{"cmd":"on","duration":"8h"}"#,
             ),
@@ -255,6 +291,20 @@ mod tests {
         assert!(req.is_handoff());
         assert!(!IpcRequest::on(Some("8h".into())).is_handoff());
         assert!(!IpcRequest::Ping.is_handoff());
+        let with_ids = IpcRequest::handoff(Some("8h".into()), Some(3600), Some(7 * 3600))
+            .with_applied_command_ids(vec!["phone-on".into()]);
+        assert_eq!(with_ids.applied_command_ids(), ["phone-on"]);
+        let ids_json = serde_json::to_string(&with_ids).unwrap();
+        assert!(
+            ids_json.contains("applied_command_ids") && ids_json.contains("phone-on"),
+            "internal handoff must name commands the donor already applied, got {ids_json}"
+        );
+        assert!(
+            !serde_json::to_string(&IpcRequest::on(Some("8h".into())))
+                .unwrap()
+                .contains("applied_command_ids"),
+            "CLI On must keep omitting the internal-only field"
+        );
     }
 
     #[test]
