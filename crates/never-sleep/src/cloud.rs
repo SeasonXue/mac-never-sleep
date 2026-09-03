@@ -524,6 +524,7 @@ fn emit_outcome(
         gate.on_pairing_cleared();
         let _ = event_tx.send(CloudEvent::PairingCleared);
     } else if let (Some(code), Some(url)) = (outcome.pairing_code, outcome.pairing_url) {
+        gate.on_pair_start_ok();
         let _ = event_tx.send(CloudEvent::Pairing { code, url });
     }
     let pending = outcome.commands;
@@ -1016,6 +1017,57 @@ mod tests {
                 self.beat.lock().unwrap().remove(0)
             }
         }
+    }
+
+    #[test]
+    fn live_heartbeat_pairing_marks_gate_registered() {
+        let transport = ScriptedTransport {
+            pair: Mutex::new(vec![Err("lost pair/start body".into())]),
+            beat: Mutex::new(vec![
+                Ok(CloudPost::Ok(
+                    r#"{"ok":true,"pairing_code":"AB7K-2Q9M","pairing_url":"https://x/board/?code=AB7K-2Q9M","commands":[]}"#
+                        .into(),
+                )),
+                Ok(CloudPost::Ok(
+                    r#"{"ok":true,"pairing_code":"AB7K-2Q9M","pairing_url":"https://x/board/?code=AB7K-2Q9M","commands":[]}"#
+                        .into(),
+                )),
+            ]),
+            pair_calls: Mutex::new(0),
+            beat_calls: Mutex::new(0),
+        };
+        let id = CloudIdentity {
+            device_id: "ab".repeat(16),
+            device_token: "cd".repeat(32),
+        };
+        let mut gate = ReporterGate::default();
+        let mut inbox = CommandInbox::default();
+        let (event_tx, event_rx) = mpsc::channel();
+        let status = sample_status();
+
+        reporter_tick(
+            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx,
+        );
+        assert!(
+            !gate.needs_pair_start(),
+            "an authenticated heartbeat that returns a live pairing must stop calling pair/start"
+        );
+        assert_eq!(
+            event_rx.try_recv().unwrap(),
+            CloudEvent::Pairing {
+                code: "AB7K-2Q9M".into(),
+                url: "https://x/board/?code=AB7K-2Q9M".into(),
+            }
+        );
+
+        reporter_tick(
+            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx,
+        );
+        assert_eq!(
+            *transport.pair_calls.lock().unwrap(),
+            1,
+            "the displayed code must not rotate on every tick after a lost pair/start response"
+        );
     }
 
     #[test]

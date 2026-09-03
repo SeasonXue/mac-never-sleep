@@ -67,13 +67,18 @@ export class BoardHub {
   async #persist() {
     const next = this.board.toJSON();
     const action = persistBoardAction(this.stored, next);
-    if (action === "put") {
-      await this.ctx.storage.put("board", next);
-      this.stored = next;
-    } else if (action === "delete") {
-      await this.ctx.storage.delete("board");
-      this.stored = null;
-      this.board = Board.fromJSON(null);
+    try {
+      if (action === "put") {
+        await this.ctx.storage.put("board", next);
+        this.stored = next;
+      } else if (action === "delete") {
+        await this.ctx.storage.delete("board");
+        this.stored = null;
+        this.board = Board.fromJSON(null);
+      }
+    } catch (err) {
+      this.board = Board.fromJSON(this.stored);
+      throw err;
     }
     await this.#scheduleAlarm();
   }

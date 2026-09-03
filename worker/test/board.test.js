@@ -1119,22 +1119,45 @@ test("toJSON snapshots are detached from live board mutations", () => {
   );
 });
 
-test("alarm deadline is recorded only after scheduling succeeds", async () => {
+test("alarm scheduling failure is propagated so pair/start can retry", async () => {
   let scheduled = undefined;
   scheduled = await commitAlarmUnix(scheduled, 1_600, async () => {});
   assert.equal(scheduled, 1_600);
-  const failed = await commitAlarmUnix(1_600, 1_700, async () => {
-    throw new Error("transient setAlarm");
-  });
-  assert.equal(
-    failed,
-    undefined,
-    "a failed setAlarm must not skip later retries",
+  await assert.rejects(
+    () =>
+      commitAlarmUnix(1_600, 1_700, async () => {
+        throw new Error("transient setAlarm");
+      }),
+    /transient setAlarm/,
+    "swallowing setAlarm still lets pair/start return success with no expiry",
   );
   const skipped = await commitAlarmUnix(1_600, 1_600, async () => {
     throw new Error("unchanged alarms must not call storage");
   });
   assert.equal(skipped, 1_600);
+});
+
+test("failed persist restores the live board from the stored snapshot", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  assert.match(
+    index,
+    /catch[\s\S]*this\.board = Board\.fromJSON\(this\.stored\)/,
+    "storage.put rejection must roll back in-memory mutations",
+  );
+});
+
+test("hour-long remaining countdowns keep live seconds", () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function formatRemaining");
+  assert.notEqual(start, -1, "board.js must format remaining_secs");
+  const end = src.indexOf("\n  function el(");
+  const { formatRemaining } = new Function(
+    `${src.slice(start, end)}\nreturn { formatRemaining };`,
+  )();
+  assert.equal(formatRemaining(7_183), "1:59:43");
+  assert.equal(formatRemaining(3_600), "1:00:00");
+  assert.equal(formatRemaining(59), "0:59");
 });
 
 test("slow list polls queue one follow-up instead of discarding every response", () => {
@@ -1145,6 +1168,32 @@ test("slow list polls queue one follow-up instead of discarding every response",
     "do not start a second /list while one is in flight",
   );
   assert.match(src, /refreshQueued/);
+});
+
+test("refresh completion is not tied to continuous polling", () => {
+  const { src } = boardClientHelpers();
+  assert.equal(
+    src.includes("} while (refreshQueued);"),
+    false,
+    "an always-slow /list must not keep claim() awaiting the poll loop",
+  );
+  assert.match(
+    src,
+    /void refresh\(\)/,
+    "queued follow-ups continue in the background after the current poll settles",
+  );
+});
+
+test("claim probes local storage before consuming the pairing code", () => {
+  const { src } = boardClientHelpers();
+  assert.match(src, /function storageWritable/);
+  const writableAt = src.indexOf("storageWritable()");
+  const claimPost = src.indexOf('post("/pair/claim"');
+  assert.ok(
+    writableAt >= 0 && writableAt < claimPost,
+    "do not burn a one-time code when the token cannot be stored",
+  );
+  assert.match(src, /storageError/);
 });
 
 test("pair start still returns the new code when replaced-shard cleanup fails", () => {

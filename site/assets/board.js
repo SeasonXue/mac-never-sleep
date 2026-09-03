@@ -25,6 +25,7 @@
         offlineCmd: "这台 Mac 当前离线，指令没有生效。",
         badCmd: "无法发送指令。",
         networkError: "网络出错，请检查连接后重试。",
+        storageError: "此浏览器无法保存配对。请允许网站数据后重试。",
         starting: "正在开始…",
         ending: "正在结束…",
       }
@@ -49,6 +50,7 @@
         offlineCmd: "This Mac is offline; the command did not apply.",
         badCmd: "Could not send the command.",
         networkError: "Network error. Check the connection and try again.",
+        storageError: "This browser cannot save pairing. Allow site data and try again.",
         starting: "Starting…",
         ending: "Ending…",
       };
@@ -73,6 +75,17 @@
 
   function saveDevices(devices) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(devices));
+  }
+
+  function storageWritable() {
+    try {
+      const probe = `${STORAGE_KEY}:ok`;
+      localStorage.setItem(probe, "1");
+      localStorage.removeItem(probe);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async function post(path, body) {
@@ -101,7 +114,9 @@
     const s = Number(secs);
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
-    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:00`;
+    if (h > 0) {
+      return `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+    }
     return `${m}:${String(s % 60).padStart(2, "0")}`;
   }
 
@@ -353,16 +368,15 @@
       refreshQueued = true;
       return refreshInFlight;
     }
-    refreshInFlight = (async () => {
-      do {
-        refreshQueued = false;
-        await runRefresh();
-      } while (refreshQueued);
-    })();
+    refreshInFlight = runRefresh();
     try {
       await refreshInFlight;
     } finally {
       refreshInFlight = null;
+      if (refreshQueued) {
+        refreshQueued = false;
+        void refresh();
+      }
     }
   }
 
@@ -392,6 +406,10 @@
   async function claim(code) {
     showError("");
     const input = document.getElementById("pair-code");
+    if (!storageWritable()) {
+      showError(copy.storageError);
+      return false;
+    }
     try {
       const { res, json } = await post("/pair/claim", { pairing_code: code });
       if (!res.ok || !json.ok) {

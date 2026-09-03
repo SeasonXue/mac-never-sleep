@@ -171,12 +171,8 @@ export function alarmNeedsUpdate(scheduledUnix, nextUnix) {
 
 export async function commitAlarmUnix(scheduledUnix, nextUnix, apply) {
   if (!alarmNeedsUpdate(scheduledUnix, nextUnix)) return scheduledUnix;
-  try {
-    await apply(nextUnix);
-    return nextUnix;
-  } catch {
-    return undefined;
-  }
+  await apply(nextUnix);
+  return nextUnix;
 }
 
 export async function bestEffortCleanup(result, cleanup) {

@@ -105,6 +105,14 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("isCurrentRefresh"));
     assert!(js.contains("refreshInFlight"));
     assert!(js.contains("refreshQueued"));
+    assert!(js.contains("void refresh()"));
+    assert!(!js.contains("} while (refreshQueued);"));
+    assert!(js.contains("function storageWritable"));
+    assert!(js.contains("storageError"));
+    assert!(
+        !js.contains("padStart(2, \"0\")}:00"),
+        "hour-long remaining must keep live seconds, not hard-code :00"
+    );
 }
 
 #[test]
@@ -149,6 +157,14 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("alarmNeedsUpdate"));
     assert!(board.contains("commitAlarmUnix"));
     assert!(index.contains("commitAlarmUnix"));
+    let persist = index
+        .split("async #persist()")
+        .nth(1)
+        .expect("#persist must exist");
+    assert!(
+        persist.contains("catch") && persist.contains("Board.fromJSON(this.stored)"),
+        "persist failures must restore the live board from the last stored snapshot"
+    );
     assert!(index.contains("bestEffortCleanup(res, () =>"));
     assert!(board.contains("confirmLive"));
     assert!(board.contains("isAllowedDuration"));
