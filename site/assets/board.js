@@ -111,6 +111,10 @@
     return node;
   }
 
+  function withListFailure(statuses) {
+    return (statuses || []).map((st) => Object.assign({}, st, { online: false }));
+  }
+
   function trustedView(stored, incoming, previous) {
     const src = incoming || {};
     const prev = previous || {};
@@ -246,12 +250,15 @@
       return;
     }
     try {
-      const { json } = await post("/list", { devices });
-      const statuses = Array.isArray(json.devices) ? json.devices : lastStatuses;
-      render(devices, statuses, pendingId);
-      if (Array.isArray(json.devices)) lastStatuses = json.devices;
+      const { res, json } = await post("/list", { devices });
+      if (!res.ok || !Array.isArray(json.devices)) {
+        render(devices, withListFailure(lastStatuses), pendingId);
+        return;
+      }
+      render(devices, json.devices, pendingId);
+      lastStatuses = json.devices;
     } catch {
-      render(devices, lastStatuses, pendingId);
+      render(devices, withListFailure(lastStatuses), pendingId);
     }
   }
 

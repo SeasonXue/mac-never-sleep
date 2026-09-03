@@ -84,6 +84,11 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
         "offline Macs must keep last-known standby, not paint Standby off"
     );
     assert!(js.contains("st.active ? copy.standbyOn : copy.standbyOff"));
+    assert!(
+        js.contains("function withListFailure"),
+        "list transport failures must mark cached devices offline"
+    );
+    assert!(js.contains("withListFailure(lastStatuses)"));
 }
 
 #[test]
@@ -106,6 +111,8 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(index.contains("device:"));
     assert!(index.contains("pair:"));
     assert!(index.contains("shardName"));
+    assert!(index.contains("pairingCodeIsLive"));
+    assert!(index.contains("expired_codes"));
 }
 
 #[test]

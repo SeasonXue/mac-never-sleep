@@ -11,7 +11,7 @@ use never_sleep_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::apply::apply_effects;
+use crate::apply::apply_effects_or_abort;
 use crate::paths::{cloud_identity_path, ensure_data_dir};
 use crate::platform::Platform;
 
@@ -280,7 +280,7 @@ pub fn apply_cloud_commands(
     for cmd in commands {
         let host = platform.snapshot();
         if let Ok(effects) = apply_remote_command(engine, &host, cmd) {
-            apply_effects(engine, platform, &effects);
+            apply_effects_or_abort(engine, platform, &effects);
         }
     }
 }
@@ -702,5 +702,62 @@ mod tests {
         let src = include_str!("cloud.rs");
         assert!(src.contains("needs_pair_start"));
         assert!(src.contains("on_unauthorized"));
+        assert!(src.contains("apply_effects_or_abort"));
+    }
+
+    #[test]
+    fn remote_on_aborts_when_power_assertion_fails() {
+        let _dir = TestDataDir::install();
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = FailPower;
+        apply_cloud_commands(
+            &mut engine,
+            &mut platform,
+            &[RemoteCommand::on("remote-1", None)],
+        );
+        assert!(
+            !engine.is_active(),
+            "phone must not see standby when stay-awake assertions were not installed"
+        );
+        let st = engine.json_status(&platform.snapshot());
+        assert_eq!(st.stop_reason_code.as_deref(), Some("assertion_failed"));
+        assert!(!st.active);
+    }
+
+    struct FailPower;
+
+    impl crate::platform::Platform for FailPower {
+        fn snapshot(&self) -> never_sleep_core::HostSnapshot {
+            never_sleep_core::HostSnapshot {
+                monotonic_ms: 0,
+                continuous_ms: 0,
+                unix_secs: 1_700_000_000,
+                utc_offset_secs: 0,
+                on_ac: true,
+                battery_percent: Some(80),
+                lid_closed: false,
+                display_asleep: Some(false),
+                hid_idle_ms: 80_000,
+                thermal: never_sleep_core::Thermal::Nominal,
+            }
+        }
+        fn apply_power(&mut self, _plan: never_sleep_core::PowerPlan) -> Result<(), String> {
+            Err("denied".into())
+        }
+        fn release_power(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn sleep_display(&self) -> Result<(), String> {
+            Ok(())
+        }
+        fn lock_session(&self) {}
+        fn notify(&self, _title: &str, _body: &str) {}
+        fn set_launch_at_login(&self, _enabled: bool) -> Result<(), String> {
+            Ok(())
+        }
+        fn cleanup_orphans(&self) {}
+        fn doctor(&self) -> String {
+            String::new()
+        }
     }
 }

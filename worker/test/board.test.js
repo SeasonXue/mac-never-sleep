@@ -4,6 +4,8 @@ import {
   Board,
   handleApi,
   HEARTBEAT_TTL_SECS,
+  PAIRING_TTL_SECS,
+  pairingCodeIsLive,
   pairingUrl,
   publicSiteOrigin,
   sanitizeStatus,
@@ -464,4 +466,84 @@ test("API traffic is sharded per device and pairing code, never a global board",
   assert.equal(shardName("/api/list", { devices: [id] }), null);
   assert.notEqual(shardName("/api/pair/start", id), "board");
   assert.notEqual(shardName("/api/heartbeat", id), "board");
+});
+
+test("expired pairing codes are returned so the router can drop pair shards", async () => {
+  let now = 1_000;
+  const board = new Board(() => now);
+  const id = identity();
+  const started = await json(await post(board, "/api/pair/start", id));
+  const raw = started.body.pairing_code.replace("-", "");
+  now = 1_000 + PAIRING_TTL_SECS + 1;
+  const beat = await json(
+    await post(board, "/api/heartbeat", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      status: sampleStatus(),
+    }),
+  );
+  assert.equal(beat.body.pairing_code, null);
+  assert.ok(
+    beat.body.expired_codes.includes(raw),
+    "heartbeat must report the expired offer so pair:{code} can be deleted",
+  );
+  const renewed = await json(await post(board, "/api/pair/start", id));
+  assert.equal(renewed.status, 200);
+  assert.notEqual(renewed.body.pairing_code, started.body.pairing_code);
+});
+
+test("startPairing after TTL lists the expired code as replaced", async () => {
+  let now = 1_000;
+  const board = new Board(() => now);
+  const id = identity();
+  const first = await json(await post(board, "/api/pair/start", id));
+  const raw = first.body.pairing_code.replace("-", "");
+  now = 1_000 + PAIRING_TTL_SECS + 1;
+  const second = await json(await post(board, "/api/pair/start", id));
+  assert.ok(
+    second.body.replaced_codes.includes(raw),
+    "router must be told to drop the expired pair:{code} shard",
+  );
+});
+
+test("startPairing lists the previous live code as replaced", async () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  const first = await json(await post(board, "/api/pair/start", id));
+  const raw = first.body.pairing_code.replace("-", "");
+  const second = await json(await post(board, "/api/pair/start", id));
+  assert.ok(second.body.replaced_codes.includes(raw));
+  assert.notEqual(second.body.pairing_code, first.body.pairing_code);
+});
+
+test("stale pair/start must not publish after a newer code is live", () => {
+  assert.equal(pairingCodeIsLive("ZZZZ-YYYY", "ZZZZ-YYYY"), true);
+  assert.equal(
+    pairingCodeIsLive("ZZZZ-YYYY", "AB7K-2Q9M"),
+    false,
+    "a superseded start must not resurrect its pair shard",
+  );
+  assert.equal(pairingCodeIsLive(null, "AB7K-2Q9M"), false);
+  const board = new Board(() => 1_000);
+  const id = identity();
+  board.startPairing({
+    deviceId: id.device_id,
+    deviceToken: id.device_token,
+    displayName: id.display_name,
+  });
+  const live = board.livePairing(id.device_id);
+  const stale = board.startPairing({
+    deviceId: id.device_id,
+    deviceToken: id.device_token,
+    displayName: id.display_name,
+  });
+  const newest = board.livePairing(id.device_id);
+  assert.equal(
+    pairingCodeIsLive(newest.pairing_code, live.pairing_code),
+    false,
+  );
+  assert.equal(
+    pairingCodeIsLive(newest.pairing_code, stale.pairing_code),
+    true,
+  );
 });

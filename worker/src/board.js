@@ -79,6 +79,12 @@ export function pairingUrl(code, chinese, origin) {
   return `${base}${path}?code=${formatPairingCode(code)}`;
 }
 
+export function pairingCodeIsLive(liveCode, candidateCode) {
+  const live = normalizePairingCode(liveCode);
+  const cand = normalizePairingCode(candidateCode);
+  return Boolean(live && cand && live === cand);
+}
+
 export function deviceIsOnline(lastSeenUnix, nowUnix) {
   if (nowUnix < lastSeenUnix) return true;
   return nowUnix - lastSeenUnix <= HEARTBEAT_TTL_SECS;
@@ -198,9 +204,42 @@ export class Board {
   }
 
   #purgeCodes(now) {
+    const expired = [];
     for (const [code, offer] of this.codes) {
-      if (offer.expires <= now) this.codes.delete(code);
+      if (offer.expires <= now) {
+        expired.push(code);
+        this.codes.delete(code);
+      }
     }
+    return expired;
+  }
+
+  livePairing(deviceId) {
+    const now = this.nowSecs();
+    for (const [code, offer] of this.codes) {
+      if (offer.deviceId === deviceId && offer.expires > now) {
+        return {
+          ok: true,
+          pairing_code: formatPairingCode(code),
+          status: 200,
+        };
+      }
+    }
+    return { ok: true, pairing_code: null, status: 200 };
+  }
+
+  peekOffer(rawCode) {
+    const now = this.nowSecs();
+    const code = normalizePairingCode(rawCode);
+    if (!code) {
+      return { ok: false, error: "unknown_code", status: 404 };
+    }
+    const offer = this.codes.get(code);
+    if (!offer || offer.expires <= now) {
+      if (code) this.codes.delete(code);
+      return { ok: false, error: "unknown_code", status: 404 };
+    }
+    return { ok: true, device_id: offer.deviceId, status: 200 };
   }
 
   startPairing({ deviceId, deviceToken, displayName, lang, origin }) {
@@ -228,8 +267,7 @@ export class Board {
     } else if (displayName) {
       existing.displayName = displayName;
     }
-    this.#purgeCodes(now);
-    const replacedCodes = [];
+    const replacedCodes = this.#purgeCodes(now);
     for (const [code, offer] of this.codes) {
       if (offer.deviceId === deviceId) {
         replacedCodes.push(code);
@@ -331,7 +369,7 @@ export class Board {
     );
     device.commands = (device.commands || []).filter((item) => !acks.has(item.id));
     const pending = [...device.commands];
-    this.#purgeCodes(now);
+    const expiredCodes = this.#purgeCodes(now);
     let pairing = null;
     const chinese = isChineseLang(lang);
     for (const [code, offer] of this.codes) {
@@ -348,6 +386,7 @@ export class Board {
       commands: pending,
       pairing_code: pairing?.pairing_code || null,
       pairing_url: pairing?.pairing_url || null,
+      expired_codes: expiredCodes,
       status: 200,
     };
   }
@@ -430,6 +469,10 @@ export async function handleInternal(board, request) {
     });
   } else if (path === "/internal/pair-drop") {
     result = board.dropOffer(body.pairing_code);
+  } else if (path === "/internal/pair-peek") {
+    result = board.peekOffer(body.pairing_code);
+  } else if (path === "/internal/live-pairing") {
+    result = board.livePairing(body.device_id);
   } else {
     return jsonResponse({ ok: false, error: "not_found" }, 404);
   }

@@ -31,10 +31,12 @@ pub fn apply_effects(engine: &Engine, platform: &mut dyn Platform, effects: &[Ef
     power_ok
 }
 
-pub fn dispatch(engine: &mut Engine, platform: &mut dyn Platform, input: Input) -> HostSnapshot {
-    let host = platform.snapshot();
-    let effects = engine.handle(input, &host);
-    if !apply_effects(engine, platform, &effects) && engine.is_active() {
+pub fn apply_effects_or_abort(
+    engine: &mut Engine,
+    platform: &mut dyn Platform,
+    effects: &[Effect],
+) {
+    if !apply_effects(engine, platform, effects) && engine.is_active() {
         let host = platform.snapshot();
         let stop = engine.handle(
             Input::Stop {
@@ -44,6 +46,12 @@ pub fn dispatch(engine: &mut Engine, platform: &mut dyn Platform, input: Input) 
         );
         apply_effects(engine, platform, &stop);
     }
+}
+
+pub fn dispatch(engine: &mut Engine, platform: &mut dyn Platform, input: Input) -> HostSnapshot {
+    let host = platform.snapshot();
+    let effects = engine.handle(input, &host);
+    apply_effects_or_abort(engine, platform, &effects);
     platform.snapshot()
 }
 
