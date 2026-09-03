@@ -234,6 +234,11 @@ fn worker_shards_per_device_not_one_global_board() {
         "CloudEvent::Pairing must carry expires_unix so stale codes are not displayed"
     );
     assert!(
+        board.contains("expires_unix: offer.expires")
+            || board.contains("expires_unix: pairing?.expires_unix"),
+        "heartbeat must return the stored offer deadline, not a fresh TTL"
+    );
+    assert!(
         board.contains("offline === true"),
         "quit heartbeats must mark the Mac offline before the TTL"
     );

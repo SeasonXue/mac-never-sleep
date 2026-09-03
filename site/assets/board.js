@@ -132,6 +132,27 @@
     }
   }
 
+  function commitClaimedDevice(storage, key, entry, locks) {
+    const apply = () => {
+      let devices = [];
+      try {
+        const raw = storage.getItem(key);
+        const parsed = raw ? JSON.parse(raw) : [];
+        devices = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        devices = [];
+      }
+      const next = withDevices(devices, entry);
+      storage.setItem(key, JSON.stringify(next));
+      return next;
+    };
+    const lock = locks || globalThis.navigator?.locks;
+    if (lock && typeof lock.request === "function") {
+      return lock.request(key, apply);
+    }
+    return Promise.resolve(apply());
+  }
+
   function canStoreClaim(storage, key, devices, entry) {
     return storageCanHold(storage, key, withDevices(devices, entry));
   }
@@ -473,12 +494,12 @@
         showError(claimFailureMessage(res, json, copy));
         return false;
       }
-      const devices = withDevices(loadDevices(), {
+      const entry = {
         device_id: json.device_id,
         device_token: json.device_token,
         display_name: boundDisplayName(json.display_name),
-      });
-      saveDevices(devices);
+      };
+      await commitClaimedDevice(localStorage, STORAGE_KEY, entry);
       input.value = "";
       clearPairingQuery();
       await refresh();

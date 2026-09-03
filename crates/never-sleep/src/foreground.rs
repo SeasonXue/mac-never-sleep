@@ -5,9 +5,10 @@ use std::time::Duration;
 use never_sleep_core::{DurationPref, Engine, Input, Lang, StopReason, HEARTBEAT_MS};
 
 use crate::apply::{dispatch, stop_for_quit};
+use crate::ipc::try_send;
 use crate::persist::load_config;
 use crate::platform::Platform;
-use crate::protocol;
+use crate::protocol::{self, IpcRequest};
 
 pub fn run_foreground(
     platform: &mut dyn Platform,
@@ -30,7 +31,8 @@ pub fn run_foreground(
         r.store(false, Ordering::SeqCst);
     });
 
-    let cloud = if crate::cloud::cloud_enabled() {
+    let cloud_ok = crate::cloud::cloud_enabled();
+    let mut cloud = if cloud_ok && try_send(&IpcRequest::Ping).is_none() {
         match crate::cloud::load_or_create_identity() {
             Ok(identity) => Some(crate::cloud::spawn_reporter(
                 identity,
@@ -52,6 +54,15 @@ pub fn run_foreground(
     println!("{}", t.foreground_status_hint());
 
     while running.load(Ordering::SeqCst) && engine.is_active() {
+        if cloud.is_some() && try_send(&IpcRequest::Ping).is_some() {
+            if let Some(handle) = cloud.take() {
+                crate::cloud::publish_and_flush(
+                    handle,
+                    engine.json_status(&platform.snapshot()),
+                    engine.config.lang(),
+                );
+            }
+        }
         dispatch(&mut engine, platform, Input::Tick);
         if let Some(handle) = cloud.as_ref() {
             crate::cloud::sync_cloud(&mut engine, platform, handle, &mut pairing);
@@ -102,6 +113,24 @@ mod tests {
             Some(DurationPref::Hours { hours: 1 })
         );
         assert!(parse_optional_duration(Some("0h"), Lang::En).is_err());
+    }
+
+    #[test]
+    fn foreground_does_not_spawn_a_second_cloud_reporter() {
+        let src = include_str!("foreground.rs");
+        let start = src.find("pub fn run_foreground").expect("run_foreground");
+        let body = src[start..]
+            .split("pub fn parse_optional_duration")
+            .next()
+            .unwrap();
+        assert!(
+            body.contains("try_send") && body.contains("IpcRequest::Ping"),
+            "foreground must not spawn a reporter while the menu process is already serving IPC"
+        );
+        assert!(
+            body.contains("publish_and_flush") && body.contains("take()"),
+            "a later menu launch must stop the foreground reporter so only one process heartbeats"
+        );
     }
 
     #[test]

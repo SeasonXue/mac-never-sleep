@@ -833,6 +833,7 @@ export class Board {
         pairing = {
           pairing_code: formatPairingCode(code),
           pairing_url: pairingUrl(code, chinese, origin),
+          expires_unix: offer.expires,
         };
         break;
       }
@@ -842,6 +843,7 @@ export class Board {
       commands: pending,
       pairing_code: pairing?.pairing_code || null,
       pairing_url: pairing?.pairing_url || null,
+      expires_unix: pairing?.expires_unix || null,
       expired_codes: expiredCodes,
       status: 200,
     };

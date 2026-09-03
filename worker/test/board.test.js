@@ -1577,6 +1577,72 @@ test("claim reservation covers JSON-escaped and emoji display names near quota",
   );
 });
 
+test("heartbeat returns the stored pairing expiry", async () => {
+  let now = 1_000;
+  const board = new Board(() => now);
+  const id = identity();
+  const started = await json(await post(board, "/api/pair/start", id));
+  assert.equal(started.body.expires_unix, 1_000 + PAIRING_TTL_SECS);
+  now = 1_200;
+  const beat = await json(
+    await post(board, "/api/heartbeat", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      status: sampleStatus(),
+    }),
+  );
+  assert.equal(beat.status, 200);
+  assert.equal(
+    beat.body.expires_unix,
+    1_000 + PAIRING_TTL_SECS,
+    "heartbeat must not mint a fresh TTL for a still-live offer",
+  );
+});
+
+test("claim commits merge under a cross-tab lock", async () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function withDevices");
+  const end = src.indexOf("\n  async function post(");
+  const { commitClaimedDevice } = new Function(
+    `const LIST_MAX_DEVICES = 32;\nconst MAX_DISPLAY_NAME_CHARS = 128;\n${src.slice(start, end)}\nreturn { commitClaimedDevice };`,
+  )();
+  assert.equal(typeof commitClaimedDevice, "function");
+
+  const STORAGE_KEY = "never-sleep-devices";
+  const storage = quotaStorage(1_000_000);
+  storage.setItem(STORAGE_KEY, "[]");
+  let chain = Promise.resolve();
+  const locks = {
+    request(_name, fn) {
+      const run = chain.then(() => fn());
+      chain = run.catch(() => {});
+      return run;
+    },
+  };
+  const a = {
+    device_id: "a".repeat(32),
+    device_token: "a".repeat(64),
+    display_name: "A",
+  };
+  const b = {
+    device_id: "b".repeat(32),
+    device_token: "b".repeat(64),
+    display_name: "B",
+  };
+  await Promise.all([
+    commitClaimedDevice(storage, STORAGE_KEY, a, locks),
+    commitClaimedDevice(storage, STORAGE_KEY, b, locks),
+  ]);
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.deepEqual(
+    stored.map((d) => d.device_id).sort(),
+    [a.device_id, b.device_id].sort(),
+    "the last claim must not discard the other tab's one-time token",
+  );
+  assert.match(src, /await commitClaimedDevice\(localStorage/);
+  assert.match(src, /navigator\?\.locks/);
+});
+
 test("capacity probe treats blocked localStorage reads as a miss", () => {
   const { src } = boardClientHelpers();
   const start = src.indexOf("function withDevices");

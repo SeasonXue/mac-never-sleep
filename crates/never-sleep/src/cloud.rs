@@ -230,13 +230,8 @@ fn fill_random(buf: &mut [u8]) {
 
 pub fn load_or_create_identity() -> io::Result<CloudIdentity> {
     let path = cloud_identity_path();
-    if let Ok(text) = fs::read_to_string(&path) {
-        if let Ok(id) = toml::from_str::<CloudIdentity>(&text) {
-            if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
-                restrict_owner_only(&path)?;
-                return Ok(id);
-            }
-        }
+    if let Some(id) = read_complete_identity(&path)? {
+        return Ok(id);
     }
     let mut id_bytes = [0u8; 16];
     let mut token_bytes = [0u8; 32];
@@ -246,17 +241,46 @@ pub fn load_or_create_identity() -> io::Result<CloudIdentity> {
     match save_identity(&identity) {
         Ok(()) => Ok(identity),
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-            let text = fs::read_to_string(&path)?;
-            let id = toml::from_str::<CloudIdentity>(&text)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
-                restrict_owner_only(&path)?;
+            if let Some(id) = wait_for_complete_identity(&path)? {
                 return Ok(id);
             }
-            Err(err)
+            recover_stranded_identity(&path, identity)
         }
         Err(err) => Err(err),
     }
+}
+
+fn read_complete_identity(path: &Path) -> io::Result<Option<CloudIdentity>> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    if let Ok(id) = toml::from_str::<CloudIdentity>(&text) {
+        if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
+            restrict_owner_only(path)?;
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+fn wait_for_complete_identity(path: &Path) -> io::Result<Option<CloudIdentity>> {
+    for _ in 0..40 {
+        if let Some(id) = read_complete_identity(path)? {
+            return Ok(Some(id));
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    Ok(None)
+}
+
+fn recover_stranded_identity(path: &Path, identity: CloudIdentity) -> io::Result<CloudIdentity> {
+    if fs::remove_file(path).is_err() {
+        // another process may have already replaced the empty file
+    }
+    save_identity(&identity)?;
+    Ok(identity)
 }
 
 fn restrict_owner_only(path: &Path) -> io::Result<()> {
@@ -266,13 +290,30 @@ fn restrict_owner_only(path: &Path) -> io::Result<()> {
 }
 
 fn write_owner_only(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(bytes)?;
-    restrict_owner_only(path)
+    let tmp = path.with_file_name(format!(
+        "{}.tmp.{}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("cloud.toml"),
+        std::process::id()
+    ));
+    {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    restrict_owner_only(&tmp)?;
+    let linked = fs::hard_link(&tmp, path);
+    let _ = fs::remove_file(&tmp);
+    match linked {
+        Ok(()) => restrict_owner_only(path),
+        Err(err) => Err(err),
+    }
 }
 
 fn save_identity(identity: &CloudIdentity) -> io::Result<()> {
@@ -309,6 +350,8 @@ struct PairStartResponse {
     pairing_code: Option<String>,
     #[serde(default)]
     pairing_url: Option<String>,
+    #[serde(default)]
+    expires_unix: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -318,6 +361,8 @@ struct HeartbeatResponse {
     pairing_code: Option<String>,
     #[serde(default)]
     pairing_url: Option<String>,
+    #[serde(default)]
+    expires_unix: Option<u64>,
     #[serde(default)]
     commands: Vec<RemoteCommand>,
 }
@@ -350,6 +395,7 @@ pub fn parse_heartbeat_response(raw: &str) -> Result<HeartbeatOutcome, String> {
     Ok(HeartbeatOutcome {
         pairing_code: parsed.pairing_code,
         pairing_url: parsed.pairing_url,
+        expires_unix: parsed.expires_unix,
         commands: parsed
             .commands
             .into_iter()
@@ -362,6 +408,7 @@ pub fn parse_heartbeat_response(raw: &str) -> Result<HeartbeatOutcome, String> {
 pub struct HeartbeatOutcome {
     pub pairing_code: Option<String>,
     pub pairing_url: Option<String>,
+    pub expires_unix: Option<u64>,
     pub commands: Vec<RemoteCommand>,
 }
 
@@ -375,10 +422,15 @@ impl HeartbeatOutcome {
     }
 }
 
-pub fn parse_pair_start_response(raw: &str) -> Result<(String, String), String> {
+pub fn parse_pair_start_response(raw: &str) -> Result<(String, String, u64), String> {
     let parsed: PairStartResponse = serde_json::from_str(raw).map_err(|e| e.to_string())?;
     match (parsed.ok, parsed.pairing_code, parsed.pairing_url) {
-        (true, Some(code), Some(url)) => Ok((code, url)),
+        (true, Some(code), Some(url)) => {
+            let expires_unix = parsed
+                .expires_unix
+                .unwrap_or_else(|| unix_now_secs() + PAIRING_TTL_SECS);
+            Ok((code, url, expires_unix))
+        }
         _ => Err("pair start rejected".into()),
     }
 }
@@ -545,9 +597,8 @@ pub(crate) fn reporter_tick(
         .expect("pair json");
         match transport.post_json("/api/pair/start", &body) {
             Ok(CloudPost::Ok(raw)) => {
-                if let Ok((code, url)) = parse_pair_start_response(&raw) {
+                if let Ok((code, url, expires_unix)) = parse_pair_start_response(&raw) {
                     gate.on_pair_start_ok();
-                    let expires_unix = unix_now_secs() + PAIRING_TTL_SECS;
                     let _ = event_tx.send(CloudEvent::Pairing {
                         code,
                         url,
@@ -590,7 +641,9 @@ fn emit_outcome(
         let _ = event_tx.send(CloudEvent::PairingCleared);
     } else if let (Some(code), Some(url)) = (outcome.pairing_code, outcome.pairing_url) {
         gate.on_pair_start_ok();
-        let expires_unix = unix_now_secs() + PAIRING_TTL_SECS;
+        let expires_unix = outcome
+            .expires_unix
+            .unwrap_or_else(|| unix_now_secs() + PAIRING_TTL_SECS);
         let _ = event_tx.send(CloudEvent::Pairing {
             code,
             url,
@@ -726,6 +779,66 @@ mod tests {
     }
 
     #[test]
+    fn heartbeat_pairing_keeps_the_workers_expires_unix() {
+        let outcome = parse_heartbeat_response(
+            r#"{"ok":true,"pairing_code":"AB7K-2Q9M","pairing_url":"https://x/board/?code=AB7K-2Q9M","expires_unix":1500,"commands":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            outcome.expires_unix,
+            Some(1500),
+            "heartbeat must surface the Worker's stored offer deadline"
+        );
+        let transport = ScriptedTransport {
+            pair: Mutex::new(vec![]),
+            beat: Mutex::new(vec![Ok(CloudPost::Ok(
+                r#"{"ok":true,"pairing_code":"AB7K-2Q9M","pairing_url":"https://x/board/?code=AB7K-2Q9M","expires_unix":1500,"commands":[]}"#
+                    .into(),
+            ))]),
+            pair_calls: Mutex::new(0),
+            beat_calls: Mutex::new(0),
+        };
+        let id = CloudIdentity {
+            device_id: "ab".repeat(16),
+            device_token: "cd".repeat(32),
+        };
+        let mut gate = ReporterGate { registered: true };
+        let mut inbox = CommandInbox::default();
+        let (event_tx, event_rx) = mpsc::channel();
+        reporter_tick(
+            &mut gate,
+            &mut inbox,
+            &transport,
+            &id,
+            "Studio",
+            "en",
+            &sample_status(),
+            &event_tx,
+            false,
+        );
+        match event_rx.try_recv().unwrap() {
+            CloudEvent::Pairing { expires_unix, .. } => {
+                assert_eq!(
+                    expires_unix, 1500,
+                    "do not replace the Worker deadline with now+PAIRING_TTL_SECS"
+                );
+            }
+            other => panic!("expected pairing event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pair_start_keeps_the_workers_expires_unix() {
+        let (code, url, expires) = parse_pair_start_response(
+            r#"{"ok":true,"pairing_code":"AB7K-2Q9M","pairing_url":"https://x/board/?code=AB7K-2Q9M","expires_unix":4242}"#,
+        )
+        .unwrap();
+        assert_eq!(code, "AB7K-2Q9M");
+        assert!(url.contains("/board/"));
+        assert_eq!(expires, 4242);
+    }
+
+    #[test]
     fn write_owner_only_create_new_leaves_winner_intact() {
         let _dir = TestDataDir::install();
         let path = cloud_identity_path();
@@ -745,8 +858,8 @@ mod tests {
     fn load_or_create_identity_reloads_winner_after_create_race() {
         let src = include_str!("cloud.rs");
         assert!(
-            src.contains("create_new(true)"),
-            "cloud.toml must be created atomically so two first-run processes cannot truncate each other"
+            src.contains("hard_link"),
+            "cloud.toml must appear only after the identity bytes are fully written"
         );
         let load = src
             .split("pub fn load_or_create_identity")
@@ -759,6 +872,19 @@ mod tests {
             load.contains("AlreadyExists"),
             "the losing process must reload the winner instead of advertising a different identity"
         );
+    }
+
+    #[test]
+    fn load_or_create_identity_recovers_an_empty_stranded_file() {
+        let _dir = TestDataDir::install();
+        let path = cloud_identity_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"").unwrap();
+        let id =
+            load_or_create_identity().expect("empty cloud.toml must not disable cloud forever");
+        assert_eq!(id.device_id.len(), 32);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("device_token"));
     }
 
     #[test]
@@ -836,7 +962,8 @@ mod tests {
             .next()
             .unwrap();
         assert!(
-            load.contains("restrict_owner_only(&path)?"),
+            load.contains("restrict_owner_only(&path)?")
+                || load.contains("restrict_owner_only(path)?"),
             "chmod failure must fail identity load, not advertise a world-readable token"
         );
         assert!(
