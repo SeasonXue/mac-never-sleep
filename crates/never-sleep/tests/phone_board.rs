@@ -162,8 +162,22 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(index.contains("bestEffortCleanup"));
     assert!(board.contains("alarmNeedsUpdate"));
     assert!(index.contains("rate:pair-start"));
+    assert!(index.contains("rate:list"));
+    assert!(index.contains("internal/list-rate"));
+    let list_rate_at = index.find("internal/list-rate").expect("list-rate gate");
+    let list_fanout_at = index.find("await collectListParts").expect("list fan-out");
+    assert!(
+        list_rate_at < list_fanout_at,
+        "do not fan out /api/list before the rate gate"
+    );
     assert!(index.contains("clientIp"));
     assert!(board.contains("takePairStartSlot"));
+    assert!(board.contains("takeListSlot"));
+    assert!(
+        board.contains("reserved = await reserve(code)")
+            && board.contains("if (release) await release(code);\n      continue;"),
+        "setAlarm rejection after pair-offer persist must drop the shard"
+    );
     assert!(board.contains("rate_limited"));
     assert!(board.contains("commitAlarmUnix"));
     assert!(board.contains("commitPersistedAlarm"));

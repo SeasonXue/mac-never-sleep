@@ -119,6 +119,10 @@ export const PAIR_START_IP_LIMIT = 8;
 export const PAIR_START_IP_WINDOW_SECS = 60;
 export const PAIR_START_GLOBAL_LIMIT = 60;
 export const PAIR_START_GLOBAL_WINDOW_SECS = 60;
+export const LIST_IP_LIMIT = 40;
+export const LIST_IP_WINDOW_SECS = 60;
+export const LIST_GLOBAL_LIMIT = 240;
+export const LIST_GLOBAL_WINDOW_SECS = 60;
 const PAIR_START_IP_MAP_MAX = 2048;
 
 function prunePairStartHits(hits, now, windowSecs) {
@@ -162,6 +166,15 @@ export function takePairStartSlot(state, ip, nowSecs, limits = {}) {
     status: 200,
     state: { global: [...global, nowSecs], ips },
   };
+}
+
+export function takeListSlot(state, ip, nowSecs, limits = {}) {
+  return takePairStartSlot(state, ip, nowSecs, {
+    ipLimit: limits.ipLimit ?? LIST_IP_LIMIT,
+    ipWindowSecs: limits.ipWindowSecs ?? LIST_IP_WINDOW_SECS,
+    globalLimit: limits.globalLimit ?? LIST_GLOBAL_LIMIT,
+    globalWindowSecs: limits.globalWindowSecs ?? LIST_GLOBAL_WINDOW_SECS,
+  });
 }
 
 export function clientIp(request) {
@@ -230,7 +243,7 @@ export function boardHasState(data) {
   if (Object.keys(devices).length > 0 || Object.keys(codes).length > 0) {
     return true;
   }
-  return pairStartHasHits(data.pairStart);
+  return pairStartHasHits(data.pairStart) || pairStartHasHits(data.listRate);
 }
 
 export function persistBoardAction(previous, next) {
@@ -329,7 +342,13 @@ export async function publishReservedPairing({
 }) {
   for (let i = 0; i < maxAttempts; i++) {
     const code = generateCode();
-    const reserved = await reserve(code);
+    let reserved;
+    try {
+      reserved = await reserve(code);
+    } catch {
+      if (release) await release(code);
+      continue;
+    }
     if (!reserved?.ok) continue;
     const started = await startDevice(code);
     if (started?.ok) {
@@ -423,6 +442,7 @@ export class Board {
     /** @type {Map<string, { deviceId: string, expires: number, token?: string, displayName?: string }>} */
     this.codes = new Map();
     this.pairStart = { global: [], ips: {} };
+    this.listRate = { global: [], ips: {} };
   }
 
   static fromJSON(data) {
@@ -445,6 +465,17 @@ export class Board {
             : {},
       };
     }
+    if (data.listRate && typeof data.listRate === "object") {
+      board.listRate = {
+        global: Array.isArray(data.listRate.global)
+          ? [...data.listRate.global]
+          : [],
+        ips:
+          data.listRate.ips && typeof data.listRate.ips === "object"
+            ? structuredClone(data.listRate.ips)
+            : {},
+      };
+    }
     return board;
   }
 
@@ -457,14 +488,29 @@ export class Board {
     for (const [code, offer] of this.codes) {
       codes[code] = structuredClone(offer);
     }
-    return pairStartHasHits(this.pairStart)
-      ? { devices, codes, pairStart: structuredClone(this.pairStart) }
-      : { devices, codes };
+    const out = { devices, codes };
+    if (pairStartHasHits(this.pairStart)) {
+      out.pairStart = structuredClone(this.pairStart);
+    }
+    if (pairStartHasHits(this.listRate)) {
+      out.listRate = structuredClone(this.listRate);
+    }
+    return out;
   }
 
   takePairStart(ip) {
     const result = takePairStartSlot(this.pairStart, ip, this.nowSecs());
     this.pairStart = result.state;
+    return {
+      ok: result.ok,
+      error: result.error,
+      status: result.status,
+    };
+  }
+
+  takeList(ip) {
+    const result = takeListSlot(this.listRate, ip, this.nowSecs());
+    this.listRate = result.state;
     return {
       ok: result.ok,
       error: result.error,
@@ -820,6 +866,8 @@ export async function handleInternal(board, request) {
     result = board.livePairing(body.device_id);
   } else if (path === "/internal/pair-rate") {
     result = board.takePairStart(body.ip);
+  } else if (path === "/internal/list-rate") {
+    result = board.takeList(body.ip);
   } else {
     return jsonResponse({ ok: false, error: "not_found" }, 404);
   }

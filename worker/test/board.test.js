@@ -31,7 +31,10 @@ import {
   MAX_DISPLAY_NAME_CHARS,
   PAIR_START_GLOBAL_LIMIT,
   PAIR_START_IP_LIMIT,
+  LIST_IP_LIMIT,
+  LIST_GLOBAL_LIMIT,
   takePairStartSlot,
+  takeListSlot,
 } from "../src/board.js";
 
 function sampleStatus(overrides = {}) {
@@ -607,6 +610,15 @@ test("empty lookup boards are not persisted", () => {
     }),
     "put",
     "pair/start rate-limit hits must persist",
+  );
+  assert.equal(
+    persistBoardAction(null, {
+      devices: {},
+      codes: {},
+      listRate: { global: [1_000], ips: { "1.1.1.1": [1_000] } },
+    }),
+    "put",
+    "list rate-limit hits must persist",
   );
 });
 
@@ -1513,6 +1525,71 @@ test("pair/start is rate-limited before shards are reserved", () => {
     rateAt >= 0 && rateAt < reserveAt,
     "do not allocate pair/device shards before the rate gate",
   );
+});
+
+test("list fan-out is rate-limited before selecting shards", () => {
+  let state = { global: [], ips: {} };
+  for (let i = 0; i < LIST_IP_LIMIT; i += 1) {
+    const allowed = takeListSlot(state, "203.0.113.8", 3_000);
+    assert.equal(allowed.ok, true);
+    state = allowed.state;
+  }
+  const denied = takeListSlot(state, "203.0.113.8", 3_000);
+  assert.equal(denied.ok, false);
+  assert.equal(denied.status, 429);
+
+  let flooded = { global: [], ips: {} };
+  for (let i = 0; i < LIST_GLOBAL_LIMIT; i += 1) {
+    const allowed = takeListSlot(flooded, `198.51.100.${i % 250}`, 4_000, {
+      ipLimit: LIST_GLOBAL_LIMIT,
+      globalLimit: LIST_GLOBAL_LIMIT,
+    });
+    assert.equal(allowed.ok, true);
+    flooded = allowed.state;
+  }
+  const globalDenied = takeListSlot(flooded, "203.0.113.9", 4_000, {
+    ipLimit: LIST_GLOBAL_LIMIT,
+    globalLimit: LIST_GLOBAL_LIMIT,
+  });
+  assert.equal(
+    globalDenied.ok,
+    false,
+    "repeating 32-id lists must not create unbounded shard traffic",
+  );
+
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  const rateAt = index.indexOf("internal/list-rate");
+  const fanoutAt = index.indexOf("await collectListParts");
+  assert.ok(
+    rateAt >= 0 && rateAt < fanoutAt,
+    "do not fan out /api/list before the rate gate",
+  );
+});
+
+test("alarm failure during pair reservation releases the shard", async () => {
+  const released = [];
+  const result = await publishReservedPairing({
+    generateCode: () => (released.length ? "BBBB2222" : "AAAA1111"),
+    reserve: async (code) => {
+      if (code === "AAAA1111") throw new Error("transient setAlarm");
+      return { ok: true };
+    },
+    startDevice: async (code) => ({
+      ok: true,
+      pairing_code: code,
+      status: 200,
+    }),
+    release: async (code) => {
+      released.push(code);
+    },
+  });
+  assert.deepEqual(
+    released,
+    ["AAAA1111"],
+    "a persisted pair shard without an alarm must be dropped",
+  );
+  assert.equal(result.pairing_code, "BBBB2222");
 });
 
 test("pair start still returns the new code when replaced-shard cleanup fails", () => {
