@@ -69,6 +69,15 @@ impl Lang {
     pub fn is_chinese(self) -> bool {
         matches!(self, Self::Zh)
     }
+
+    /// Stable cloud/heartbeat tag (`en` / `zh`). JSON stays English.
+    pub fn cloud_tag(self) -> &'static str {
+        if self.is_chinese() {
+            "zh"
+        } else {
+            "en"
+        }
+    }
 }
 
 /// Translator for a concrete UI language.
@@ -842,6 +851,8 @@ mod tests {
         assert_eq!(Lang::parse_opt("zh_CN"), Some(Lang::Zh));
         assert_eq!(Lang::parse_opt("fr_FR"), None);
         assert_eq!(Lang::parse_opt("C"), None);
+        assert_eq!(Lang::En.cloud_tag(), "en");
+        assert_eq!(Lang::Zh.cloud_tag(), "zh");
     }
 
     #[test]

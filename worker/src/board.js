@@ -7,6 +7,7 @@ export const HEARTBEAT_TTL_SECS = 15;
 export const PAIRING_TTL_SECS = 10 * 60;
 export const PAIRING_CODE_LEN = 8;
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const PUBLIC_SITE_ORIGIN = "https://xyz-ai.app/never-sleep";
 
 export function tokensMatch(left, right) {
   if (typeof left !== "string" || typeof right !== "string") return false;
@@ -39,14 +40,96 @@ export function formatPairingCode(code) {
   return code;
 }
 
-export function pairingUrl(code, chinese) {
+export function isChineseLang(lang) {
+  if (typeof lang !== "string") return false;
+  const primary = lang
+    .trim()
+    .toLowerCase()
+    .replaceAll("_", "-")
+    .split(/[-.@]/)[0];
+  return (
+    primary === "zh" ||
+    primary === "chi" ||
+    primary === "chinese" ||
+    primary === "cn"
+  );
+}
+
+export function publicSiteOrigin(requestUrl, env = {}) {
+  const fromEnv = env.PUBLIC_SITE_ORIGIN || env.NEVER_SLEEP_CLOUD_URL;
+  if (typeof fromEnv === "string" && fromEnv.trim()) {
+    return fromEnv.trim().replace(/\/+$/, "");
+  }
+  let url;
+  try {
+    url = new URL(requestUrl);
+  } catch {
+    return PUBLIC_SITE_ORIGIN;
+  }
+  const host = url.hostname;
+  if (host === "xyz-ai.app" || host === "www.xyz-ai.app") {
+    return `${url.protocol}//${host}/never-sleep`;
+  }
+  return `${url.protocol}//${url.host}`;
+}
+
+export function pairingUrl(code, chinese, origin) {
+  const base = (origin || PUBLIC_SITE_ORIGIN).replace(/\/+$/, "");
   const path = chinese ? "/zh/board/" : "/board/";
-  return `https://xyz-ai.app/never-sleep${path}?code=${formatPairingCode(code)}`;
+  return `${base}${path}?code=${formatPairingCode(code)}`;
 }
 
 export function deviceIsOnline(lastSeenUnix, nowUnix) {
   if (nowUnix < lastSeenUnix) return true;
   return nowUnix - lastSeenUnix <= HEARTBEAT_TTL_SECS;
+}
+
+export function shardName(path, body) {
+  const p = (path || "").replace(/\/+$/, "") || "/";
+  if (p === "/api/pair/claim") {
+    const code = normalizePairingCode(body?.pairing_code);
+    return code ? `pair:${code}` : null;
+  }
+  if (p === "/api/list") return null;
+  const id = body?.device_id;
+  if (typeof id === "string" && id.length >= 16) {
+    return `device:${id}`;
+  }
+  return null;
+}
+
+function asBool(value) {
+  return value === true;
+}
+
+function asInt(value, min, max) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const n = Math.round(value);
+  if (n < min || n > max) return null;
+  return n;
+}
+
+function asStopReasonCode(value) {
+  if (typeof value !== "string") return null;
+  return /^[a-z][a-z0-9_]{0,31}$/.test(value) ? value : null;
+}
+
+export function sanitizeStatus(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    active: asBool(src.active),
+    display: src.display === "asleep" ? "asleep" : "awake",
+    lid: src.lid === "closed" ? "closed" : "open",
+    on_ac: asBool(src.on_ac),
+    battery: asInt(src.battery, 0, 100),
+    remaining_secs: asInt(src.remaining_secs, 0, 7 * 24 * 3600),
+    user_present: asBool(src.user_present),
+    elapsed_secs: asInt(src.elapsed_secs, 0, 7 * 24 * 3600),
+    stop_reason: null,
+    stop_reason_code: asStopReasonCode(src.stop_reason_code),
+    screen_off_enabled: asBool(src.screen_off_enabled),
+    lid_awake_enabled: asBool(src.lid_awake_enabled),
+  };
 }
 
 function randomHex(bytes) {
@@ -68,7 +151,7 @@ function pairingCodeFromRandom() {
   return out;
 }
 
-function jsonResponse(body, status = 200) {
+export function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
@@ -76,20 +159,14 @@ function jsonResponse(body, status = 200) {
 }
 
 function emptyStatus() {
-  return {
+  return sanitizeStatus({
     active: false,
     display: "awake",
     lid: "open",
     on_ac: true,
-    battery: null,
-    remaining_secs: null,
-    user_present: false,
-    elapsed_secs: null,
-    stop_reason: null,
-    stop_reason_code: null,
     screen_off_enabled: true,
     lid_awake_enabled: true,
-  };
+  });
 }
 
 export class Board {
@@ -97,7 +174,7 @@ export class Board {
     this.nowSecs = nowSecs;
     /** @type {Map<string, object>} */
     this.devices = new Map();
-    /** @type {Map<string, { deviceId: string, expires: number }>} */
+    /** @type {Map<string, { deviceId: string, expires: number, token?: string, displayName?: string }>} */
     this.codes = new Map();
   }
 
@@ -126,7 +203,7 @@ export class Board {
     }
   }
 
-  startPairing({ deviceId, deviceToken, displayName }) {
+  startPairing({ deviceId, deviceToken, displayName, lang, origin }) {
     const now = this.nowSecs();
     if (
       typeof deviceId !== "string" ||
@@ -152,18 +229,53 @@ export class Board {
       existing.displayName = displayName;
     }
     this.#purgeCodes(now);
+    const replacedCodes = [];
     for (const [code, offer] of this.codes) {
-      if (offer.deviceId === deviceId) this.codes.delete(code);
+      if (offer.deviceId === deviceId) {
+        replacedCodes.push(code);
+        this.codes.delete(code);
+      }
     }
     const code = pairingCodeFromRandom();
-    this.codes.set(code, { deviceId, expires: now + PAIRING_TTL_SECS });
+    this.codes.set(code, {
+      deviceId,
+      token: deviceToken,
+      displayName: displayName || existing?.displayName || "Mac",
+      expires: now + PAIRING_TTL_SECS,
+    });
+    const chinese = isChineseLang(lang);
     return {
       ok: true,
       pairing_code: formatPairingCode(code),
-      pairing_url: pairingUrl(code, false),
+      pairing_url: pairingUrl(code, chinese, origin),
       expires_unix: now + PAIRING_TTL_SECS,
+      replaced_codes: replacedCodes,
       status: 200,
     };
+  }
+
+  rememberOffer({ pairingCode, deviceId, deviceToken, displayName, expiresUnix }) {
+    const code = normalizePairingCode(pairingCode);
+    if (
+      !code ||
+      typeof deviceId !== "string" ||
+      typeof deviceToken !== "string"
+    ) {
+      return { ok: false, error: "bad_offer", status: 400 };
+    }
+    this.codes.set(code, {
+      deviceId,
+      token: deviceToken,
+      displayName: displayName || "Mac",
+      expires: expiresUnix || this.nowSecs() + PAIRING_TTL_SECS,
+    });
+    return { ok: true, status: 200 };
+  }
+
+  dropOffer(rawCode) {
+    const code = normalizePairingCode(rawCode);
+    if (code) this.codes.delete(code);
+    return { ok: true, status: 200 };
   }
 
   claim(rawCode) {
@@ -177,37 +289,56 @@ export class Board {
     if (!offer) {
       return { ok: false, error: "unknown_code", status: 404 };
     }
+    this.codes.delete(code);
     const device = this.devices.get(offer.deviceId);
-    if (!device) {
+    const token = offer.token || device?.token;
+    const displayName = offer.displayName || device?.displayName || "Mac";
+    if (!token) {
       return { ok: false, error: "unknown_code", status: 404 };
     }
     return {
       ok: true,
       device_id: offer.deviceId,
-      device_token: device.token,
-      display_name: device.displayName,
+      device_token: token,
+      display_name: displayName,
       status: 200,
     };
   }
 
-  heartbeat({ deviceId, deviceToken, displayName, status }) {
+  heartbeat({
+    deviceId,
+    deviceToken,
+    displayName,
+    status,
+    ackCommandIds,
+    lang,
+    origin,
+  }) {
     const now = this.nowSecs();
     const device = this.devices.get(deviceId);
     if (!device || !tokensMatch(device.token, deviceToken)) {
       return { ok: false, error: "unauthorized", status: 401 };
     }
     if (displayName) device.displayName = displayName;
-    if (status && typeof status === "object") device.status = status;
+    if (status && typeof status === "object") {
+      device.status = sanitizeStatus(status);
+    }
     device.lastSeen = now;
-    const pending = device.commands || [];
-    device.commands = [];
+    const acks = new Set(
+      Array.isArray(ackCommandIds)
+        ? ackCommandIds.filter((id) => typeof id === "string")
+        : [],
+    );
+    device.commands = (device.commands || []).filter((item) => !acks.has(item.id));
+    const pending = [...device.commands];
     this.#purgeCodes(now);
     let pairing = null;
+    const chinese = isChineseLang(lang);
     for (const [code, offer] of this.codes) {
       if (offer.deviceId === deviceId) {
         pairing = {
           pairing_code: formatPairingCode(code),
-          pairing_url: pairingUrl(code, false),
+          pairing_url: pairingUrl(code, chinese, origin),
         };
         break;
       }
@@ -241,7 +372,7 @@ export class Board {
         display_name: device.displayName,
         online,
         last_seen_unix: device.lastSeen,
-        ...device.status,
+        ...sanitizeStatus(device.status),
       });
     }
     return { ok: true, devices, status: 200 };
@@ -272,7 +403,41 @@ export class Board {
   }
 }
 
-export async function handleApi(board, request) {
+function requestOrigin(request, env = {}) {
+  return (
+    request.headers.get("x-public-origin") ||
+    publicSiteOrigin(request.url, env)
+  );
+}
+
+export async function handleInternal(board, request) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  let body = {};
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+  let result;
+  if (path === "/internal/pair-offer") {
+    result = board.rememberOffer({
+      pairingCode: body.pairing_code,
+      deviceId: body.device_id,
+      deviceToken: body.device_token,
+      displayName: body.display_name,
+      expiresUnix: body.expires_unix,
+    });
+  } else if (path === "/internal/pair-drop") {
+    result = board.dropOffer(body.pairing_code);
+  } else {
+    return jsonResponse({ ok: false, error: "not_found" }, 404);
+  }
+  const { status, ...payload } = result;
+  return jsonResponse(payload, status);
+}
+
+export async function handleApi(board, request, env = {}) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
   if (request.method !== "POST") {
@@ -284,6 +449,7 @@ export async function handleApi(board, request) {
   } catch {
     body = {};
   }
+  const origin = requestOrigin(request, env);
   let result;
   switch (path) {
     case "/api/pair/start":
@@ -291,6 +457,8 @@ export async function handleApi(board, request) {
         deviceId: body.device_id,
         deviceToken: body.device_token,
         displayName: body.display_name,
+        lang: body.lang,
+        origin,
       });
       break;
     case "/api/pair/claim":
@@ -302,6 +470,9 @@ export async function handleApi(board, request) {
         deviceToken: body.device_token,
         displayName: body.display_name,
         status: body.status,
+        ackCommandIds: body.ack_command_ids,
+        lang: body.lang,
+        origin,
       });
       break;
     case "/api/list":

@@ -14,6 +14,7 @@ pub enum IpcRequest {
     Status,
     Quit,
     Ping,
+    Pair,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +26,12 @@ pub struct IpcResponse {
     pub status: Option<JsonStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pong: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 impl IpcResponse {
@@ -34,6 +41,9 @@ impl IpcResponse {
             error: None,
             status: Some(status),
             pong: None,
+            pairing_code: None,
+            pairing_url: None,
+            device_id: None,
         }
     }
 
@@ -44,6 +54,9 @@ impl IpcResponse {
             error: Some(msg.into()),
             status: None,
             pong: None,
+            pairing_code: None,
+            pairing_url: None,
+            device_id: None,
         }
     }
 
@@ -54,6 +67,22 @@ impl IpcResponse {
             error: None,
             status: None,
             pong: Some(true),
+            pairing_code: None,
+            pairing_url: None,
+            device_id: None,
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn ok_pairing(code: String, url: String, device_id: Option<String>) -> Self {
+        Self {
+            ok: true,
+            error: None,
+            status: None,
+            pong: None,
+            pairing_code: Some(code),
+            pairing_url: Some(url),
+            device_id,
         }
     }
 }
@@ -101,6 +130,7 @@ mod tests {
             (IpcRequest::Status, r#"{"cmd":"status"}"#),
             (IpcRequest::Quit, r#"{"cmd":"quit"}"#),
             (IpcRequest::Ping, r#"{"cmd":"ping"}"#),
+            (IpcRequest::Pair, r#"{"cmd":"pair"}"#),
         ];
         for (req, expected) in cases {
             let json = serde_json::to_string(&req).unwrap();
@@ -135,5 +165,23 @@ mod tests {
         assert_eq!(err.error.as_deref(), Some("boom"));
         let pong = IpcResponse::pong();
         assert_eq!(pong.pong, Some(true));
+        let pair = IpcResponse::ok_pairing(
+            "AB7K-2Q9M".into(),
+            "https://xyz-ai.app/never-sleep/board/?code=AB7K-2Q9M".into(),
+            Some("ab".repeat(16)),
+        );
+        let v = serde_json::to_value(&pair).unwrap();
+        assert_eq!(v["pairing_code"], "AB7K-2Q9M");
+        assert_eq!(
+            v["pairing_url"],
+            "https://xyz-ai.app/never-sleep/board/?code=AB7K-2Q9M"
+        );
+        assert_eq!(v["device_id"], "ab".repeat(16));
+        assert!(v.get("status").is_none());
+        let status_only = IpcResponse::ok_status(sample_status());
+        let status_json = serde_json::to_value(&status_only).unwrap();
+        assert!(status_json.get("pairing_code").is_none());
+        assert!(status_json.get("pairing_url").is_none());
+        assert!(status_json.get("device_id").is_none());
     }
 }

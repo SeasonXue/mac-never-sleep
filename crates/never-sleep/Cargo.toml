@@ -20,11 +20,13 @@ ctrlc = { workspace = true }
 chrono = { workspace = true }
 ureq = { version = "2.12", default-features = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 tray-icon = "0.19"
 tao = "0.30.8"
 global-hotkey = "0.6"
-libc = "0.2"
 core-foundation = "0.10"
 objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [

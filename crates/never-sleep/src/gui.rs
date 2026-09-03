@@ -310,20 +310,30 @@ pub fn run() {
     let mut shown_onboarding = engine.config.onboarding_done;
     let mut toggle_gate = ToggleGate::default();
     let mut pairing: Option<(String, String)> = None;
-    let cloud = if cloud_enabled() {
-        Some(spawn_reporter(
-            load_or_create_identity(),
-            default_display_name(),
-        ))
+    let cloud_identity = if cloud_enabled() {
+        Some(load_or_create_identity())
     } else {
         None
     };
+    let cloud = cloud_identity.as_ref().map(|identity| {
+        spawn_reporter(
+            identity.clone(),
+            default_display_name(),
+            engine.config.lang(),
+        )
+    });
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(next_wake);
 
         while let Ok(incoming) = ipc_rx.try_recv() {
-            handle_ipc(&mut engine, platform.as_mut(), incoming);
+            handle_ipc(
+                &mut engine,
+                platform.as_mut(),
+                incoming,
+                &pairing,
+                cloud_identity.as_ref(),
+            );
             refresh_ui(
                 &handles,
                 &mut tray,
@@ -657,7 +667,10 @@ fn refresh_ui(
     pairing: &mut Option<(String, String)>,
 ) {
     if let Some(handle) = cloud {
-        handle.push_status(engine.json_status(&platform.snapshot()));
+        handle.push_status(
+            engine.json_status(&platform.snapshot()),
+            engine.config.lang(),
+        );
         apply_polled_commands(engine, platform, handle, pairing);
     }
     let host = platform.snapshot();
@@ -908,7 +921,13 @@ fn set_duration(engine: &mut Engine, platform: &mut dyn Platform, pref: Duration
     }
 }
 
-fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcIncoming) {
+fn handle_ipc(
+    engine: &mut Engine,
+    platform: &mut dyn Platform,
+    incoming: IpcIncoming,
+    pairing: &Option<(String, String)>,
+    identity: Option<&never_sleep_core::CloudIdentity>,
+) {
     let IpcIncoming::Request { req, reply } = incoming;
     let host_status = |engine: &Engine, platform: &mut dyn Platform| {
         let host = platform.snapshot();
@@ -917,6 +936,14 @@ fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcInc
     let resp = match req {
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
+        IpcRequest::Pair => match pairing.as_ref() {
+            Some((code, url)) => IpcResponse::ok_pairing(
+                code.clone(),
+                url.clone(),
+                identity.map(|id| id.device_id.clone()),
+            ),
+            None => IpcResponse::err("pairing_unavailable"),
+        },
         IpcRequest::On { duration } => {
             let input = match crate::protocol::parse_on_duration_in(
                 duration.as_deref(),

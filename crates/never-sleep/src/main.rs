@@ -132,26 +132,28 @@ fn print_resp(resp: &IpcResponse, json: bool) {
 }
 
 fn cmd_pair(json: bool) {
-    let identity = crate::cloud::load_or_create_identity();
-    let name = crate::cloud::default_display_name();
-    match crate::cloud::request_pairing_code(&identity, &name) {
-        Ok((code, url)) => {
+    match try_send(&IpcRequest::Pair) {
+        Some(resp) => {
             if json {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "pairing_code": code,
-                        "pairing_url": url,
-                        "device_id": identity.device_id,
-                    })
-                );
-            } else {
+                println!("{}", serde_json::to_string_pretty(&resp).unwrap());
+                if !resp.ok {
+                    std::process::exit(1);
+                }
+                return;
+            }
+            if !resp.ok {
+                eprintln!("{}", resp.error.as_deref().unwrap_or(ui_tr().failed()));
+                std::process::exit(1);
+            }
+            if let Some(code) = &resp.pairing_code {
                 println!("{}: {code}", ui_tr().pairing_code());
+            }
+            if let Some(url) = &resp.pairing_url {
                 println!("{url}");
             }
         }
-        Err(e) => {
-            eprintln!("{e}");
+        None => {
+            eprintln!("{}", ui_tr().menubar_not_running());
             std::process::exit(1);
         }
     }
@@ -223,6 +225,25 @@ mod tests {
         let after = &src[start + needle.len()..];
         let end = after.find("\nfn ").unwrap_or(after.len());
         &src[start..start + needle.len() + end]
+    }
+
+    #[test]
+    fn pair_cli_goes_through_running_menu_ipc() {
+        let src = include_str!("main.rs");
+        let cmd = rust_fn_src(src, "cmd_pair");
+        assert!(
+            cmd.contains("try_send"),
+            "pair must talk to the menu process"
+        );
+        assert!(cmd.contains("IpcRequest::Pair"));
+        assert!(
+            !cmd.contains("request_pairing_code"),
+            "a second process must not mint a different cloud pairing"
+        );
+        assert!(cmd.contains("menubar_not_running"));
+        let gui = include_str!("gui.rs");
+        assert!(gui.contains("IpcRequest::Pair"));
+        assert!(gui.contains("ok_pairing"));
     }
 
     #[test]

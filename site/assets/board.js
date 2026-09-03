@@ -23,6 +23,7 @@
         badCode: "配对码无效或已过期。",
         offlineCmd: "这台 Mac 当前离线，指令没有生效。",
         badCmd: "无法发送指令。",
+        networkError: "网络出错，请检查连接后重试。",
         starting: "正在开始…",
         ending: "正在结束…",
       }
@@ -46,6 +47,7 @@
         badCode: "That pairing code is invalid or expired.",
         offlineCmd: "This Mac is offline; the command did not apply.",
         badCmd: "Could not send the command.",
+        networkError: "Network error. Check the connection and try again.",
         starting: "Starting…",
         ending: "Ending…",
       };
@@ -102,27 +104,51 @@
     return `${m}:${String(s % 60).padStart(2, "0")}`;
   }
 
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function trustedView(stored, incoming, previous) {
+    const src = incoming || {};
+    const prev = previous || {};
+    const from = incoming ? src : prev;
+    return {
+      device_id: stored.device_id,
+      display_name:
+        (typeof from.display_name === "string" && from.display_name) ||
+        stored.display_name ||
+        "Mac",
+      online: incoming ? src.online === true : false,
+      last_seen_unix:
+        typeof from.last_seen_unix === "number" ? from.last_seen_unix : null,
+      active: from.active === true,
+      display: from.display === "asleep" ? "asleep" : "awake",
+      lid: from.lid === "closed" ? "closed" : "open",
+      on_ac: from.on_ac === true,
+      battery: Number.isFinite(from.battery) ? from.battery : null,
+      remaining_secs: Number.isFinite(from.remaining_secs)
+        ? from.remaining_secs
+        : null,
+    };
+  }
+
   function render(devices, statuses, pending) {
     const list = document.getElementById("device-list");
     const empty = document.getElementById("board-empty");
-    list.innerHTML = "";
+    list.replaceChildren();
     empty.hidden = devices.length > 0;
     const byId = new Map((statuses || []).map((d) => [d.device_id, d]));
+    const prevById = new Map((lastStatuses || []).map((d) => [d.device_id, d]));
     for (const stored of devices) {
-      const st = byId.get(stored.device_id) || {
-        device_id: stored.device_id,
-        display_name: stored.display_name,
-        online: false,
-        last_seen_unix: null,
-        active: false,
-        display: "awake",
-        lid: "open",
-        on_ac: true,
-        battery: null,
-        remaining_secs: null,
-      };
-      const card = document.createElement("article");
-      card.className = "device-card" + (st.online ? "" : " offline");
+      const st = trustedView(
+        stored,
+        byId.get(stored.device_id),
+        prevById.get(stored.device_id),
+      );
+      const card = el("article", "device-card" + (st.online ? "" : " offline"));
       const power = st.on_ac
         ? copy.ac
         : `${copy.battery}${st.battery != null ? ` ${st.battery}%` : ""}`;
@@ -131,71 +157,101 @@
           ? `${formatRemaining(st.remaining_secs)} ${copy.remaining}`
           : "—";
       const busy = pending === stored.device_id;
-      card.innerHTML = `
-        <div class="device-head">
-          <div class="device-name"></div>
-          <div class="device-online ${st.online ? "" : "off"}">${
-            st.online ? copy.online : copy.offline
-          }</div>
-        </div>
-        <dl class="device-meta">
-          <div><strong>${
-            st.online && st.active ? copy.standbyOn : copy.standbyOff
-          }</strong></div>
-          <div>${st.display === "asleep" ? copy.displayAsleep : copy.displayAwake}</div>
-          <div>${st.lid === "closed" ? copy.lidClosed : copy.lidOpen}</div>
-          <div>${power}</div>
-          <div>${remain}</div>
-          <div>${copy.lastSeen} ${formatLastSeen(st.last_seen_unix)}</div>
-        </dl>
-        <div class="device-actions">
-          <button class="btn btn-primary" data-cmd="on" type="button" ${
-            !st.online || busy ? "disabled" : ""
-          }>${busy && pendingCmd === "on" ? copy.starting : copy.start}</button>
-          <button class="btn btn-danger" data-cmd="off" type="button" ${
-            !st.online || busy ? "disabled" : ""
-          }>${busy && pendingCmd === "off" ? copy.ending : copy.end}</button>
-        </div>
-        <button class="forget" type="button" data-forget>${copy.forget}</button>
-      `;
-      card.querySelector(".device-name").textContent =
-        st.display_name || stored.display_name || "Mac";
-      card.querySelectorAll("[data-cmd]").forEach((btn) => {
-        btn.addEventListener("click", () => sendCommand(stored, btn.getAttribute("data-cmd")));
-      });
-      card.querySelector("[data-forget]").addEventListener("click", () => {
-        saveDevices(loadDevices().filter((d) => d.device_id !== stored.device_id));
+
+      const head = el("div", "device-head");
+      head.appendChild(el("div", "device-name", st.display_name));
+      head.appendChild(
+        el(
+          "div",
+          "device-online" + (st.online ? "" : " off"),
+          st.online ? copy.online : copy.offline,
+        ),
+      );
+      card.appendChild(head);
+
+      const meta = el("dl", "device-meta");
+      const standby = el("div");
+      standby.appendChild(
+        el("strong", "", st.active ? copy.standbyOn : copy.standbyOff),
+      );
+      meta.appendChild(standby);
+      meta.appendChild(
+        el(
+          "div",
+          "",
+          st.display === "asleep" ? copy.displayAsleep : copy.displayAwake,
+        ),
+      );
+      meta.appendChild(
+        el("div", "", st.lid === "closed" ? copy.lidClosed : copy.lidOpen),
+      );
+      meta.appendChild(el("div", "", power));
+      meta.appendChild(el("div", "", remain));
+      meta.appendChild(
+        el("div", "", `${copy.lastSeen} ${formatLastSeen(st.last_seen_unix)}`),
+      );
+      card.appendChild(meta);
+
+      const actions = el("div", "device-actions");
+      const startBtn = el("button", "btn btn-primary", copy.start);
+      startBtn.type = "button";
+      startBtn.setAttribute("data-cmd", "on");
+      const endBtn = el("button", "btn btn-danger", copy.end);
+      endBtn.type = "button";
+      endBtn.setAttribute("data-cmd", "off");
+      if (!st.online || busy) {
+        startBtn.disabled = true;
+        endBtn.disabled = true;
+      }
+      if (busy && pendingCmd === "on") startBtn.textContent = copy.starting;
+      if (busy && pendingCmd === "off") endBtn.textContent = copy.ending;
+      startBtn.addEventListener("click", () => sendCommand(stored, "on"));
+      endBtn.addEventListener("click", () => sendCommand(stored, "off"));
+      actions.appendChild(startBtn);
+      actions.appendChild(endBtn);
+      card.appendChild(actions);
+
+      const forget = el("button", "forget", copy.forget);
+      forget.type = "button";
+      forget.addEventListener("click", () => {
+        saveDevices(
+          loadDevices().filter((d) => d.device_id !== stored.device_id),
+        );
         refresh();
       });
+      card.appendChild(forget);
       list.appendChild(card);
     }
   }
 
   let pendingId = null;
   let pendingCmd = null;
+  let lastStatuses = [];
 
   function showError(message) {
-    const el = document.getElementById("board-error");
+    const elErr = document.getElementById("board-error");
     if (!message) {
-      el.hidden = true;
-      el.textContent = "";
+      elErr.hidden = true;
+      elErr.textContent = "";
       return;
     }
-    el.hidden = false;
-    el.textContent = message;
+    elErr.hidden = false;
+    elErr.textContent = message;
   }
 
   async function refresh() {
     const devices = loadDevices();
     if (!devices.length) {
-      render([], [], null);
+      render([], lastStatuses, null);
       return;
     }
     try {
       const { json } = await post("/list", { devices });
-      render(devices, json.devices || [], pendingId);
+      const statuses = Array.isArray(json.devices) ? json.devices : lastStatuses;
+      render(devices, statuses, pendingId);
+      if (Array.isArray(json.devices)) lastStatuses = json.devices;
     } catch {
-      render(devices, [], pendingId);
+      render(devices, lastStatuses, pendingId);
     }
   }
 
@@ -216,36 +272,34 @@
         showError(copy.badCmd);
       }
     } catch {
-      showError(copy.badCmd);
+      showError(copy.networkError);
     }
     pendingId = null;
     pendingCmd = null;
     await refresh();
   }
 
-  let lastStatuses = [];
-  const _render = render;
-  render = function (devices, statuses, pending) {
-    lastStatuses = statuses || lastStatuses;
-    _render(devices, statuses, pending);
-  };
-
   async function claim(code) {
     showError("");
-    const { res, json } = await post("/pair/claim", { pairing_code: code });
-    if (!res.ok || !json.ok) {
-      showError(copy.badCode);
-      return;
+    const input = document.getElementById("pair-code");
+    try {
+      const { res, json } = await post("/pair/claim", { pairing_code: code });
+      if (!res.ok || !json.ok) {
+        showError(copy.badCode);
+        return;
+      }
+      const devices = loadDevices().filter((d) => d.device_id !== json.device_id);
+      devices.push({
+        device_id: json.device_id,
+        device_token: json.device_token,
+        display_name: json.display_name,
+      });
+      saveDevices(devices);
+      input.value = "";
+      await refresh();
+    } catch {
+      showError(copy.networkError);
     }
-    const devices = loadDevices().filter((d) => d.device_id !== json.device_id);
-    devices.push({
-      device_id: json.device_id,
-      device_token: json.device_token,
-      display_name: json.display_name,
-    });
-    saveDevices(devices);
-    document.getElementById("pair-code").value = "";
-    await refresh();
   }
 
   document.getElementById("pair-form").addEventListener("submit", (event) => {

@@ -73,6 +73,17 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("/command"));
     assert!(!js.contains("cmd: \"toggle\""));
     assert!(!js.contains("\"cmd\":\"quit\""));
+    assert!(
+        !js.contains("innerHTML"),
+        "untrusted heartbeat fields must not go through innerHTML"
+    );
+    assert!(js.contains("textContent"));
+    assert!(js.contains("networkError"));
+    assert!(
+        !js.contains("st.online && st.active"),
+        "offline Macs must keep last-known standby, not paint Standby off"
+    );
+    assert!(js.contains("st.active ? copy.standbyOn : copy.standbyOff"));
 }
 
 #[test]
@@ -83,6 +94,29 @@ fn worker_board_logic_is_tested_in_node() {
         .status()
         .expect("node --test");
     assert!(status.success(), "worker/test/board.test.js must pass");
+}
+
+#[test]
+fn worker_shards_per_device_not_one_global_board() {
+    let index = read("worker/src/index.js");
+    assert!(
+        !index.contains("idFromName(\"board\")"),
+        "a single named DO serializes every home onto one queue"
+    );
+    assert!(index.contains("device:"));
+    assert!(index.contains("pair:"));
+    assert!(index.contains("shardName"));
+}
+
+#[test]
+fn mac_display_name_uses_gethostname_not_etc_hostname() {
+    let cloud = read("crates/never-sleep/src/cloud.rs");
+    assert!(cloud.contains("libc::gethostname"));
+    assert!(
+        !cloud.contains("\"/etc/hostname\""),
+        "LaunchServices GUI sessions do not have /etc/hostname"
+    );
+    assert!(!cloud.contains("\"/proc/sys/kernel/hostname\""));
 }
 
 #[test]

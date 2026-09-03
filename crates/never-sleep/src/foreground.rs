@@ -34,6 +34,7 @@ pub fn run_foreground(
         Some(crate::cloud::spawn_reporter(
             crate::cloud::load_or_create_identity(),
             crate::cloud::default_display_name(),
+            engine.config.lang(),
         ))
     } else {
         None
@@ -47,7 +48,10 @@ pub fn run_foreground(
     while running.load(Ordering::SeqCst) && engine.is_active() {
         dispatch(&mut engine, platform, Input::Tick);
         if let Some(handle) = cloud.as_ref() {
-            handle.push_status(engine.json_status(&platform.snapshot()));
+            handle.push_status(
+                engine.json_status(&platform.snapshot()),
+                engine.config.lang(),
+            );
             crate::cloud::apply_polled_commands(&mut engine, platform, handle, &mut pairing);
         }
         thread::sleep(Duration::from_millis(HEARTBEAT_MS));
