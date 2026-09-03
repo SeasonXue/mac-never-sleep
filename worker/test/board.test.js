@@ -25,9 +25,13 @@ import {
   alarmNeedsUpdate,
   bestEffortCleanup,
   boundDisplayName,
+  clientIp,
   commitAlarmUnix,
   commitPersistedAlarm,
   MAX_DISPLAY_NAME_CHARS,
+  PAIR_START_GLOBAL_LIMIT,
+  PAIR_START_IP_LIMIT,
+  takePairStartSlot,
 } from "../src/board.js";
 
 function sampleStatus(overrides = {}) {
@@ -594,6 +598,15 @@ test("empty lookup boards are not persisted", () => {
     persistBoardAction({ devices: {}, codes: {} }, { devices: {}, codes: {} }),
     "delete",
     "leftover empty boards from failed lookups are dropped",
+  );
+  assert.equal(
+    persistBoardAction(null, {
+      devices: {},
+      codes: {},
+      pairStart: { global: [1_000], ips: { "1.1.1.1": [1_000] } },
+    }),
+    "put",
+    "pair/start rate-limit hits must persist",
   );
 });
 
@@ -1376,6 +1389,129 @@ test("claim reservation covers a max-length display name near quota", () => {
     canStoreClaim(storage, STORAGE_KEY, existing, reserved),
     false,
     "do not consume the one-time code when a max-length name will not fit",
+  );
+});
+
+test("claim reservation covers JSON-escaped and emoji display names near quota", () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function withDevices");
+  const end = src.indexOf("\n  async function post(");
+  const { withDevices, canStoreClaim, claimReservation } = new Function(
+    `const LIST_MAX_DEVICES = 32;\nconst MAX_DISPLAY_NAME_CHARS = 128;\n${src.slice(start, end)}\nreturn { withDevices, canStoreClaim, claimReservation };`,
+  )();
+
+  const STORAGE_KEY = "never-sleep-devices";
+  const existing = [];
+  for (let i = 0; i < 31; i += 1) {
+    existing.push({
+      device_id: String(i).padStart(32, "a"),
+      device_token: String(i).padStart(64, "b"),
+      display_name: "Studio",
+    });
+  }
+  const asciiPlaceholder = {
+    device_id: "f".repeat(64),
+    device_token: "f".repeat(128),
+    display_name: "M".repeat(MAX_DISPLAY_NAME_CHARS),
+  };
+  const quotesReal = {
+    device_id: "a".repeat(32),
+    device_token: "b".repeat(64),
+    display_name: '"'.repeat(MAX_DISPLAY_NAME_CHARS),
+  };
+  const emojiReal = {
+    device_id: "a".repeat(32),
+    device_token: "b".repeat(64),
+    display_name: "😀".repeat(MAX_DISPLAY_NAME_CHARS),
+  };
+  const reserved = claimReservation();
+  const reservedRaw = JSON.stringify(reserved);
+  assert.ok(
+    reservedRaw.length >= JSON.stringify(quotesReal).length,
+    "128 quotes with a normal identity must still fit under the reservation",
+  );
+  assert.ok(
+    reservedRaw.length >= JSON.stringify(emojiReal).length,
+    "128 emoji with a normal identity must still fit under the reservation",
+  );
+
+  const asciiPayload = JSON.stringify(withDevices(existing, asciiPlaceholder));
+  const quotesPayload = JSON.stringify(withDevices(existing, quotesReal));
+  const reservedPayload = JSON.stringify(withDevices(existing, reserved));
+  assert.ok(quotesPayload.length > asciiPayload.length);
+  assert.ok(reservedPayload.length >= quotesPayload.length);
+
+  const probeKey = `${STORAGE_KEY}:probe`;
+  const existingRaw = JSON.stringify(existing);
+  const storage = quotaStorage(
+    STORAGE_KEY.length +
+      existingRaw.length +
+      probeKey.length +
+      asciiPayload.length +
+      8,
+  );
+  storage.setItem(STORAGE_KEY, existingRaw);
+
+  assert.equal(
+    canStoreClaim(storage, STORAGE_KEY, existing, asciiPlaceholder),
+    true,
+    "the old 128-M placeholder still fits this constrained quota",
+  );
+  assert.equal(
+    canStoreClaim(storage, STORAGE_KEY, existing, quotesReal),
+    false,
+    "quotes expand in JSON and must not sneak past the probe",
+  );
+  assert.equal(
+    canStoreClaim(storage, STORAGE_KEY, existing, reserved),
+    false,
+    "do not consume the one-time code when the serialized name will not fit",
+  );
+});
+
+test("pair/start is rate-limited before shards are reserved", () => {
+  let state = { global: [], ips: {} };
+  for (let i = 0; i < PAIR_START_IP_LIMIT; i += 1) {
+    const allowed = takePairStartSlot(state, "203.0.113.1", 1_000);
+    assert.equal(allowed.ok, true, `attempt ${i + 1} should pass`);
+    state = allowed.state;
+  }
+  const denied = takePairStartSlot(state, "203.0.113.1", 1_000);
+  assert.equal(denied.ok, false);
+  assert.equal(denied.status, 429);
+  assert.equal(denied.error, "rate_limited");
+
+  const other = takePairStartSlot(denied.state, "203.0.113.2", 1_000);
+  assert.equal(other.ok, true, "a different IP still has budget");
+
+  let flooded = { global: [], ips: {} };
+  for (let i = 0; i < PAIR_START_GLOBAL_LIMIT; i += 1) {
+    const allowed = takePairStartSlot(flooded, `198.51.100.${i}`, 2_000, {
+      ipLimit: 1,
+      globalLimit: PAIR_START_GLOBAL_LIMIT,
+    });
+    assert.equal(allowed.ok, true);
+    flooded = allowed.state;
+  }
+  const globalDenied = takePairStartSlot(flooded, "198.51.100.254", 2_000, {
+    ipLimit: 1,
+    globalLimit: PAIR_START_GLOBAL_LIMIT,
+  });
+  assert.equal(globalDenied.ok, false, "unique IDs must not allocate unbounded shards");
+
+  const later = takePairStartSlot(denied.state, "203.0.113.1", 1_000 + 60);
+  assert.equal(later.ok, true, "the window must expire");
+
+  const headers = new Headers({ "cf-connecting-ip": " 203.0.113.9 " });
+  assert.equal(clientIp({ headers }), "203.0.113.9");
+
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  const rateAt = index.indexOf("rate:pair-start");
+  const reserveAt = index.indexOf("await publishReservedPairing");
+  assert.ok(
+    rateAt >= 0 && rateAt < reserveAt,
+    "do not allocate pair/device shards before the rate gate",
   );
 });
 

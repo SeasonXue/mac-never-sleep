@@ -31,9 +31,10 @@ fn wrangler_worker_is_the_existing_mac_never_sleep_service() {
     assert!(wrangler.contains("/api/*"));
     assert!(wrangler.contains("BoardHub"));
     assert!(
-        !wrangler.contains("custom_domain"),
-        "custom domain stays on the gateway"
+        wrangler.contains("\"workers_dev\": false"),
+        "workers.dev must not bypass the pair/start rate gate"
     );
+    assert!(wrangler.contains("\"preview_urls\": false"));
 }
 
 #[test]
@@ -112,6 +113,7 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("claimReservation"));
     assert!(js.contains("MAX_DISPLAY_NAME_CHARS = 128"));
     assert!(js.contains("function boundDisplayName"));
+    assert!(js.contains("\\u0000"));
     assert!(js.contains("storageError"));
     assert!(
         !js.contains("padStart(2, \"0\")}:00"),
@@ -159,7 +161,10 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("bestEffortCleanup"));
     assert!(index.contains("bestEffortCleanup"));
     assert!(board.contains("alarmNeedsUpdate"));
-    assert!(index.contains("commitPersistedAlarm"));
+    assert!(index.contains("rate:pair-start"));
+    assert!(index.contains("clientIp"));
+    assert!(board.contains("takePairStartSlot"));
+    assert!(board.contains("rate_limited"));
     assert!(board.contains("commitAlarmUnix"));
     assert!(board.contains("commitPersistedAlarm"));
     assert!(board.contains("MAX_DISPLAY_NAME_CHARS"));

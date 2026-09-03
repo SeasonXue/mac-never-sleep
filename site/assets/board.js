@@ -96,7 +96,7 @@
     return {
       device_id: "f".repeat(64),
       device_token: "f".repeat(128),
-      display_name: "M".repeat(MAX_DISPLAY_NAME_CHARS),
+      display_name: "\u0000".repeat(MAX_DISPLAY_NAME_CHARS),
     };
   }
 

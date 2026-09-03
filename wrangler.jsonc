@@ -5,8 +5,9 @@
   "name": "mac-never-sleep",
   "main": "worker/src/index.js",
   "compatibility_date": "2026-09-01",
-  "workers_dev": true,
-  "preview_urls": true,
+  // Pair/start is rate-limited in-worker; do not expose workers.dev/preview around the gateway.
+  "workers_dev": false,
+  "preview_urls": false,
   "assets": {
     "directory": "./site",
     "binding": "ASSETS",

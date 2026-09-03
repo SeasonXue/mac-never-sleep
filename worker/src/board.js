@@ -115,6 +115,65 @@ export function boundDisplayName(name) {
   return [...trimmed].slice(0, MAX_DISPLAY_NAME_CHARS).join("");
 }
 
+export const PAIR_START_IP_LIMIT = 8;
+export const PAIR_START_IP_WINDOW_SECS = 60;
+export const PAIR_START_GLOBAL_LIMIT = 60;
+export const PAIR_START_GLOBAL_WINDOW_SECS = 60;
+const PAIR_START_IP_MAP_MAX = 2048;
+
+function prunePairStartHits(hits, now, windowSecs) {
+  return (hits || []).filter(
+    (t) => typeof t === "number" && now - t < windowSecs,
+  );
+}
+
+/** Decide whether /api/pair/start may allocate Durable Object shards. */
+export function takePairStartSlot(state, ip, nowSecs, limits = {}) {
+  const ipLimit = limits.ipLimit ?? PAIR_START_IP_LIMIT;
+  const ipWindow = limits.ipWindowSecs ?? PAIR_START_IP_WINDOW_SECS;
+  const globalLimit = limits.globalLimit ?? PAIR_START_GLOBAL_LIMIT;
+  const globalWindow = limits.globalWindowSecs ?? PAIR_START_GLOBAL_WINDOW_SECS;
+  const key = typeof ip === "string" && ip.trim() ? ip.trim() : "unknown";
+  const global = prunePairStartHits(state?.global, nowSecs, globalWindow);
+  const ips = {};
+  for (const [addr, hits] of Object.entries(state?.ips || {})) {
+    const kept = prunePairStartHits(hits, nowSecs, ipWindow);
+    if (kept.length) ips[addr] = kept;
+  }
+  const ipHits = ips[key] || [];
+  if (global.length >= globalLimit || ipHits.length >= ipLimit) {
+    return {
+      ok: false,
+      error: "rate_limited",
+      status: 429,
+      state: { global, ips },
+    };
+  }
+  ips[key] = [...ipHits, nowSecs];
+  const names = Object.keys(ips);
+  if (names.length > PAIR_START_IP_MAP_MAX) {
+    names.sort((a, b) => Math.max(...ips[a]) - Math.max(...ips[b]));
+    for (const drop of names.slice(0, names.length - PAIR_START_IP_MAP_MAX)) {
+      delete ips[drop];
+    }
+  }
+  return {
+    ok: true,
+    status: 200,
+    state: { global: [...global, nowSecs], ips },
+  };
+}
+
+export function clientIp(request) {
+  const cf = request?.headers?.get?.("cf-connecting-ip");
+  if (typeof cf === "string" && cf.trim()) return cf.trim();
+  const forwarded = request?.headers?.get?.("x-forwarded-for");
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim() || "unknown";
+  }
+  return "unknown";
+}
+
 export const PAIR_RESERVE_ATTEMPTS = 8;
 /** Drop undelivered commands after a few missed heartbeats, not hours later. */
 export const COMMAND_TTL_SECS = HEARTBEAT_TTL_SECS * 4;
@@ -158,11 +217,20 @@ export async function collectListParts(fetchEntry, entries) {
   return devices;
 }
 
+function pairStartHasHits(pairStart) {
+  if (!pairStart || typeof pairStart !== "object") return false;
+  if (Array.isArray(pairStart.global) && pairStart.global.length > 0) return true;
+  return Object.keys(pairStart.ips || {}).length > 0;
+}
+
 export function boardHasState(data) {
   if (!data || typeof data !== "object") return false;
   const devices = data.devices || {};
   const codes = data.codes || {};
-  return Object.keys(devices).length > 0 || Object.keys(codes).length > 0;
+  if (Object.keys(devices).length > 0 || Object.keys(codes).length > 0) {
+    return true;
+  }
+  return pairStartHasHits(data.pairStart);
 }
 
 export function persistBoardAction(previous, next) {
@@ -354,6 +422,7 @@ export class Board {
     this.devices = new Map();
     /** @type {Map<string, { deviceId: string, expires: number, token?: string, displayName?: string }>} */
     this.codes = new Map();
+    this.pairStart = { global: [], ips: {} };
   }
 
   static fromJSON(data) {
@@ -364,6 +433,17 @@ export class Board {
     }
     for (const [code, offer] of Object.entries(data.codes || {})) {
       board.codes.set(code, structuredClone(offer));
+    }
+    if (data.pairStart && typeof data.pairStart === "object") {
+      board.pairStart = {
+        global: Array.isArray(data.pairStart.global)
+          ? [...data.pairStart.global]
+          : [],
+        ips:
+          data.pairStart.ips && typeof data.pairStart.ips === "object"
+            ? structuredClone(data.pairStart.ips)
+            : {},
+      };
     }
     return board;
   }
@@ -377,7 +457,19 @@ export class Board {
     for (const [code, offer] of this.codes) {
       codes[code] = structuredClone(offer);
     }
-    return { devices, codes };
+    return pairStartHasHits(this.pairStart)
+      ? { devices, codes, pairStart: structuredClone(this.pairStart) }
+      : { devices, codes };
+  }
+
+  takePairStart(ip) {
+    const result = takePairStartSlot(this.pairStart, ip, this.nowSecs());
+    this.pairStart = result.state;
+    return {
+      ok: result.ok,
+      error: result.error,
+      status: result.status,
+    };
   }
 
   #purgeCodes(now) {
@@ -726,6 +818,8 @@ export async function handleInternal(board, request) {
     result = board.peekOffer(body.pairing_code);
   } else if (path === "/internal/live-pairing") {
     result = board.livePairing(body.device_id);
+  } else if (path === "/internal/pair-rate") {
+    result = board.takePairStart(body.ip);
   } else {
     return jsonResponse({ ok: false, error: "not_found" }, 404);
   }

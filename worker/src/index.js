@@ -12,6 +12,7 @@ import {
   persistBoardAction,
   proposePairingCode,
   publicSiteOrigin,
+  clientIp,
   publishReservedPairing,
   shardName,
   bestEffortCleanup,
@@ -189,6 +190,20 @@ async function routeApi(request, env) {
     const name = shardName(path, body);
     if (!name) {
       return jsonResponse({ ok: false, error: "bad_identity" }, 400);
+    }
+    const gated = await stubFetch(
+      env,
+      "rate:pair-start",
+      "https://do/internal/pair-rate",
+      { ip: clientIp(request) },
+      origin,
+    );
+    const gate = await gated.json().catch(() => ({}));
+    if (!gate.ok) {
+      return jsonResponse(
+        { ok: false, error: gate.error || "rate_limited" },
+        gate.status || 429,
+      );
     }
     const expiresUnix = Math.floor(Date.now() / 1000) + PAIRING_TTL_SECS;
     const started = await publishReservedPairing({
