@@ -1043,3 +1043,48 @@ test("beginClaim reuses an in-flight request for the same pairing code", () => {
   assert.equal(first, second, "double submit must not start a second claim");
   assert.match(src, /claimInFlight/);
 });
+
+test("command pending state is tracked per Mac", () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function devicePendingCmd");
+  assert.notEqual(start, -1, "board.js must track in-flight commands per device");
+  const end = src.indexOf("\n  function hrefWithPairingCode");
+  const { devicePendingCmd, withDevicePending, withoutDevicePending } =
+    new Function(
+      `${src.slice(start, end)}\nreturn { devicePendingCmd, withDevicePending, withoutDevicePending };`,
+    )();
+  let pending = {};
+  pending = withDevicePending(pending, "mac-a", "on");
+  pending = withDevicePending(pending, "mac-b", "off");
+  assert.equal(devicePendingCmd(pending, "mac-a"), "on");
+  assert.equal(devicePendingCmd(pending, "mac-b"), "off");
+  pending = withoutDevicePending(pending, "mac-a");
+  assert.equal(
+    devicePendingCmd(pending, "mac-a"),
+    null,
+    "finishing one Mac must not clear another Mac's in-flight command",
+  );
+  assert.equal(devicePendingCmd(pending, "mac-b"), "off");
+  assert.match(src, /pendingByDevice = withDevicePending/);
+  assert.match(src, /pendingByDevice = withoutDevicePending/);
+  assert.doesNotMatch(
+    src,
+    /pendingId = null/,
+    "a global pendingId would clear every Mac when the first request finishes",
+  );
+});
+
+test("stale list refreshes do not replace a newer snapshot", () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function nextRefreshGeneration");
+  assert.notEqual(start, -1, "board.js must stamp each /list poll");
+  const end = src.indexOf("\n  function hrefWithPairingCode");
+  const { nextRefreshGeneration, isCurrentRefresh } = new Function(
+    `${src.slice(start, end)}\nreturn { nextRefreshGeneration, isCurrentRefresh };`,
+  )();
+  const first = nextRefreshGeneration(0);
+  const second = nextRefreshGeneration(first);
+  assert.equal(isCurrentRefresh(first, second), false);
+  assert.equal(isCurrentRefresh(second, second), true);
+  assert.match(src, /isCurrentRefresh\(started, refreshGen\)/);
+});

@@ -127,6 +127,32 @@
     return Array.from(byId.values());
   }
 
+  function devicePendingCmd(pendingByDevice, deviceId) {
+    if (!pendingByDevice || deviceId == null) return null;
+    const cmd = pendingByDevice[deviceId];
+    return cmd === "on" || cmd === "off" ? cmd : null;
+  }
+
+  function withDevicePending(pendingByDevice, deviceId, cmd) {
+    const next = Object.assign({}, pendingByDevice);
+    next[deviceId] = cmd;
+    return next;
+  }
+
+  function withoutDevicePending(pendingByDevice, deviceId) {
+    const next = Object.assign({}, pendingByDevice);
+    delete next[deviceId];
+    return next;
+  }
+
+  function nextRefreshGeneration(current) {
+    return (Number(current) || 0) + 1;
+  }
+
+  function isCurrentRefresh(startedGeneration, latestGeneration) {
+    return startedGeneration === latestGeneration;
+  }
+
   function hrefWithPairingCode(href, code) {
     const path = String(href || "").split("?")[0];
     if (!code) return path;
@@ -207,7 +233,8 @@
         st.active && st.remaining_secs != null
           ? `${formatRemaining(st.remaining_secs)} ${copy.remaining}`
           : "—";
-      const busy = pending === stored.device_id;
+      const pendingCmd = devicePendingCmd(pending, stored.device_id);
+      const busy = pendingCmd != null;
 
       const head = el("div", "device-head");
       head.appendChild(el("div", "device-name", st.display_name));
@@ -275,9 +302,9 @@
     }
   }
 
-  let pendingId = null;
-  let pendingCmd = null;
+  let pendingByDevice = {};
   let lastStatuses = [];
+  let refreshGen = 0;
 
   function showError(message) {
     const elErr = document.getElementById("board-error");
@@ -293,27 +320,31 @@
   async function refresh() {
     const devices = loadDevices();
     if (!devices.length) {
-      render([], lastStatuses, null);
+      refreshGen = nextRefreshGeneration(refreshGen);
+      render([], lastStatuses, pendingByDevice);
       return;
     }
+    const started = (refreshGen = nextRefreshGeneration(refreshGen));
     try {
       const { res, json } = await post("/list", { devices });
+      if (!isCurrentRefresh(started, refreshGen)) return;
       if (!res.ok || !Array.isArray(json.devices)) {
-        render(devices, withListFailure(lastStatuses), pendingId);
+        render(devices, withListFailure(lastStatuses), pendingByDevice);
         return;
       }
       lastStatuses = mergeListStatuses(lastStatuses, json.devices);
-      render(devices, lastStatuses, pendingId);
+      render(devices, lastStatuses, pendingByDevice);
     } catch {
-      render(devices, withListFailure(lastStatuses), pendingId);
+      if (!isCurrentRefresh(started, refreshGen)) return;
+      render(devices, withListFailure(lastStatuses), pendingByDevice);
     }
   }
 
   async function sendCommand(device, cmd) {
+    if (devicePendingCmd(pendingByDevice, device.device_id)) return;
     showError("");
-    pendingId = device.device_id;
-    pendingCmd = cmd;
-    render(loadDevices(), lastStatuses, pendingId);
+    pendingByDevice = withDevicePending(pendingByDevice, device.device_id, cmd);
+    render(loadDevices(), lastStatuses, pendingByDevice);
     try {
       const { res, json } = await post("/command", {
         device_id: device.device_id,
@@ -328,8 +359,7 @@
     } catch {
       showError(copy.networkError);
     }
-    pendingId = null;
-    pendingCmd = null;
+    pendingByDevice = withoutDevicePending(pendingByDevice, device.device_id);
     await refresh();
   }
 

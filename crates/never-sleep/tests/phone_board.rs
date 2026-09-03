@@ -99,6 +99,10 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("history.replaceState"));
     assert!(js.contains("function mergeListStatuses"));
     assert!(js.contains("claimInFlight"));
+    assert!(js.contains("function devicePendingCmd"));
+    assert!(js.contains("pendingByDevice"));
+    assert!(js.contains("function nextRefreshGeneration"));
+    assert!(js.contains("isCurrentRefresh"));
 }
 
 #[test]
