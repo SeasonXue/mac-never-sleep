@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::Read;
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -25,13 +26,25 @@ pub enum CloudEvent {
 }
 
 pub struct CloudHandle {
-    status_tx: SyncSender<(JsonStatus, Lang)>,
+    /// Latest-wins snapshot. A capacity-one wake channel only signals that
+    /// `latest` changed; it must not carry the payload or a newer inactive
+    /// status is dropped while the reporter is in a slow POST.
+    latest: Arc<Mutex<Option<(JsonStatus, Lang)>>>,
+    wake: SyncSender<()>,
     events: mpsc::Receiver<CloudEvent>,
 }
 
 impl CloudHandle {
     pub fn push_status(&self, status: JsonStatus, lang: Lang) {
-        let _ = self.status_tx.try_send((status, lang));
+        if let Ok(mut slot) = self.latest.lock() {
+            *slot = Some((status, lang));
+        }
+        let _ = self.wake.try_send(());
+    }
+
+    #[cfg(test)]
+    fn queued_status(&self) -> Option<JsonStatus> {
+        clone_latest(&self.latest).map(|(status, _)| status)
     }
 
     pub fn poll_events(&self) -> Vec<CloudEvent> {
@@ -297,51 +310,64 @@ pub(crate) trait CloudTransport {
     fn post_json(&self, path: &str, body: &str) -> Result<CloudPost, String>;
 }
 
-pub fn spawn_reporter(identity: CloudIdentity, display_name: String, lang: Lang) -> CloudHandle {
-    let (status_tx, status_rx) = mpsc::sync_channel::<(JsonStatus, Lang)>(1);
+pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang) -> CloudHandle {
+    let latest = Arc::new(Mutex::new(None));
+    let (wake_tx, wake_rx) = mpsc::sync_channel(1);
     let (event_tx, event_rx) = mpsc::channel();
+    let latest_for_thread = Arc::clone(&latest);
     thread::Builder::new()
         .name("never-sleep-cloud".into())
         .spawn(move || {
             reporter_loop(
                 identity,
                 display_name,
-                lang,
                 UreqTransport {
                     origin: cloud_origin(),
                 },
-                status_rx,
+                wake_rx,
+                latest_for_thread,
                 event_tx,
             );
         })
         .ok();
     CloudHandle {
-        status_tx,
+        latest,
+        wake: wake_tx,
         events: event_rx,
     }
+}
+
+fn clone_latest(latest: &Mutex<Option<(JsonStatus, Lang)>>) -> Option<(JsonStatus, Lang)> {
+    latest.lock().ok().and_then(|slot| slot.clone())
 }
 
 fn reporter_loop(
     identity: CloudIdentity,
     display_name: String,
-    mut lang: Lang,
     transport: UreqTransport,
-    status_rx: mpsc::Receiver<(JsonStatus, Lang)>,
+    wake_rx: mpsc::Receiver<()>,
+    latest: Arc<Mutex<Option<(JsonStatus, Lang)>>>,
     event_tx: mpsc::Sender<CloudEvent>,
 ) {
     let mut gate = ReporterGate::default();
     let mut inbox = CommandInbox::default();
-    let mut last: Option<JsonStatus> = None;
+    let mut last: Option<(JsonStatus, Lang)> = None;
     loop {
-        match status_rx.recv_timeout(Duration::from_secs(3)) {
-            Ok((status, next_lang)) => {
-                last = Some(status);
-                lang = next_lang;
+        let shutting_down = match wake_rx.recv_timeout(Duration::from_secs(3)) {
+            Ok(()) => {
+                while wake_rx.try_recv().is_ok() {}
+                false
             }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => false,
+            Err(RecvTimeoutError::Disconnected) => true,
+        };
+        if let Some(pair) = clone_latest(&latest) {
+            last = Some(pair);
         }
-        let Some(status) = last.as_ref() else {
+        let Some((status, lang)) = last.as_ref() else {
+            if shutting_down {
+                break;
+            }
             continue;
         };
         reporter_tick(
@@ -354,6 +380,9 @@ fn reporter_loop(
             status,
             &event_tx,
         );
+        if shutting_down {
+            break;
+        }
     }
 }
 
@@ -489,6 +518,14 @@ mod tests {
     use never_sleep_core::{AppConfig, Engine, JsonStatus};
     use std::sync::Mutex;
 
+    fn test_cloud_handle(wake: SyncSender<()>, events: mpsc::Receiver<CloudEvent>) -> CloudHandle {
+        CloudHandle {
+            latest: Arc::new(Mutex::new(None)),
+            wake,
+            events,
+        }
+    }
+
     fn sample_status() -> JsonStatus {
         JsonStatus {
             active: true,
@@ -588,13 +625,9 @@ mod tests {
 
     #[test]
     fn pairing_cleared_event_drops_gui_code() {
-        let (status_tx, _status_rx) = mpsc::sync_channel(1);
         let (event_tx, event_rx) = mpsc::channel();
         event_tx.send(CloudEvent::PairingCleared).unwrap();
-        let handle = CloudHandle {
-            status_tx,
-            events: event_rx,
-        };
+        let handle = test_cloud_handle(mpsc::sync_channel(1).0, event_rx);
         let mut pairing = Some(("AB7K-2Q9M".into(), "https://example/board/?code=x".into()));
         let mut engine = Engine::new(AppConfig::default());
         let mut platform = StubPlatform;
@@ -643,17 +676,51 @@ mod tests {
     }
 
     #[test]
+    fn push_status_replaces_queued_active_with_inactive() {
+        let (wake, _wake_rx) = mpsc::sync_channel(1);
+        wake.try_send(()).unwrap();
+        let (_event_tx, event_rx) = mpsc::channel();
+        let handle = test_cloud_handle(wake, event_rx);
+        let mut active = sample_status();
+        active.active = true;
+        handle.push_status(active, Lang::En);
+        let mut inactive = sample_status();
+        inactive.active = false;
+        handle.push_status(inactive, Lang::En);
+        let status = handle.queued_status().expect("queued snapshot");
+        assert!(
+            !status.active,
+            "a full capacity-one wake must not keep a stale active snapshot"
+        );
+    }
+
+    #[test]
+    fn disconnected_wake_still_flushes_latest_slot() {
+        let latest = Mutex::new(Some({
+            let mut inactive = sample_status();
+            inactive.active = false;
+            (inactive, Lang::En)
+        }));
+        let (wake_tx, wake_rx) = mpsc::sync_channel::<()>(1);
+        drop(wake_tx);
+        assert!(matches!(
+            wake_rx.recv_timeout(Duration::from_secs(0)),
+            Err(RecvTimeoutError::Disconnected)
+        ));
+        let (status, _) = clone_latest(&latest).expect("shutdown must still read the slot");
+        assert!(!status.active);
+    }
+
+    #[test]
     fn sync_cloud_reports_inactive_after_remote_off() {
         let _dir = TestDataDir::install();
-        let (status_tx, status_rx) = mpsc::sync_channel(4);
+        let (wake, _wake_rx) = mpsc::sync_channel(1);
+        wake.try_send(()).unwrap();
         let (event_tx, event_rx) = mpsc::channel();
         event_tx
             .send(CloudEvent::Commands(vec![RemoteCommand::off("c-off")]))
             .unwrap();
-        let handle = CloudHandle {
-            status_tx,
-            events: event_rx,
-        };
+        let handle = test_cloud_handle(wake, event_rx);
         let mut engine = Engine::new(AppConfig::default());
         let mut platform = StubPlatform;
         crate::apply::dispatch(&mut engine, &mut platform, never_sleep_core::Input::Start);
@@ -661,7 +728,7 @@ mod tests {
         let mut pairing = None;
         sync_cloud(&mut engine, &mut platform, &handle, &mut pairing);
         assert!(!engine.is_active());
-        let (status, _) = status_rx.try_recv().unwrap();
+        let status = handle.queued_status().expect("queued snapshot");
         assert!(
             !status.active,
             "phone must see standby ended before the reporter exits"
