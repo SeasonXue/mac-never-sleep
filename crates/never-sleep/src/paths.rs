@@ -47,6 +47,10 @@ pub fn config_path() -> PathBuf {
     data_dir().join("config.toml")
 }
 
+pub fn cloud_identity_path() -> PathBuf {
+    data_dir().join("cloud.toml")
+}
+
 pub fn ipc_socket_path() -> PathBuf {
     data_dir().join("ipc.sock")
 }
@@ -120,6 +124,7 @@ mod tests {
         let dir = data_dir();
         assert!(dir.ends_with("Never Sleep") || dir.ends_with("never-sleep"));
         assert_eq!(config_path(), dir.join("config.toml"));
+        assert_eq!(cloud_identity_path(), dir.join("cloud.toml"));
         assert_eq!(ipc_socket_path(), dir.join("ipc.sock"));
         assert_eq!(session_lock_path(), dir.join("session.lock"));
         assert!(launch_agent_path().ends_with("com.seasonxue.never-sleep.plist"));
@@ -130,6 +135,7 @@ mod tests {
         let isolated = TestDataDir::install();
         assert_eq!(data_dir(), isolated.path());
         assert_eq!(config_path(), isolated.path().join("config.toml"));
+        assert_eq!(cloud_identity_path(), isolated.path().join("cloud.toml"));
         assert_eq!(ipc_socket_path(), isolated.path().join("ipc.sock"));
         assert!(!ipc_socket_path().exists());
     }

@@ -61,6 +61,10 @@ pub enum Input {
     DisplaySlept,
     /// Person asked to darken the panel now. Does not end standby.
     SleepDisplayNow,
+    /// Phone / cloud start. Standby begins, but the first display-sleep still
+    /// respects `user_present` (never fight someone at the keyboard).
+    StartRemote,
+    StartRemoteWith(DurationPref),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +128,8 @@ struct Session {
     deadline_unix: Option<i64>,
     initial_display_off_sent: bool,
     last_sleep_display_ms: Option<u64>,
+    /// Remote start: skip the first forced sleep while a person is at the Mac.
+    remote: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -153,13 +159,15 @@ impl Engine {
     pub fn handle(&mut self, input: Input, host: &HostSnapshot) -> Vec<Effect> {
         let mut effects = Vec::new();
         match input {
-            Input::Start => self.start(self.config.duration, host, &mut effects),
-            Input::StartWith(pref) => self.start(pref, host, &mut effects),
+            Input::Start => self.start(self.config.duration, host, false, &mut effects),
+            Input::StartWith(pref) => self.start(pref, host, false, &mut effects),
+            Input::StartRemote => self.start(self.config.duration, host, true, &mut effects),
+            Input::StartRemoteWith(pref) => self.start(pref, host, true, &mut effects),
             Input::Toggle => {
                 if self.session.is_some() {
                     self.stop(StopReason::User, host, &mut effects);
                 } else {
-                    self.start(self.config.duration, host, &mut effects);
+                    self.start(self.config.duration, host, false, &mut effects);
                 }
             }
             Input::Stop { reason } => self.stop(reason, host, &mut effects),
@@ -176,7 +184,13 @@ impl Engine {
         effects
     }
 
-    fn start(&mut self, pref: DurationPref, host: &HostSnapshot, effects: &mut Vec<Effect>) {
+    fn start(
+        &mut self,
+        pref: DurationPref,
+        host: &HostSnapshot,
+        remote: bool,
+        effects: &mut Vec<Effect>,
+    ) {
         if self.session.is_some() {
             return;
         }
@@ -191,6 +205,7 @@ impl Engine {
             deadline_unix: deadline,
             initial_display_off_sent: false,
             last_sleep_display_ms: None,
+            remote,
         });
         self.optimistic_display_asleep = host.display_asleep.unwrap_or(false);
         self.last_stop_reason = None;
@@ -323,7 +338,10 @@ impl Engine {
             }
         }
         if !session.initial_display_off_sent {
-            // 第一次关屏：无论当前亮不亮都请求一次
+            if session.remote && host.user_present(self.config.user_idle_resleep_ms) {
+                return false;
+            }
+            // Local one-click start: request display sleep even if the panel is already dark.
             return true;
         }
         if !self.config.resleep_display {

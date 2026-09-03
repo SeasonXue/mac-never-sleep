@@ -5,12 +5,20 @@
 //! 2. Is a person sitting at the Mac?
 //! 3. Should standby end because of battery, duration, or heat?
 
+mod cloud;
 mod config;
 mod duration;
 mod engine;
 mod i18n;
 mod status;
 
+pub use cloud::{
+    apply_remote_command, device_is_online, format_pairing_code, hex_from_bytes,
+    identity_from_bytes, normalize_pairing_code, pairing_code_from_bytes, pairing_url,
+    tokens_match, CloudDeviceStatus, CloudIdentity, RemoteCommand, DEVICE_ID_HEX_LEN,
+    DEVICE_TOKEN_HEX_LEN, HEARTBEAT_TTL_SECS, PAIRING_CODE_LEN, PAIRING_TTL_SECS,
+    PUBLIC_SITE_ORIGIN,
+};
 pub use config::{parse_duration_pref, parse_duration_pref_in, AppConfig, DurationPref};
 pub use duration::{
     countdown_secs, deadline_unix_secs, elapsed_secs, format_clock, format_countdown,

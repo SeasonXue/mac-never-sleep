@@ -383,6 +383,14 @@ impl Tr {
         self.pick("Launch at login", "登录时启动")
     }
 
+    pub fn phone_board(self) -> &'static str {
+        self.pick("Phone board", "手机看板")
+    }
+
+    pub fn pairing_code(self) -> &'static str {
+        self.pick("Pairing code", "配对码")
+    }
+
     pub fn language_menu(self) -> &'static str {
         self.pick("Language", "语言")
     }
@@ -920,6 +928,10 @@ mod tests {
         );
         assert_eq!(en.settings_title(), "Settings");
         assert_eq!(zh.settings_title(), "设置");
+        assert_eq!(en.phone_board(), "Phone board");
+        assert_eq!(zh.phone_board(), "手机看板");
+        assert_eq!(en.pairing_code(), "Pairing code");
+        assert_eq!(zh.pairing_code(), "配对码");
         assert_eq!(en.back(), "Back");
         assert_eq!(zh.back(), "返回");
         assert_eq!(en.panel_section_session(), "Session");

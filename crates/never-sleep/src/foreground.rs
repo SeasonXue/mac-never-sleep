@@ -30,12 +30,26 @@ pub fn run_foreground(
         r.store(false, Ordering::SeqCst);
     });
 
+    let cloud = if crate::cloud::cloud_enabled() {
+        Some(crate::cloud::spawn_reporter(
+            crate::cloud::load_or_create_identity(),
+            crate::cloud::default_display_name(),
+        ))
+    } else {
+        None
+    };
+    let mut pairing = None;
+
     let t = engine.config.tr();
     println!("{}", t.foreground_started());
     println!("{}", t.foreground_status_hint());
 
     while running.load(Ordering::SeqCst) && engine.is_active() {
         dispatch(&mut engine, platform, Input::Tick);
+        if let Some(handle) = cloud.as_ref() {
+            handle.push_status(engine.json_status(&platform.snapshot()));
+            crate::cloud::apply_polled_commands(&mut engine, platform, handle, &mut pairing);
+        }
         thread::sleep(Duration::from_millis(HEARTBEAT_MS));
     }
 

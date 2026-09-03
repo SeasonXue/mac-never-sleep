@@ -14,7 +14,7 @@ pub const TRAY_REOPEN_GUARD_MS: u64 = 400;
 
 /// Compact menu-bar popover. Height hugs the packed main/settings column.
 pub const PANEL_WIDTH: f64 = 320.0;
-pub const PANEL_HEIGHT: f64 = 391.0;
+pub const PANEL_HEIGHT: f64 = 423.0;
 /// Two 12pt lid-on-battery lines plus the 3pt status-stack gap after the summary.
 pub const WARNING_SLOT: f64 = 35.0;
 pub const HERO_SIZE: f64 = 124.0;
@@ -138,13 +138,13 @@ pub fn main_column_height() -> f64 {
         + FOOTER_HEIGHT
 }
 
-/// Packed settings column: head, 7-row card (duration + six switches), language, chrome.
+/// Packed settings column: head, 8-row card (duration + six switches + pairing), language, chrome.
 pub fn settings_column_height() -> f64 {
     CONTENT_INSET * 2.0
         + SHEET_HEAD_HEIGHT
         + 8.0
-        + CARD_ROW_HEIGHT * 7.0
-        + CARD_HAIRLINE * 6.0
+        + CARD_ROW_HEIGHT * 8.0
+        + CARD_HAIRLINE * 7.0
         + 12.0
         + LANGUAGE_HEIGHT
         + FOOTER_GAP
@@ -499,6 +499,19 @@ pub struct PanelState {
     pub help_note_lid: String,
     pub help_note_battery: String,
     pub help_note_quit: String,
+    pub pairing_label: String,
+    pub pairing_code: String,
+    pub pairing_url: String,
+}
+
+impl PanelState {
+    pub fn with_pairing(mut self, code: &str, url: &str) -> Self {
+        let normalized = never_sleep_core::normalize_pairing_code(code)
+            .unwrap_or_else(|| code.replace('-', "").to_ascii_uppercase());
+        self.pairing_code = never_sleep_core::format_pairing_code(&normalized);
+        self.pairing_url = url.to_string();
+        self
+    }
 }
 
 pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
@@ -577,6 +590,9 @@ pub fn panel_state(cfg: &AppConfig, vm: &ViewModel) -> PanelState {
         help_note_lid: t.help_note_lid().into(),
         help_note_battery: t.help_note_battery().into(),
         help_note_quit: t.help_note_quit().into(),
+        pairing_label: t.phone_board().into(),
+        pairing_code: String::new(),
+        pairing_url: String::new(),
     }
 }
 
@@ -729,7 +745,7 @@ mod tests {
         assert_eq!(
             PANEL_HEIGHT,
             panel_hug_height(),
-            "the popover hugs the main column; 480pt left a void between the card and 更多设置"
+            "the popover hugs the taller packed column"
         );
         assert_eq!(HERO_SIZE, 124.0);
         assert_eq!(HERO_IMAGE, 104.0);
@@ -863,22 +879,22 @@ mod tests {
             CONTENT_INSET * 2.0
                 + SHEET_HEAD_HEIGHT
                 + 8.0
-                + CARD_ROW_HEIGHT * 7.0
-                + CARD_HAIRLINE * 6.0
+                + CARD_ROW_HEIGHT * 8.0
+                + CARD_HAIRLINE * 7.0
                 + 12.0
                 + LANGUAGE_HEIGHT
                 + FOOTER_GAP
                 + FOOTER_HEIGHT,
-            "settings now holds duration plus the six switches"
+            "settings holds duration, six switches, and the phone pairing code"
         );
         assert_eq!(
             panel_hug_height(),
-            main_column_height(),
-            "main is the taller page once the elapsed clock is reserved"
+            settings_column_height(),
+            "the pairing row makes Settings the taller page"
         );
         assert!(
-            settings_column_height() < panel_hug_height(),
-            "settings slack fills the extra under the language control"
+            main_column_height() < panel_hug_height(),
+            "main slack fills the extra under Sleep Display Now"
         );
     }
 
@@ -1102,6 +1118,21 @@ mod tests {
         assert!(state.elapsed_clock.is_empty());
         assert_eq!(state.sleep_now_label, t.sleep_display_now_action());
         assert!(!state.show_sleep_now);
+        assert_eq!(state.pairing_label, t.phone_board());
+        assert!(state.pairing_code.is_empty());
+    }
+
+    #[test]
+    fn pairing_row_surfaces_code_on_settings() {
+        let cfg = AppConfig::default();
+        let engine = Engine::new(cfg.clone());
+        let state = panel_state(&cfg, &engine.view(&host())).with_pairing(
+            "ab7k-2q9m",
+            "https://xyz-ai.app/never-sleep/board/?code=AB7K-2Q9M",
+        );
+        assert_eq!(state.pairing_label, "Phone board");
+        assert_eq!(state.pairing_code, "AB7K-2Q9M");
+        assert!(state.pairing_url.contains("/board/"));
     }
 
     #[test]

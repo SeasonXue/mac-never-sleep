@@ -19,6 +19,10 @@ use tray_icon::{
 };
 
 use crate::apply::{dispatch, stop_for_quit};
+use crate::cloud::{
+    apply_polled_commands, cloud_enabled, default_display_name, load_or_create_identity,
+    spawn_reporter, CloudHandle,
+};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
@@ -305,6 +309,15 @@ pub fn run() {
     let mut next_wake = Instant::now() + Duration::from_millis(HEARTBEAT_MS);
     let mut shown_onboarding = engine.config.onboarding_done;
     let mut toggle_gate = ToggleGate::default();
+    let mut pairing: Option<(String, String)> = None;
+    let cloud = if cloud_enabled() {
+        Some(spawn_reporter(
+            load_or_create_identity(),
+            default_display_name(),
+        ))
+    } else {
+        None
+    };
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(next_wake);
@@ -316,9 +329,11 @@ pub fn run() {
                 &mut tray,
                 &mut tray_active,
                 &mut popover,
-                &engine,
+                &mut engine,
                 platform.as_mut(),
                 &mut next_wake,
+                cloud.as_ref(),
+                &mut pairing,
             );
         }
 
@@ -345,9 +360,11 @@ pub fn run() {
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
@@ -357,9 +374,11 @@ pub fn run() {
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
             }
             Event::UserEvent(UserEvent::Menu(id)) => {
@@ -376,9 +395,11 @@ pub fn run() {
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
             }
             Event::UserEvent(UserEvent::Hotkey) => {
@@ -388,9 +409,11 @@ pub fn run() {
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
             }
             Event::UserEvent(UserEvent::Tray(rect)) => {
@@ -399,9 +422,11 @@ pub fn run() {
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
                 if let Some(panel) = popover.as_mut() {
                     panel.toggle_at(rect);
@@ -427,9 +452,11 @@ pub fn run() {
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
             }
             Event::WindowEvent {
@@ -623,13 +650,25 @@ fn refresh_ui(
     tray: &mut Option<TrayIcon>,
     tray_active: &mut Option<bool>,
     popover: &mut Option<Popover>,
-    engine: &Engine,
+    engine: &mut Engine,
     platform: &mut dyn Platform,
     next_wake: &mut Instant,
+    cloud: Option<&CloudHandle>,
+    pairing: &mut Option<(String, String)>,
 ) {
+    if let Some(handle) = cloud {
+        handle.push_status(engine.json_status(&platform.snapshot()));
+        apply_polled_commands(engine, platform, handle, pairing);
+    }
     let host = platform.snapshot();
     let vm = engine.view(&host);
-    let next = popover.as_ref().map(|_| panel_state(&engine.config, &vm));
+    let next = popover.as_ref().map(|_| {
+        let mut state = panel_state(&engine.config, &vm);
+        if let Some((code, url)) = pairing.as_ref() {
+            state = state.with_pairing(code, url);
+        }
+        state
+    });
     handles.status.set_text(vm.status_line);
     handles.detail.set_text(vm.detail_line);
     let warn = vm.warnings.first().cloned().unwrap_or_default();

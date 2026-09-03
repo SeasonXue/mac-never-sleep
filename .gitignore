@@ -5,3 +5,5 @@
 *.orig
 .idea
 .vscode
+node_modules/
+.wrangler/

@@ -1,6 +1,7 @@
 mod apply;
 mod cli;
 mod clock;
+mod cloud;
 mod foreground;
 #[cfg(any(test, target_os = "macos"))]
 mod icon;
@@ -70,6 +71,7 @@ fn main() {
         Command::Explain => {
             println!("{}", t.onboarding());
         }
+        Command::Pair { json } => cmd_pair(json),
     }
 }
 
@@ -125,6 +127,32 @@ fn print_resp(resp: &IpcResponse, json: bool) {
             } else if let Some(r) = &st.stop_reason {
                 println!("{r}");
             }
+        }
+    }
+}
+
+fn cmd_pair(json: bool) {
+    let identity = crate::cloud::load_or_create_identity();
+    let name = crate::cloud::default_display_name();
+    match crate::cloud::request_pairing_code(&identity, &name) {
+        Ok((code, url)) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "pairing_code": code,
+                        "pairing_url": url,
+                        "device_id": identity.device_id,
+                    })
+                );
+            } else {
+                println!("{}: {code}", ui_tr().pairing_code());
+                println!("{url}");
+            }
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
         }
     }
 }
@@ -289,6 +317,10 @@ mod tests {
         assert!(
             src.contains("sleepNow:"),
             "the moon panel must offer Sleep Display Now"
+        );
+        assert!(
+            src.contains("pairing_value"),
+            "Settings shows a pairing code row for the phone board"
         );
         assert!(
             src.contains("elapsed"),
