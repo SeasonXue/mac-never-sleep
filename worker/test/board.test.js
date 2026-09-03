@@ -228,6 +228,36 @@ test("shutdown heartbeat marks the Mac offline immediately", async () => {
   assert.equal(cmd.body.accepted, false);
 });
 
+test("offline heartbeat clears pending commands so relaunch cannot replay them", async () => {
+  let now = 1_000;
+  const board = new Board(() => now);
+  const id = identity();
+  await post(board, "/api/pair/start", id);
+  await post(board, "/api/heartbeat", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    status: sampleStatus(),
+  });
+  await post(board, "/api/command", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    cmd: "on",
+  });
+  const hb = await json(
+    await post(board, "/api/heartbeat", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      status: sampleStatus({ active: false }),
+      offline: true,
+    }),
+  );
+  assert.equal(
+    hb.body.commands.length,
+    0,
+    "offline heartbeat must return no commands so the Mac cannot apply a stale on after relaunch",
+  );
+});
+
 test("authorized on/off queues a command; bad token is rejected", async () => {
   const board = new Board(() => 1_000);
   const id = identity();

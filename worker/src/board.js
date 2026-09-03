@@ -839,6 +839,7 @@ export class Board {
     }
     if (offline === true) {
       device.lastSeen = now - HEARTBEAT_TTL_SECS - 1;
+      device.commands = [];
     } else {
       device.lastSeen = now;
     }

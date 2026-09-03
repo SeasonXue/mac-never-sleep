@@ -289,6 +289,24 @@ mod tests {
             before_match.contains("ControlFlow::Exit") && before_match.contains("return"),
             "a coincident hotkey must not run after IPC quit is accepted"
         );
+        let hotkey_block = gui
+            .split("UserEvent::Hotkey")
+            .nth(1)
+            .expect("gui Hotkey handler");
+        let hotkey_action = hotkey_block.split("refresh_ui").next().unwrap();
+        assert!(
+            hotkey_action.contains("apply_polled_commands"),
+            "hotkey toggle must drain cloud commands before dispatching the local toggle"
+        );
+        let menu_block = gui
+            .split("UserEvent::Menu(id)")
+            .nth(1)
+            .expect("gui Menu handler");
+        let menu_action = menu_block.split("handle_menu_event").next().unwrap();
+        assert!(
+            menu_action.contains("apply_polled_commands"),
+            "menu toggle must drain cloud commands before dispatching"
+        );
     }
 
     #[test]
