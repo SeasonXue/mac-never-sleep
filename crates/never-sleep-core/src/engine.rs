@@ -134,6 +134,9 @@ struct Session {
     started_unix: i64,
     duration: DurationPref,
     deadline_unix: Option<i64>,
+    /// Seconds already elapsed in the donor process. Menu `Instant` cannot
+    /// represent a multi-hour session that started before this process.
+    elapsed_base_secs: u64,
     initial_display_off_sent: bool,
     last_sleep_display_ms: Option<u64>,
     /// Remote start: skip the first forced sleep while a person is at the Mac.
@@ -145,6 +148,7 @@ struct SessionClocks {
     started_continuous_ms: u64,
     started_unix: i64,
     deadline: Option<i64>,
+    elapsed_base_secs: u64,
 }
 
 fn session_clocks(pref: DurationPref, host: &HostSnapshot) -> SessionClocks {
@@ -153,6 +157,7 @@ fn session_clocks(pref: DurationPref, host: &HostSnapshot) -> SessionClocks {
         started_continuous_ms: host.continuous_ms,
         started_unix: host.unix_secs,
         deadline: deadline_unix_secs(host.unix_secs, host.utc_offset_secs, host.unix_secs, pref),
+        elapsed_base_secs: 0,
     }
 }
 
@@ -162,17 +167,8 @@ fn clocks_from_remaining(host: &HostSnapshot, remaining: u64) -> SessionClocks {
         started_continuous_ms: host.continuous_ms,
         started_unix: host.unix_secs,
         deadline: Some(host.unix_secs + remaining as i64),
+        elapsed_base_secs: 0,
     }
-}
-
-fn backdate_starts(clocks: &mut SessionClocks, host: &HostSnapshot, elapsed_secs: Option<u64>) {
-    let Some(elapsed) = elapsed_secs else {
-        return;
-    };
-    let elapsed_ms = elapsed.saturating_mul(1_000);
-    clocks.started_ms = host.monotonic_ms.saturating_sub(elapsed_ms);
-    clocks.started_continuous_ms = host.continuous_ms.saturating_sub(elapsed_ms);
-    clocks.started_unix = host.unix_secs.saturating_sub(elapsed as i64);
 }
 
 fn handoff_clocks(
@@ -181,12 +177,8 @@ fn handoff_clocks(
     elapsed_secs: Option<u64>,
     host: &HostSnapshot,
 ) -> SessionClocks {
-    match (pref, remaining_secs) {
-        (DurationPref::Indefinite, _) => {
-            let mut clocks = session_clocks(pref, host);
-            backdate_starts(&mut clocks, host, elapsed_secs);
-            clocks
-        }
+    let mut clocks = match (pref, remaining_secs) {
+        (DurationPref::Indefinite, _) => session_clocks(pref, host),
         (_, Some(remaining)) => {
             let rem = match pref {
                 DurationPref::Hours { hours } => {
@@ -195,12 +187,12 @@ fn handoff_clocks(
                 DurationPref::UntilLocal { .. } => remaining.min(86_400),
                 DurationPref::Indefinite => remaining,
             };
-            let mut clocks = clocks_from_remaining(host, rem);
-            backdate_starts(&mut clocks, host, elapsed_secs);
-            clocks
+            clocks_from_remaining(host, rem)
         }
         (_, None) => session_clocks(pref, host),
-    }
+    };
+    clocks.elapsed_base_secs = elapsed_secs.unwrap_or(0);
+    clocks
 }
 
 #[derive(Debug, Clone)]
@@ -311,6 +303,7 @@ impl Engine {
             started_unix: clocks.started_unix,
             duration: pref,
             deadline_unix: clocks.deadline,
+            elapsed_base_secs: clocks.elapsed_base_secs,
             initial_display_off_sent: false,
             last_sleep_display_ms: None,
             remote,
@@ -493,8 +486,10 @@ impl Engine {
     /// Elapsed milliseconds and optional remaining milliseconds for the UI clock.
     pub fn session_times(&self, host: &HostSnapshot) -> Option<(u64, Option<u64>)> {
         let session = self.session.as_ref()?;
-        let elapsed = host.monotonic_ms.saturating_sub(session.started_ms);
-        Some((elapsed, self.remaining_ms(session, host)))
+        Some((
+            self.session_elapsed_ms(session, host),
+            self.remaining_ms(session, host),
+        ))
     }
 
     fn remaining_ms(&self, session: &Session, host: &HostSnapshot) -> Option<u64> {
@@ -514,15 +509,23 @@ impl Engine {
         self.remaining_ms(session, host).map(countdown_secs)
     }
 
-    fn elapsed_secs(&self, session: &Session, host: &HostSnapshot) -> u64 {
-        match session.duration {
+    fn session_elapsed_ms(&self, session: &Session, host: &HostSnapshot) -> u64 {
+        let since_adopt = match session.duration {
             DurationPref::Hours { .. } => {
-                hours_elapsed_ms(session.started_continuous_ms, host.continuous_ms) / 1_000
+                hours_elapsed_ms(session.started_continuous_ms, host.continuous_ms)
             }
             DurationPref::UntilLocal { .. } | DurationPref::Indefinite => {
-                crate::elapsed_secs(session.started_ms, host.monotonic_ms)
+                host.monotonic_ms.saturating_sub(session.started_ms)
             }
-        }
+        };
+        session
+            .elapsed_base_secs
+            .saturating_mul(1_000)
+            .saturating_add(since_adopt)
+    }
+
+    fn elapsed_secs(&self, session: &Session, host: &HostSnapshot) -> u64 {
+        self.session_elapsed_ms(session, host) / 1_000
     }
 
     pub fn json_status(&self, host: &HostSnapshot) -> JsonStatus {
@@ -785,6 +788,56 @@ mod tests {
             "adopting a 7h-old session must not reset the panel and phone elapsed clock"
         );
         assert!(eng.is_active());
+    }
+
+    #[test]
+    fn handoff_elapsed_does_not_use_menu_process_clock() {
+        let mut eng = Engine::new(cfg());
+        // Menu bar just launched: process Instant is ~1.5s, not the 7h session.
+        let h = host(1_500);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+                elapsed_secs: Some(7 * 3600),
+            },
+            &h,
+        );
+        let st = eng.json_status(&h);
+        assert_eq!(st.remaining_secs, Some(3600));
+        assert_eq!(
+            st.elapsed_secs,
+            Some(7 * 3600),
+            "elapsed must keep the handed-off 7h, not saturate to menu uptime"
+        );
+        let times = eng.session_times(&h).expect("adopted session");
+        assert_eq!(times.0, 7 * 3_600_000);
+        let later = host(11_500);
+        let later_st = eng.json_status(&later);
+        assert_eq!(later_st.elapsed_secs, Some(7 * 3600 + 10));
+        assert_eq!(later_st.remaining_secs, Some(3590));
+        assert!(eng.is_active());
+    }
+
+    #[test]
+    fn handoff_until_local_elapsed_survives_fresh_menu_clock() {
+        let mut eng = Engine::new(cfg());
+        let h = host(2_000);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
+                remaining_secs: Some(90),
+                elapsed_secs: Some(120),
+            },
+            &h,
+        );
+        let st = eng.json_status(&h);
+        assert_eq!(st.elapsed_secs, Some(120));
+        assert_eq!(st.remaining_secs, Some(90));
+        let later = host(12_000);
+        let later_st = eng.json_status(&later);
+        assert_eq!(later_st.elapsed_secs, Some(130));
+        assert_eq!(later_st.remaining_secs, Some(80));
     }
 
     #[test]
