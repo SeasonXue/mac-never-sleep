@@ -197,6 +197,15 @@ mod tests {
             parse_duration_pref(" 8H ").unwrap(),
             DurationPref::Hours { hours: 8 }
         );
+        assert_eq!(
+            parse_duration_pref("240h").unwrap(),
+            DurationPref::Hours { hours: 240 }
+        );
+        assert_eq!(
+            parse_duration_pref(&format!("{h}h", h = u32::MAX)).unwrap(),
+            DurationPref::Hours { hours: u32::MAX }
+        );
+        assert!(parse_duration_pref(&format!("{h}h", h = u64::from(u32::MAX) + 1)).is_err());
     }
 
     #[test]

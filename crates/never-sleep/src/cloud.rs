@@ -84,14 +84,16 @@ impl CommandInbox {
                 out.push(cmd);
             }
         }
-        const CAP: usize = 64;
-        if self.seen.len() > CAP {
-            let drop_n = self.seen.len() - CAP;
-            for id in self.seen.drain(..drop_n) {
-                self.known.remove(&id);
-            }
-        }
         out
+    }
+
+    /// Keep every delivered id the Worker still lists. Call after a successful
+    /// heartbeat so acked commands leave the inbox; never drop still-pending ids
+    /// (a size cap here would replay on/off after the next beat).
+    pub fn retain_pending(&mut self, pending: &[RemoteCommand]) {
+        let keep: HashSet<&str> = pending.iter().map(|c| c.id.as_str()).collect();
+        self.seen.retain(|id| keep.contains(id.as_str()));
+        self.known.retain(|id| keep.contains(id.as_str()));
     }
 
     pub fn ack_ids(&self) -> &[String] {
@@ -410,7 +412,9 @@ fn emit_outcome(
     } else if let (Some(code), Some(url)) = (outcome.pairing_code, outcome.pairing_url) {
         let _ = event_tx.send(CloudEvent::Pairing { code, url });
     }
-    let commands = inbox.take_new(outcome.commands);
+    let pending = outcome.commands;
+    let commands = inbox.take_new(pending.clone());
+    inbox.retain_pending(&pending);
     if !commands.is_empty() {
         let _ = event_tx.send(CloudEvent::Commands(commands));
     }
@@ -599,11 +603,29 @@ mod tests {
     #[test]
     fn command_inbox_dedups_and_acks() {
         let mut inbox = CommandInbox::default();
-        let first = inbox.take_new(vec![RemoteCommand::on("c1", None)]);
+        let first = inbox.take_new(vec![RemoteCommand::on("seed", None)]);
         assert_eq!(first.len(), 1);
-        let again = inbox.take_new(vec![RemoteCommand::on("c1", None)]);
+        let again = inbox.take_new(vec![RemoteCommand::on("seed", None)]);
         assert!(again.is_empty());
-        assert_eq!(inbox.ack_ids(), ["c1"]);
+        assert_eq!(inbox.ack_ids(), ["seed"]);
+        let batch: Vec<_> = (0..70)
+            .map(|i| RemoteCommand::on(format!("c{i}"), None))
+            .collect();
+        let many = inbox.take_new(batch.clone());
+        assert_eq!(many.len(), 70);
+        assert_eq!(inbox.ack_ids().len(), 71);
+        inbox.retain_pending(&batch);
+        assert_eq!(
+            inbox.ack_ids().len(),
+            70,
+            "delivered ids stay until the worker drops them"
+        );
+        assert!(
+            inbox.ack_ids().iter().all(|id| id != "seed"),
+            "ids the worker no longer lists can leave after ack"
+        );
+        inbox.retain_pending(&[]);
+        assert!(inbox.ack_ids().is_empty());
     }
 
     struct ScriptedTransport {

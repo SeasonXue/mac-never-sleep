@@ -104,6 +104,92 @@ export function shardName(path, body) {
   return null;
 }
 
+export const LIST_MAX_DEVICES = 32;
+export const PAIR_RESERVE_ATTEMPTS = 8;
+const U32_MAX = 0xffffffff;
+/** `JsonStatus` counters are `Option<u64>`; JSON numbers stay exact through 2^53-1. */
+const MAX_STATUS_SECS = Number.MAX_SAFE_INTEGER;
+
+export function capListEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const entry of entries) {
+    const id = entry?.device_id;
+    if (typeof id !== "string" || id.length < 16) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(entry);
+    if (out.length >= LIST_MAX_DEVICES) break;
+  }
+  return out;
+}
+
+export function boardHasState(data) {
+  if (!data || typeof data !== "object") return false;
+  const devices = data.devices || {};
+  const codes = data.codes || {};
+  return Object.keys(devices).length > 0 || Object.keys(codes).length > 0;
+}
+
+export function persistBoardAction(previous, next) {
+  if (boardHasState(next)) return "put";
+  if (previous == null) return "skip";
+  return "delete";
+}
+
+function isUntilClock(raw) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if (!m) return false;
+  const hour = Number(m[1]);
+  const minute = Number(m[2]);
+  return hour <= 23 && minute <= 59;
+}
+
+function parseU32Hours(num) {
+  if (typeof num !== "string" || !/^\d+$/.test(num) || num.length > 10) {
+    return null;
+  }
+  const hours = Number(num);
+  if (!Number.isInteger(hours) || hours < 1 || hours > U32_MAX) return null;
+  return hours;
+}
+
+export function isAllowedDuration(raw) {
+  if (typeof raw !== "string") return false;
+  const s = raw.trim().toLowerCase();
+  if (!s) return false;
+  if (s === "indefinite" || s === "inf" || s === "forever" || s === "无限") {
+    return true;
+  }
+  let clock = null;
+  if (s.startsWith("until=")) clock = s.slice(6);
+  else if (s.startsWith("until:")) clock = s.slice(6);
+  else if (isUntilClock(s)) clock = s;
+  if (clock != null) return isUntilClock(clock);
+  if (s.endsWith("h")) return parseU32Hours(s.slice(0, -1)) != null;
+  if (s.endsWith("小时")) return parseU32Hours(s.slice(0, -2).trim()) != null;
+  return false;
+}
+
+export async function publishReservedPairing({
+  generateCode,
+  reserve,
+  startDevice,
+  release,
+  maxAttempts = PAIR_RESERVE_ATTEMPTS,
+}) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const code = generateCode();
+    const reserved = await reserve(code);
+    if (!reserved?.ok) continue;
+    const started = await startDevice(code);
+    if (started?.ok) return started;
+    if (release) await release(code);
+  }
+  return { ok: false, error: "pair_busy", status: 503 };
+}
+
 function asBool(value) {
   return value === true;
 }
@@ -128,9 +214,9 @@ export function sanitizeStatus(raw) {
     lid: src.lid === "closed" ? "closed" : "open",
     on_ac: asBool(src.on_ac),
     battery: asInt(src.battery, 0, 100),
-    remaining_secs: asInt(src.remaining_secs, 0, 7 * 24 * 3600),
+    remaining_secs: asInt(src.remaining_secs, 0, MAX_STATUS_SECS),
     user_present: asBool(src.user_present),
-    elapsed_secs: asInt(src.elapsed_secs, 0, 7 * 24 * 3600),
+    elapsed_secs: asInt(src.elapsed_secs, 0, MAX_STATUS_SECS),
     stop_reason: null,
     stop_reason_code: asStopReasonCode(src.stop_reason_code),
     screen_off_enabled: asBool(src.screen_off_enabled),
@@ -144,7 +230,7 @@ function randomHex(bytes) {
   return [...buf].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function pairingCodeFromRandom() {
+export function proposePairingCode() {
   const buf = new Uint8Array(5);
   crypto.getRandomValues(buf);
   let bits = 0n;
@@ -242,7 +328,15 @@ export class Board {
     return { ok: true, device_id: offer.deviceId, status: 200 };
   }
 
-  startPairing({ deviceId, deviceToken, displayName, lang, origin }) {
+  startPairing({
+    deviceId,
+    deviceToken,
+    displayName,
+    lang,
+    origin,
+    pairingCode,
+    expiresUnix,
+  }) {
     const now = this.nowSecs();
     if (
       typeof deviceId !== "string" ||
@@ -274,19 +368,31 @@ export class Board {
         this.codes.delete(code);
       }
     }
-    const code = pairingCodeFromRandom();
+    let code;
+    if (pairingCode != null && pairingCode !== "") {
+      code = normalizePairingCode(pairingCode);
+      if (!code) {
+        return { ok: false, error: "bad_code", status: 400 };
+      }
+    } else {
+      code = proposePairingCode();
+    }
+    const expires =
+      typeof expiresUnix === "number" && Number.isFinite(expiresUnix)
+        ? expiresUnix
+        : now + PAIRING_TTL_SECS;
     this.codes.set(code, {
       deviceId,
       token: deviceToken,
       displayName: displayName || existing?.displayName || "Mac",
-      expires: now + PAIRING_TTL_SECS,
+      expires,
     });
     const chinese = isChineseLang(lang);
     return {
       ok: true,
       pairing_code: formatPairingCode(code),
       pairing_url: pairingUrl(code, chinese, origin),
-      expires_unix: now + PAIRING_TTL_SECS,
+      expires_unix: expires,
       replaced_codes: replacedCodes,
       status: 200,
     };
@@ -301,13 +407,25 @@ export class Board {
     ) {
       return { ok: false, error: "bad_offer", status: 400 };
     }
+    const existing = this.codes.get(code);
+    if (existing) {
+      if (
+        existing.deviceId === deviceId &&
+        tokensMatch(existing.token, deviceToken)
+      ) {
+        existing.displayName = displayName || existing.displayName;
+        existing.expires = expiresUnix || existing.expires;
+        return { ok: true, created: false, status: 200 };
+      }
+      return { ok: false, error: "taken", status: 409 };
+    }
     this.codes.set(code, {
       deviceId,
       token: deviceToken,
       displayName: displayName || "Mac",
       expires: expiresUnix || this.nowSecs() + PAIRING_TTL_SECS,
     });
-    return { ok: true, status: 200 };
+    return { ok: true, created: true, status: 200 };
   }
 
   dropOffer(rawCode) {
@@ -391,13 +509,13 @@ export class Board {
     };
   }
 
-  list(entries) {
-    const now = this.nowSecs();
-    const devices = [];
-    if (!Array.isArray(entries)) {
+  list(entriesIn) {
+    if (!Array.isArray(entriesIn)) {
       return { ok: false, error: "bad_request", status: 400 };
     }
-    for (const entry of entries) {
+    const now = this.nowSecs();
+    const devices = [];
+    for (const entry of capListEntries(entriesIn)) {
       const deviceId = entry?.device_id;
       const token = entry?.device_token;
       const device = this.devices.get(deviceId);
@@ -435,7 +553,12 @@ export class Board {
       id: randomHex(8),
       cmd,
     };
-    if (cmd === "on" && duration) item.duration = duration;
+    if (cmd === "on" && duration != null && duration !== "") {
+      if (typeof duration !== "string" || !isAllowedDuration(duration)) {
+        return { ok: false, error: "bad_duration", status: 400 };
+      }
+      item.duration = duration.trim();
+    }
     device.commands = device.commands || [];
     device.commands.push(item);
     return { ok: true, accepted: true, command_id: item.id, status: 200 };
@@ -502,6 +625,8 @@ export async function handleApi(board, request, env = {}) {
         displayName: body.display_name,
         lang: body.lang,
         origin,
+        pairingCode: body.pairing_code,
+        expiresUnix: body.expires_unix,
       });
       break;
     case "/api/pair/claim":

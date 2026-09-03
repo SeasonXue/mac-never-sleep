@@ -1,11 +1,16 @@
 import {
   Board,
+  capListEntries,
+  formatPairingCode,
   handleApi,
   handleInternal,
   jsonResponse,
   normalizePairingCode,
-  pairingCodeIsLive,
+  PAIRING_TTL_SECS,
+  persistBoardAction,
+  proposePairingCode,
   publicSiteOrigin,
+  publishReservedPairing,
   shardName,
 } from "./board.js";
 
@@ -28,7 +33,13 @@ export class BoardHub {
     const response = path.startsWith("/internal/")
       ? await handleInternal(board, request)
       : await handleApi(board, request);
-    await this.ctx.storage.put("board", board.toJSON());
+    const next = board.toJSON();
+    const action = persistBoardAction(stored, next);
+    if (action === "put") {
+      await this.ctx.storage.put("board", next);
+    } else if (action === "delete") {
+      await this.ctx.storage.delete("board");
+    }
     return response;
   }
 }
@@ -80,13 +91,10 @@ async function routeApi(request, env) {
   }
 
   if (path === "/api/list") {
-    const entries = Array.isArray(body.devices) ? body.devices : [];
+    const entries = capListEntries(body.devices);
     const devices = [];
     const parts = await Promise.all(
       entries.map(async (entry) => {
-        if (typeof entry?.device_id !== "string" || entry.device_id.length < 16) {
-          return [];
-        }
         const res = await stubFetch(
           env,
           `device:${entry.device_id}`,
@@ -129,6 +137,60 @@ async function routeApi(request, env) {
     return res;
   }
 
+  if (path === "/api/pair/start") {
+    const name = shardName(path, body);
+    if (!name) {
+      return jsonResponse({ ok: false, error: "bad_identity" }, 400);
+    }
+    const expiresUnix = Math.floor(Date.now() / 1000) + PAIRING_TTL_SECS;
+    const started = await publishReservedPairing({
+      generateCode: proposePairingCode,
+      reserve: async (code) => {
+        const res = await stubFetch(
+          env,
+          `pair:${code}`,
+          "https://do/internal/pair-offer",
+          {
+            pairing_code: formatPairingCode(code),
+            device_id: body.device_id,
+            device_token: body.device_token,
+            display_name: body.display_name,
+            expires_unix: expiresUnix,
+          },
+          origin,
+        );
+        return res.json().catch(() => ({}));
+      },
+      startDevice: async (code) => {
+        const res = await stubFetch(
+          env,
+          name,
+          url.href,
+          {
+            ...body,
+            pairing_code: formatPairingCode(code),
+            expires_unix: expiresUnix,
+          },
+          origin,
+        );
+        const json = await res.json().catch(() => ({}));
+        return { ...json, status: res.status };
+      },
+      release: async (code) => {
+        await dropPairShards(env, [code], origin);
+      },
+    });
+    if (started.ok) {
+      await dropPairShards(env, started.replaced_codes, origin);
+      const { status, ...payload } = started;
+      return jsonResponse(payload, status || 200);
+    }
+    return jsonResponse(
+      { ok: false, error: started.error || "pair_busy" },
+      started.status || 503,
+    );
+  }
+
   const name = shardName(path, body);
   if (!name) {
     return jsonResponse({ ok: false, error: "bad_identity" }, 400);
@@ -137,38 +199,6 @@ async function routeApi(request, env) {
   if (path === "/api/heartbeat") {
     const json = await res.clone().json().catch(() => ({}));
     await dropPairShards(env, json.expired_codes, origin);
-  }
-  if (path === "/api/pair/start") {
-    const json = await res.clone().json().catch(() => ({}));
-    if (json.ok && json.pairing_code) {
-      await dropPairShards(env, json.replaced_codes, origin);
-      const live = await stubFetch(
-        env,
-        name,
-        "https://do/internal/live-pairing",
-        { device_id: body.device_id },
-        origin,
-      );
-      const liveJson = await live.json().catch(() => ({}));
-      if (pairingCodeIsLive(liveJson.pairing_code, json.pairing_code)) {
-        const code = normalizePairingCode(json.pairing_code);
-        if (code) {
-          await stubFetch(
-            env,
-            `pair:${code}`,
-            "https://do/internal/pair-offer",
-            {
-              pairing_code: json.pairing_code,
-              device_id: body.device_id,
-              device_token: body.device_token,
-              display_name: body.display_name,
-              expires_unix: json.expires_unix,
-            },
-            origin,
-          );
-        }
-      }
-    }
   }
   return res;
 }

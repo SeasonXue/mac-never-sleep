@@ -113,6 +113,23 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(index.contains("shardName"));
     assert!(index.contains("pairingCodeIsLive"));
     assert!(index.contains("expired_codes"));
+    assert!(index.contains("capListEntries"));
+    assert!(index.contains("persistBoardAction"));
+    assert!(index.contains("publishReservedPairing"));
+    let board = read("worker/src/board.js");
+    assert!(board.contains("LIST_MAX_DEVICES = 32"));
+    assert!(board.contains("isAllowedDuration"));
+    assert!(board.contains("error: \"taken\""));
+    assert!(
+        !board.contains("7 * 24 * 3600") && !board.contains("604800"),
+        "status counters follow JsonStatus u64, not a seven-day ceiling"
+    );
+    let cloud = read("crates/never-sleep/src/cloud.rs");
+    assert!(cloud.contains("retain_pending"));
+    assert!(
+        !cloud.contains("const CAP: usize = 64"),
+        "delivered command ids must not be truncated before ack"
+    );
 }
 
 #[test]

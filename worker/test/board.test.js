@@ -2,12 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   Board,
+  capListEntries,
   handleApi,
   HEARTBEAT_TTL_SECS,
+  isAllowedDuration,
+  LIST_MAX_DEVICES,
   PAIRING_TTL_SECS,
   pairingCodeIsLive,
   pairingUrl,
+  persistBoardAction,
   publicSiteOrigin,
+  publishReservedPairing,
   sanitizeStatus,
   shardName,
 } from "../src/board.js";
@@ -546,4 +551,162 @@ test("stale pair/start must not publish after a newer code is live", () => {
     pairingCodeIsLive(newest.pairing_code, stale.pairing_code),
     true,
   );
+});
+
+test("list entries are capped and deduplicated before fan-out", () => {
+  const a = { device_id: "aa".repeat(16), device_token: "t" };
+  const b = { device_id: "bb".repeat(16), device_token: "t" };
+  const capped = capListEntries([a, a, b, { device_id: "x" }]);
+  assert.equal(capped.length, 2);
+  assert.equal(capped[0].device_id, a.device_id);
+  assert.equal(capped[1].device_id, b.device_id);
+  const many = Array.from({ length: LIST_MAX_DEVICES + 10 }, (_, i) => ({
+    device_id: String(i).padStart(32, "0"),
+    device_token: "t",
+  }));
+  assert.equal(capListEntries(many).length, LIST_MAX_DEVICES);
+});
+
+test("empty lookup boards are not persisted", () => {
+  assert.equal(persistBoardAction(null, { devices: {}, codes: {} }), "skip");
+  assert.equal(
+    persistBoardAction(null, { devices: { ab: { token: "x" } }, codes: {} }),
+    "put",
+  );
+  assert.equal(
+    persistBoardAction({ devices: { ab: {} }, codes: {} }, { devices: {}, codes: {} }),
+    "delete",
+  );
+  assert.equal(
+    persistBoardAction({ devices: {}, codes: {} }, { devices: {}, codes: {} }),
+    "delete",
+    "leftover empty boards from failed lookups are dropped",
+  );
+});
+
+test("command duration must be a Rust-parseable string", async () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  await post(board, "/api/pair/start", id);
+  await post(board, "/api/heartbeat", {
+    device_id: id.device_id,
+    device_token: id.device_token,
+    status: sampleStatus(),
+  });
+  for (const duration of [8, { hours: 8 }, true, "nope", "0h"]) {
+    const res = await json(
+      await post(board, "/api/command", {
+        device_id: id.device_id,
+        device_token: id.device_token,
+        cmd: "on",
+        duration,
+      }),
+    );
+    assert.equal(res.status, 400, JSON.stringify(duration));
+    assert.equal(res.body.error, "bad_duration");
+  }
+  const emptyBeat = await json(
+    await post(board, "/api/heartbeat", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      status: sampleStatus(),
+    }),
+  );
+  assert.equal(emptyBeat.body.commands.length, 0);
+  const ok = await json(
+    await post(board, "/api/command", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      cmd: "on",
+      duration: "240h",
+    }),
+  );
+  assert.equal(ok.status, 200);
+  const beat = await json(
+    await post(board, "/api/heartbeat", {
+      device_id: id.device_id,
+      device_token: id.device_token,
+      status: sampleStatus(),
+    }),
+  );
+  assert.equal(beat.body.commands[0].duration, "240h");
+});
+
+test("sanitizeStatus keeps week-plus remaining and elapsed seconds", () => {
+  const st = sanitizeStatus({
+    active: true,
+    display: "asleep",
+    lid: "open",
+    on_ac: true,
+    remaining_secs: 240 * 3600,
+    elapsed_secs: 8 * 24 * 3600,
+    user_present: false,
+    screen_off_enabled: true,
+    lid_awake_enabled: true,
+  });
+  assert.equal(st.remaining_secs, 240 * 3600);
+  assert.equal(st.elapsed_secs, 8 * 24 * 3600);
+  const maxHours = sanitizeStatus({
+    remaining_secs: 0xffffffff * 3600,
+    elapsed_secs: Number.MAX_SAFE_INTEGER,
+  });
+  assert.equal(maxHours.remaining_secs, 0xffffffff * 3600);
+  assert.equal(maxHours.elapsed_secs, Number.MAX_SAFE_INTEGER);
+});
+
+test("isAllowedDuration matches the Rust duration parser", () => {
+  for (const raw of ["240h", "indefinite", "until=08:00", "22:30", "3小时"]) {
+    assert.equal(isAllowedDuration(raw), true, raw);
+  }
+  assert.equal(isAllowedDuration("4294967295h"), true);
+  assert.equal(isAllowedDuration("4294967296h"), false);
+  assert.equal(isAllowedDuration(8), false);
+  assert.equal(isAllowedDuration({ hours: 8 }), false);
+});
+
+test("pair/start uses a reserved pairing code when provided", async () => {
+  const board = new Board(() => 1_000);
+  const started = await json(
+    await post(board, "/api/pair/start", {
+      ...identity(),
+      pairing_code: "AB7K-2Q9M",
+      expires_unix: 2_000,
+    }),
+  );
+  assert.equal(started.status, 200);
+  assert.equal(started.body.pairing_code, "AB7K-2Q9M");
+  assert.equal(started.body.expires_unix, 2000);
+});
+
+test("pair shard reservation is create-if-absent and retries on collision", async () => {
+  const board = new Board(() => 1_000);
+  const a = identity();
+  const b = {
+    device_id: "11".repeat(16),
+    device_token: "22".repeat(32),
+    display_name: "Kitchen",
+  };
+  const first = board.rememberOffer({
+    pairingCode: "AB7K2Q9M",
+    deviceId: a.device_id,
+    deviceToken: a.device_token,
+    displayName: a.display_name,
+  });
+  assert.equal(first.ok, true);
+  const clash = board.rememberOffer({
+    pairingCode: "AB7K2Q9M",
+    deviceId: b.device_id,
+    deviceToken: b.device_token,
+    displayName: b.display_name,
+  });
+  assert.equal(clash.ok, false);
+  assert.equal(clash.status, 409);
+  const codes = ["AB7K2Q9M", "ZZZZYYYY"];
+  const result = await publishReservedPairing({
+    generateCode: () => codes.shift(),
+    reserve: async (code) =>
+      code === "AB7K2Q9M" ? { ok: false, error: "taken" } : { ok: true },
+    startDevice: async (code) => ({ ok: true, pairing_code: code }),
+  });
+  assert.equal(result.pairing_code, "ZZZZYYYY");
 });
