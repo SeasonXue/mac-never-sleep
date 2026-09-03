@@ -1577,6 +1577,47 @@ test("claim reservation covers JSON-escaped and emoji display names near quota",
   );
 });
 
+test("capacity probe treats blocked localStorage reads as a miss", () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function withDevices");
+  const end = src.indexOf("\n  async function post(");
+  const { storageCanHold, canStoreClaim, claimReservation } = new Function(
+    `const LIST_MAX_DEVICES = 32;\nconst MAX_DISPLAY_NAME_CHARS = 128;\n${src.slice(start, end)}\nreturn { storageCanHold, canStoreClaim, claimReservation };`,
+  )();
+
+  const blocked = {
+    getItem() {
+      const err = new Error("The operation is insecure.");
+      err.name = "SecurityError";
+      throw err;
+    },
+    setItem() {
+      throw new Error("blocked storage must not write after a failed read");
+    },
+    removeItem() {},
+  };
+  assert.equal(
+    storageCanHold(blocked, "never-sleep-devices", []),
+    false,
+    "SecurityError on getItem must not reject claim(); treat it as no capacity",
+  );
+  assert.equal(
+    canStoreClaim(blocked, "never-sleep-devices", [], claimReservation()),
+    false,
+  );
+
+  const fn = src.slice(
+    src.indexOf("function storageCanHold"),
+    src.indexOf("function canStoreClaim"),
+  );
+  const tryAt = fn.indexOf("try {");
+  const getAt = fn.indexOf("getItem(key)");
+  assert.ok(
+    tryAt >= 0 && getAt > tryAt,
+    "the initial localStorage read must sit inside the guarded section",
+  );
+});
+
 test("rate-limit state is bounded regardless of concurrent callers", () => {
   const globalLimit = DEVICE_GLOBAL_LIMIT;
   const ipLimit = DEVICE_IP_LIMIT;

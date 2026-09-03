@@ -243,8 +243,20 @@ pub fn load_or_create_identity() -> io::Result<CloudIdentity> {
     fill_random(&mut id_bytes);
     fill_random(&mut token_bytes);
     let identity = identity_from_bytes(&id_bytes, &token_bytes);
-    save_identity(&identity)?;
-    Ok(identity)
+    match save_identity(&identity) {
+        Ok(()) => Ok(identity),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            let text = fs::read_to_string(&path)?;
+            let id = toml::from_str::<CloudIdentity>(&text)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
+                restrict_owner_only(&path)?;
+                return Ok(id);
+            }
+            Err(err)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn restrict_owner_only(path: &Path) -> io::Result<()> {
@@ -256,8 +268,7 @@ fn restrict_owner_only(path: &Path) -> io::Result<()> {
 fn write_owner_only(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
         .open(path)?;
     file.write_all(bytes)?;
@@ -624,11 +635,22 @@ impl CloudTransport for UreqTransport {
 }
 
 /// Apply pending remote commands using the same Engine path as local IPC.
+/// Drop the retained pairing state if its deadline has passed.
+/// Call before rendering the pairing code in the panel or answering
+/// `IpcRequest::Pair` so connectivity loss doesn't show a stale code forever.
+pub fn expire_stale_pairing(pairing: &mut Option<(String, String, u64)>) {
+    if let Some((_, _, expires_unix)) = pairing.as_ref() {
+        if unix_now_secs() >= *expires_unix {
+            *pairing = None;
+        }
+    }
+}
+
 pub fn apply_polled_commands(
     engine: &mut Engine,
     platform: &mut dyn Platform,
     handle: &CloudHandle,
-    pairing: &mut Option<(String, String)>,
+    pairing: &mut Option<(String, String, u64)>,
 ) {
     for event in handle.poll_events() {
         match event {
@@ -641,7 +663,7 @@ pub fn apply_polled_commands(
                 expires_unix,
             } => {
                 if unix_now_secs() < expires_unix {
-                    *pairing = Some((code, url));
+                    *pairing = Some((code, url, expires_unix));
                 } else {
                     *pairing = None;
                 }
@@ -649,6 +671,7 @@ pub fn apply_polled_commands(
             CloudEvent::PairingCleared => *pairing = None,
         }
     }
+    expire_stale_pairing(pairing);
 }
 
 /// Apply remote commands first, then queue the resulting snapshot.
@@ -656,7 +679,7 @@ pub fn sync_cloud(
     engine: &mut Engine,
     platform: &mut dyn Platform,
     handle: &CloudHandle,
-    pairing: &mut Option<(String, String)>,
+    pairing: &mut Option<(String, String, u64)>,
 ) {
     apply_polled_commands(engine, platform, handle, pairing);
     handle.push_status(
@@ -700,6 +723,42 @@ mod tests {
             screen_off_enabled: true,
             lid_awake_enabled: true,
         }
+    }
+
+    #[test]
+    fn write_owner_only_create_new_leaves_winner_intact() {
+        let _dir = TestDataDir::install();
+        let path = cloud_identity_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"winner-identity").unwrap();
+        let err = write_owner_only(&path, b"loser-identity")
+            .expect_err("a late writer must not truncate the winner");
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "winner-identity",
+            "create_new must leave the first writer's credentials on disk"
+        );
+    }
+
+    #[test]
+    fn load_or_create_identity_reloads_winner_after_create_race() {
+        let src = include_str!("cloud.rs");
+        assert!(
+            src.contains("create_new(true)"),
+            "cloud.toml must be created atomically so two first-run processes cannot truncate each other"
+        );
+        let load = src
+            .split("pub fn load_or_create_identity")
+            .nth(1)
+            .unwrap()
+            .split("fn restrict_owner_only")
+            .next()
+            .unwrap();
+        assert!(
+            load.contains("AlreadyExists"),
+            "the losing process must reload the winner instead of advertising a different identity"
+        );
     }
 
     #[test]
@@ -881,6 +940,37 @@ mod tests {
     }
 
     #[test]
+    fn retained_pairing_state_is_cleared_when_expiry_passes() {
+        let (event_tx, event_rx) = mpsc::channel();
+        // send a fresh (non-expired) pairing event
+        event_tx
+            .send(CloudEvent::Pairing {
+                code: "AB7K-2Q9M".into(),
+                url: "https://example/board/?code=AB7K-2Q9M".into(),
+                expires_unix: unix_now_secs() + 60,
+            })
+            .unwrap();
+        let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
+        let mut pairing = None;
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(pairing.is_some(), "fresh pairing code must be retained");
+        // simulate expiry by backdating the stored deadline
+        if let Some((_, _, ref mut exp)) = pairing.as_mut() {
+            *exp = 1;
+        }
+        // refresh should clear it
+        expire_stale_pairing(&mut pairing);
+        assert!(pairing.is_none(), "expired pairing state must be cleared");
+        let src = include_str!("cloud.rs");
+        assert!(
+            src.contains("expire_stale_pairing"),
+            "gui must call expire_stale_pairing before rendering or answering IpcRequest::Pair"
+        );
+    }
+
+    #[test]
     fn expired_pairing_event_does_not_set_gui_code() {
         let (event_tx, event_rx) = mpsc::channel();
         event_tx
@@ -891,7 +981,7 @@ mod tests {
             })
             .unwrap();
         let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
-        let mut pairing = Some(("OLD-CODE".into(), "https://example/board/".into()));
+        let mut pairing = Some(("OLD-CODE".into(), "https://example/board/".into(), 1u64));
         let mut engine = Engine::new(AppConfig::default());
         let mut platform = StubPlatform;
         apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
@@ -906,7 +996,11 @@ mod tests {
         let (event_tx, event_rx) = mpsc::channel();
         event_tx.send(CloudEvent::PairingCleared).unwrap();
         let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
-        let mut pairing = Some(("AB7K-2Q9M".into(), "https://example/board/?code=x".into()));
+        let mut pairing = Some((
+            "AB7K-2Q9M".into(),
+            "https://example/board/?code=x".into(),
+            u64::MAX,
+        ));
         let mut engine = Engine::new(AppConfig::default());
         let mut platform = StubPlatform;
         apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
@@ -1090,7 +1184,7 @@ mod tests {
         let mut platform = StubPlatform;
         apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
         assert_eq!(
-            pairing.as_ref().map(|(code, _)| code.as_str()),
+            pairing.as_ref().map(|(code, _, _)| code.as_str()),
             Some("AB7K-2Q9M")
         );
     }

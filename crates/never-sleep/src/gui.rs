@@ -308,7 +308,7 @@ pub fn run() {
     let mut next_wake = Instant::now() + Duration::from_millis(HEARTBEAT_MS);
     let mut shown_onboarding = engine.config.onboarding_done;
     let mut toggle_gate = ToggleGate::default();
-    let mut pairing: Option<(String, String)> = None;
+    let mut pairing: Option<(String, String, u64)> = None;
     let cloud_identity = if cloud_enabled() {
         match load_or_create_identity() {
             Ok(id) => Some(id),
@@ -344,7 +344,7 @@ pub fn run() {
                 &mut engine,
                 platform.as_mut(),
                 incoming,
-                &pairing,
+                &mut pairing,
                 cloud_identity.as_ref(),
             ) {
                 flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
@@ -717,16 +717,17 @@ fn refresh_ui(
     platform: &mut dyn Platform,
     next_wake: &mut Instant,
     cloud: Option<&CloudHandle>,
-    pairing: &mut Option<(String, String)>,
+    pairing: &mut Option<(String, String, u64)>,
 ) {
     if let Some(handle) = cloud {
         crate::cloud::sync_cloud(engine, platform, handle, pairing);
     }
+    crate::cloud::expire_stale_pairing(pairing);
     let host = platform.snapshot();
     let vm = engine.view(&host);
     let next = popover.as_ref().map(|_| {
         let mut state = panel_state(&engine.config, &vm);
-        if let Some((code, url)) = pairing.as_ref() {
+        if let Some((code, url, _)) = pairing.as_ref() {
             state = state.with_pairing(code, url);
         }
         state
@@ -988,9 +989,10 @@ fn handle_ipc(
     engine: &mut Engine,
     platform: &mut dyn Platform,
     incoming: IpcIncoming,
-    pairing: &Option<(String, String)>,
+    pairing: &mut Option<(String, String, u64)>,
     identity: Option<&never_sleep_core::CloudIdentity>,
 ) -> bool {
+    crate::cloud::expire_stale_pairing(pairing);
     let IpcIncoming::Request { req, reply } = incoming;
     let host_status = |engine: &Engine, platform: &mut dyn Platform| {
         let host = platform.snapshot();
@@ -1001,7 +1003,7 @@ fn handle_ipc(
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
         IpcRequest::Pair => match pairing.as_ref() {
-            Some((code, url)) => IpcResponse::ok_pairing(
+            Some((code, url, _)) => IpcResponse::ok_pairing(
                 code.clone(),
                 url.clone(),
                 identity.map(|id| id.device_id.clone()),

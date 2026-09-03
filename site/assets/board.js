@@ -104,26 +104,30 @@
 
   function storageCanHold(storage, key, value) {
     const raw = typeof value === "string" ? value : JSON.stringify(value);
-    const prev = storage.getItem(key);
     try {
-      storage.setItem(key, raw);
-      const ok = storage.getItem(key) === raw;
-      if (prev === null) {
-        storage.removeItem(key);
-      } else {
-        storage.setItem(key, prev);
-      }
-      return ok;
-    } catch {
+      const prev = storage.getItem(key);
       try {
+        storage.setItem(key, raw);
+        const ok = storage.getItem(key) === raw;
         if (prev === null) {
           storage.removeItem(key);
         } else {
           storage.setItem(key, prev);
         }
+        return ok;
       } catch {
-        // quota restore is best-effort
+        try {
+          if (prev === null) {
+            storage.removeItem(key);
+          } else {
+            storage.setItem(key, prev);
+          }
+        } catch {
+          // quota restore is best-effort
+        }
+        return false;
       }
+    } catch {
       return false;
     }
   }

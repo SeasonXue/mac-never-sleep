@@ -267,6 +267,16 @@ mod tests {
             drain < handle,
             "queued CloudEvent::Pairing must be applied before answering pair"
         );
+        let handle_ipc_src = rust_fn_src(gui, "handle_ipc");
+        assert!(
+            handle_ipc_src.contains("expire_stale_pairing"),
+            "IpcRequest::Pair must re-check expires_unix so a disconnected Mac does not keep an expired code"
+        );
+        let refresh_src = rust_fn_src(gui, "refresh_ui");
+        assert!(
+            refresh_src.contains("expire_stale_pairing"),
+            "panel refresh must drop pairing state after the stored deadline"
+        );
         let quit = rust_fn_src(gui, "handle_ipc");
         assert!(
             !quit.contains("process::exit"),
