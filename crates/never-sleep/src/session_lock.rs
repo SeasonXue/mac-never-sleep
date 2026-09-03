@@ -37,6 +37,16 @@ pub fn should_restore_clamshell(
     }
 }
 
+/// Whether the process applying this plan should restore clamshell sleep.
+///
+/// A successor that does not claim the flag must clear an inherited disable
+/// before acknowledging handoff. If the donor dies during `detach()`, the
+/// menu never recorded `clamshell_on` and would otherwise leave the flag stuck.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_clear_unclaimed_clamshell(claiming: bool) -> bool {
+    !claiming
+}
+
 pub fn parse_lock_text(s: &str) -> (u32, bool) {
     let mut pid = 0u32;
     let mut clamshell = false;
@@ -138,5 +148,36 @@ mod tests {
         assert!(should_restore_clamshell(10, Some((10, true)), true));
         assert!(should_restore_clamshell(10, Some((20, true)), false));
         assert!(should_restore_clamshell(10, None, false));
+    }
+
+    #[test]
+    fn successor_clears_unclaimed_inherited_clamshell_before_ack() {
+        assert!(
+            should_clear_unclaimed_clamshell(false),
+            "menu adopted without lid-awake must restore the inherited flag itself"
+        );
+        assert!(
+            !should_clear_unclaimed_clamshell(true),
+            "menu that claims clamshell keeps the flag disabled"
+        );
+        let macos = include_str!("platform/macos.rs");
+        assert!(
+            macos.contains("should_clear_unclaimed_clamshell"),
+            "apply_power must restore an inherited flag when this process is not claiming it"
+        );
+        let ipc = include_str!("gui.rs");
+        let on_arm = ipc
+            .split("IpcRequest::On")
+            .nth(1)
+            .expect("On arm")
+            .split("IpcRequest::Off")
+            .next()
+            .unwrap();
+        let dispatch_at = on_arm.find("dispatch(").expect("handoff dispatch");
+        let reply_at = on_arm.find("ok_status").expect("handoff ack");
+        assert!(
+            dispatch_at < reply_at,
+            "restore via ApplyPower must happen before the IPC ok that lets the donor detach"
+        );
     }
 }
