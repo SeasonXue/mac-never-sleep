@@ -117,14 +117,20 @@
   }
 
   function mergeListStatuses(previous, incoming) {
+    const seen = new Set();
     const byId = new Map();
     for (const st of previous || []) {
       if (st && st.device_id) byId.set(st.device_id, st);
     }
     for (const st of incoming || []) {
-      if (st && st.device_id) byId.set(st.device_id, st);
+      if (st && st.device_id) {
+        seen.add(st.device_id);
+        byId.set(st.device_id, st);
+      }
     }
-    return Array.from(byId.values());
+    return Array.from(byId.values()).map((st) =>
+      seen.has(st.device_id) ? st : Object.assign({}, st, { online: false }),
+    );
   }
 
   function devicePendingCmd(pendingByDevice, deviceId) {
@@ -305,6 +311,8 @@
   let pendingByDevice = {};
   let lastStatuses = [];
   let refreshGen = 0;
+  let refreshInFlight = null;
+  let refreshQueued = false;
 
   function showError(message) {
     const elErr = document.getElementById("board-error");
@@ -317,7 +325,7 @@
     elErr.textContent = message;
   }
 
-  async function refresh() {
+  async function runRefresh() {
     const devices = loadDevices();
     if (!devices.length) {
       refreshGen = nextRefreshGeneration(refreshGen);
@@ -337,6 +345,24 @@
     } catch {
       if (!isCurrentRefresh(started, refreshGen)) return;
       render(devices, withListFailure(lastStatuses), pendingByDevice);
+    }
+  }
+
+  async function refresh() {
+    if (refreshInFlight) {
+      refreshQueued = true;
+      return refreshInFlight;
+    }
+    refreshInFlight = (async () => {
+      do {
+        refreshQueued = false;
+        await runRefresh();
+      } while (refreshQueued);
+    })();
+    try {
+      await refreshInFlight;
+    } finally {
+      refreshInFlight = null;
     }
   }
 

@@ -24,6 +24,7 @@ import {
   shardName,
   alarmNeedsUpdate,
   bestEffortCleanup,
+  commitAlarmUnix,
 } from "../src/board.js";
 
 function sampleStatus(overrides = {}) {
@@ -1027,6 +1028,12 @@ test("partial list polls keep cached statuses for missing Macs", () => {
     true,
     "a failed shard must not drop the last-known standby state",
   );
+  assert.equal(
+    merged.find((d) => d.device_id === "down").online,
+    false,
+    "a Mac omitted from the current /list must not stay Online",
+  );
+  assert.equal(merged.find((d) => d.device_id === "good").online, undefined);
   assert.match(src, /lastStatuses = mergeListStatuses/);
 });
 
@@ -1087,4 +1094,65 @@ test("stale list refreshes do not replace a newer snapshot", () => {
   assert.equal(isCurrentRefresh(first, second), false);
   assert.equal(isCurrentRefresh(second, second), true);
   assert.match(src, /isCurrentRefresh\(started, refreshGen\)/);
+});
+
+test("toJSON snapshots are detached from live board mutations", () => {
+  const board = new Board(() => 1_000);
+  board.devices.set("ab", {
+    token: "t",
+    lastSeen: 1,
+    status: { active: true },
+  });
+  const stored = board.toJSON();
+  board.devices.get("ab").status.active = false;
+  board.devices.get("ab").lastSeen = 2;
+  assert.equal(
+    stored.devices.ab.status.active,
+    true,
+    "this.stored must not alias mutable Board values",
+  );
+  assert.equal(stored.devices.ab.lastSeen, 1);
+  assert.equal(
+    persistBoardAction(stored, board.toJSON()),
+    "put",
+    "a heartbeat after the first persist must still write",
+  );
+});
+
+test("alarm deadline is recorded only after scheduling succeeds", async () => {
+  let scheduled = undefined;
+  scheduled = await commitAlarmUnix(scheduled, 1_600, async () => {});
+  assert.equal(scheduled, 1_600);
+  const failed = await commitAlarmUnix(1_600, 1_700, async () => {
+    throw new Error("transient setAlarm");
+  });
+  assert.equal(
+    failed,
+    undefined,
+    "a failed setAlarm must not skip later retries",
+  );
+  const skipped = await commitAlarmUnix(1_600, 1_600, async () => {
+    throw new Error("unchanged alarms must not call storage");
+  });
+  assert.equal(skipped, 1_600);
+});
+
+test("slow list polls queue one follow-up instead of discarding every response", () => {
+  const { src } = boardClientHelpers();
+  assert.match(
+    src,
+    /if \(refreshInFlight\)/,
+    "do not start a second /list while one is in flight",
+  );
+  assert.match(src, /refreshQueued/);
+});
+
+test("pair start still returns the new code when replaced-shard cleanup fails", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  assert.match(
+    index,
+    /bestEffortCleanup\([\s\S]*replaced_codes/,
+    "replaced pair-shard drops must not block returning a live code",
+  );
 });

@@ -169,6 +169,16 @@ export function alarmNeedsUpdate(scheduledUnix, nextUnix) {
   return scheduledUnix !== nextUnix;
 }
 
+export async function commitAlarmUnix(scheduledUnix, nextUnix, apply) {
+  if (!alarmNeedsUpdate(scheduledUnix, nextUnix)) return scheduledUnix;
+  try {
+    await apply(nextUnix);
+    return nextUnix;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function bestEffortCleanup(result, cleanup) {
   try {
     await cleanup();
@@ -343,10 +353,15 @@ export class Board {
   }
 
   toJSON() {
-    return {
-      devices: Object.fromEntries(this.devices),
-      codes: Object.fromEntries(this.codes),
-    };
+    const devices = {};
+    for (const [id, device] of this.devices) {
+      devices[id] = structuredClone(device);
+    }
+    const codes = {};
+    for (const [code, offer] of this.codes) {
+      codes[code] = structuredClone(offer);
+    }
+    return { devices, codes };
   }
 
   #purgeCodes(now) {

@@ -211,7 +211,7 @@ pub fn load_or_create_identity() -> io::Result<CloudIdentity> {
     if let Ok(text) = fs::read_to_string(&path) {
         if let Ok(id) = toml::from_str::<CloudIdentity>(&text) {
             if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
-                let _ = restrict_owner_only(&path);
+                restrict_owner_only(&path)?;
                 return Ok(id);
             }
         }
@@ -694,6 +694,26 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600, "existing cloud.toml must be tightened on load");
+    }
+
+    #[test]
+    fn load_identity_fails_when_existing_token_cannot_be_restricted() {
+        let src = include_str!("cloud.rs");
+        let load = src
+            .split("pub fn load_or_create_identity")
+            .nth(1)
+            .unwrap()
+            .split("fn restrict_owner_only")
+            .next()
+            .unwrap();
+        assert!(
+            load.contains("restrict_owner_only(&path)?"),
+            "chmod failure must fail identity load, not advertise a world-readable token"
+        );
+        assert!(
+            !load.contains("let _ ="),
+            "do not ignore restrict_owner_only errors on load"
+        );
     }
 
     #[test]

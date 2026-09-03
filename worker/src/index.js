@@ -14,8 +14,8 @@ import {
   publicSiteOrigin,
   publishReservedPairing,
   shardName,
-  alarmNeedsUpdate,
   bestEffortCleanup,
+  commitAlarmUnix,
   pairingCodeIsLive,
 } from "./board.js";
 
@@ -80,13 +80,13 @@ export class BoardHub {
 
   async #scheduleAlarm() {
     const next = this.board.nextAlarmUnix();
-    if (!alarmNeedsUpdate(this.alarmUnix, next)) return;
-    this.alarmUnix = next;
-    if (next == null) {
-      await this.ctx.storage.deleteAlarm();
-    } else {
-      await this.ctx.storage.setAlarm(next * 1000);
-    }
+    this.alarmUnix = await commitAlarmUnix(this.alarmUnix, next, async (unix) => {
+      if (unix == null) {
+        await this.ctx.storage.deleteAlarm();
+      } else {
+        await this.ctx.storage.setAlarm(unix * 1000);
+      }
+    });
   }
 }
 
@@ -235,9 +235,11 @@ async function routeApi(request, env) {
       },
     });
     if (started.ok) {
-      await dropPairShards(env, started.replaced_codes, origin);
       const { status, ...payload } = started;
-      return jsonResponse(payload, status || 200);
+      const res = jsonResponse(payload, status || 200);
+      return bestEffortCleanup(res, () =>
+        dropPairShards(env, started.replaced_codes, origin),
+      );
     }
     return jsonResponse(
       { ok: false, error: started.error || "pair_busy" },

@@ -103,6 +103,8 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("pendingByDevice"));
     assert!(js.contains("function nextRefreshGeneration"));
     assert!(js.contains("isCurrentRefresh"));
+    assert!(js.contains("refreshInFlight"));
+    assert!(js.contains("refreshQueued"));
 }
 
 #[test]
@@ -145,6 +147,9 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("bestEffortCleanup"));
     assert!(index.contains("bestEffortCleanup"));
     assert!(board.contains("alarmNeedsUpdate"));
+    assert!(board.contains("commitAlarmUnix"));
+    assert!(index.contains("commitAlarmUnix"));
+    assert!(index.contains("bestEffortCleanup(res, () =>"));
     assert!(board.contains("confirmLive"));
     assert!(board.contains("isAllowedDuration"));
     assert!(board.contains("error: \"taken\""));
