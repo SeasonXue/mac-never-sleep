@@ -44,6 +44,7 @@ import {
   takeListSlot,
   takeClaimSlot,
   takeDeviceSlot,
+  RATE_IP_MAP_MAX,
 } from "../src/board.js";
 
 function sampleStatus(overrides = {}) {
@@ -1847,6 +1848,61 @@ test("capacity probe treats blocked localStorage reads as a miss", async () => {
   assert.ok(
     tryAt >= 0 && getAt > tryAt,
     "the initial localStorage read must sit inside the guarded section",
+  );
+});
+
+test("expired IP buckets are dropped before a new pair-start is recorded", () => {
+  const windowSecs = 60;
+  const now = 1_700_000_000;
+  const ips = {};
+  for (let i = 0; i < 2000; i += 1) {
+    const ip = `2001:db8:${i.toString(16).padStart(4, "0")}:0000:0000:0000:0000:0001`;
+    ips[ip] = { windowStart: now - windowSecs - 1, count: 8 };
+  }
+  const next = takePairStartSlot(
+    { global: null, ips },
+    "2001:db8::ffff",
+    now,
+    { ipWindowSecs: windowSecs, ipLimit: 8 },
+  );
+  assert.equal(next.ok, true);
+  assert.equal(Object.keys(next.state.ips).length, 1);
+  assert.ok(next.state.ips["2001:db8::ffff"]);
+});
+
+test("live IP map stays under Durable Object 128 KiB with full-length IPv6 keys", () => {
+  const windowSecs = 60;
+  const now = 1_700_000_000;
+  let state = { global: null, ips: {} };
+  for (let i = 0; i < RATE_IP_MAP_MAX; i += 1) {
+    const ip = [
+      "2001",
+      "0db8",
+      i.toString(16).padStart(4, "0"),
+      "ffff",
+      "ffff",
+      "ffff",
+      "ffff",
+      "ffff",
+    ].join(":");
+    const next = takePairStartSlot(state, ip, now, {
+      ipWindowSecs: windowSecs,
+      ipLimit: 8,
+      globalLimit: RATE_IP_MAP_MAX + 8,
+    });
+    assert.equal(next.ok, true, `full-length IPv6 ${i} must be recorded`);
+    state = next.state;
+  }
+  assert.equal(Object.keys(state.ips).length, RATE_IP_MAP_MAX);
+  const serialized = JSON.stringify({
+    devices: {},
+    codes: {},
+    pairStart: state,
+  });
+  const bytes = Buffer.byteLength(serialized, "utf8");
+  assert.ok(
+    bytes < 128 * 1024,
+    `serialized board with ${RATE_IP_MAP_MAX} IPv6 buckets is ${bytes} bytes`,
   );
 });
 

@@ -148,7 +148,7 @@ export const DEVICE_GLOBAL_MIN_MACS = 200;
 export const DEVICE_GLOBAL_LIMIT =
   DEVICE_BEATS_PER_MAC_PER_MIN * (DEVICE_GLOBAL_MIN_MACS + 1);
 export const DEVICE_GLOBAL_WINDOW_SECS = 60;
-const RATE_IP_MAP_MAX = 2048;
+export const RATE_IP_MAP_MAX = 1024;
 
 /**
  * Fixed-window bucket: { count, windowStart }.
@@ -166,6 +166,19 @@ function bucketTake(bucket, nowSecs, windowSecs, limit) {
   return { ok: true, bucket: { count, windowStart: start } };
 }
 
+function pruneExpiredIpBuckets(ips, nowSecs, windowSecs) {
+  for (const ip of Object.keys(ips)) {
+    const bucket = ips[ip];
+    if (
+      !bucket ||
+      typeof bucket.windowStart !== "number" ||
+      nowSecs - bucket.windowStart >= windowSecs
+    ) {
+      delete ips[ip];
+    }
+  }
+}
+
 /** Decide whether /api/pair/start may allocate Durable Object shards. */
 export function takePairStartSlot(state, ip, nowSecs, limits = {}) {
   const ipLimit = limits.ipLimit ?? PAIR_START_IP_LIMIT;
@@ -178,9 +191,15 @@ export function takePairStartSlot(state, ip, nowSecs, limits = {}) {
     return { ok: false, error: "rate_limited", status: 429, state };
   }
   const ips = state?.ips && typeof state.ips === "object" ? { ...state.ips } : {};
+  pruneExpiredIpBuckets(ips, nowSecs, ipWindow);
   const ipResult = bucketTake(ips[key], nowSecs, ipWindow, ipLimit);
   if (!ipResult.ok) {
-    return { ok: false, error: "rate_limited", status: 429, state };
+    return {
+      ok: false,
+      error: "rate_limited",
+      status: 429,
+      state: { global: state?.global ?? null, ips },
+    };
   }
   ips[key] = ipResult.bucket;
   const names = Object.keys(ips);
