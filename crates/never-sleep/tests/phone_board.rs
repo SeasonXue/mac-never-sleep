@@ -97,6 +97,8 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("preventDefault"));
     assert!(js.contains("clearPairingQuery"));
     assert!(js.contains("history.replaceState"));
+    assert!(js.contains("function mergeListStatuses"));
+    assert!(js.contains("claimInFlight"));
 }
 
 #[test]
@@ -136,6 +138,10 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("#dropUnverifiedDevices") || board.contains("lastSeen != null"));
     assert!(board.contains("collectListParts"));
     assert!(index.contains("collectListParts"));
+    assert!(board.contains("bestEffortCleanup"));
+    assert!(index.contains("bestEffortCleanup"));
+    assert!(board.contains("alarmNeedsUpdate"));
+    assert!(board.contains("confirmLive"));
     assert!(board.contains("isAllowedDuration"));
     assert!(board.contains("error: \"taken\""));
     assert!(

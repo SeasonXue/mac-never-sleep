@@ -116,6 +116,17 @@
     return (statuses || []).map((st) => Object.assign({}, st, { online: false }));
   }
 
+  function mergeListStatuses(previous, incoming) {
+    const byId = new Map();
+    for (const st of previous || []) {
+      if (st && st.device_id) byId.set(st.device_id, st);
+    }
+    for (const st of incoming || []) {
+      if (st && st.device_id) byId.set(st.device_id, st);
+    }
+    return Array.from(byId.values());
+  }
+
   function hrefWithPairingCode(href, code) {
     const path = String(href || "").split("?")[0];
     if (!code) return path;
@@ -291,8 +302,8 @@
         render(devices, withListFailure(lastStatuses), pendingId);
         return;
       }
-      render(devices, json.devices, pendingId);
-      lastStatuses = json.devices;
+      lastStatuses = mergeListStatuses(lastStatuses, json.devices);
+      render(devices, lastStatuses, pendingId);
     } catch {
       render(devices, withListFailure(lastStatuses), pendingId);
     }
@@ -350,9 +361,16 @@
   }
 
   let claimPromise = null;
+  let claimInFlight = false;
 
   function beginClaim(code) {
+    if (claimInFlight) return claimPromise;
+    claimInFlight = true;
     claimPromise = claim(code);
+    const pending = claimPromise;
+    pending.finally(() => {
+      if (claimPromise === pending) claimInFlight = false;
+    });
     return claimPromise;
   }
 

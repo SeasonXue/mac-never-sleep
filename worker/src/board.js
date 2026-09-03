@@ -164,6 +164,20 @@ export function persistBoardAction(previous, next) {
   return "put";
 }
 
+export function alarmNeedsUpdate(scheduledUnix, nextUnix) {
+  if (scheduledUnix === undefined) return true;
+  return scheduledUnix !== nextUnix;
+}
+
+export async function bestEffortCleanup(result, cleanup) {
+  try {
+    await cleanup();
+  } catch {
+    // Pair-shard drop is best-effort; the successful device response is already in hand.
+  }
+  return result;
+}
+
 /** Run async work one-at-a-time so overlapping callers cannot share a snapshot. */
 export function createSerialQueue() {
   let tail = Promise.resolve();
@@ -216,6 +230,7 @@ export async function publishReservedPairing({
   reserve,
   startDevice,
   release,
+  confirmLive,
   maxAttempts = PAIR_RESERVE_ATTEMPTS,
 }) {
   for (let i = 0; i < maxAttempts; i++) {
@@ -223,7 +238,13 @@ export async function publishReservedPairing({
     const reserved = await reserve(code);
     if (!reserved?.ok) continue;
     const started = await startDevice(code);
-    if (started?.ok) return started;
+    if (started?.ok) {
+      if (confirmLive && !(await confirmLive(code, started))) {
+        if (release) await release(code);
+        return { ok: false, error: "pair_busy", status: 503 };
+      }
+      return started;
+    }
     if (release) await release(code);
   }
   return { ok: false, error: "pair_busy", status: 503 };

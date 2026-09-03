@@ -31,11 +31,17 @@ pub fn run_foreground(
     });
 
     let cloud = if crate::cloud::cloud_enabled() {
-        Some(crate::cloud::spawn_reporter(
-            crate::cloud::load_or_create_identity(),
-            crate::cloud::default_display_name(),
-            engine.config.lang(),
-        ))
+        match crate::cloud::load_or_create_identity() {
+            Ok(identity) => Some(crate::cloud::spawn_reporter(
+                identity,
+                crate::cloud::default_display_name(),
+                engine.config.lang(),
+            )),
+            Err(err) => {
+                eprintln!("never-sleep cloud identity: {err}");
+                None
+            }
+        }
     } else {
         None
     };

@@ -22,6 +22,8 @@ import {
   publishReservedPairing,
   sanitizeStatus,
   shardName,
+  alarmNeedsUpdate,
+  bestEffortCleanup,
 } from "../src/board.js";
 
 function sampleStatus(overrides = {}) {
@@ -969,4 +971,75 @@ test("language links wait for in-flight claim before navigating", async () => {
   assert.match(src, /preventDefault/);
   assert.match(src, /waitForClaimThenLanguageHref/);
   assert.match(src, /claimPromise/);
+});
+
+test("claim returns the token when pair-shard cleanup fails", async () => {
+  const payload = { ok: true, device_id: "ab".repeat(16), device_token: "t" };
+  const result = await bestEffortCleanup(payload, async () => {
+    throw new Error("pair shard down");
+  });
+  assert.deepEqual(result, payload);
+});
+
+test("unchanged alarm deadlines skip Durable Object alarm writes", () => {
+  assert.equal(alarmNeedsUpdate(undefined, 1_600), true);
+  assert.equal(alarmNeedsUpdate(1_600, 1_600), false);
+  assert.equal(alarmNeedsUpdate(1_600, 1_700), true);
+  assert.equal(alarmNeedsUpdate(1_600, null), true);
+  assert.equal(alarmNeedsUpdate(null, null), false);
+});
+
+test("superseded pair/start is not returned after a newer code is live", async () => {
+  let released = [];
+  const result = await publishReservedPairing({
+    generateCode: () => "AAAA1111",
+    reserve: async () => ({ ok: true }),
+    startDevice: async (code) => ({
+      ok: true,
+      pairing_code: code,
+      status: 200,
+    }),
+    confirmLive: async () => false,
+    release: async (code) => {
+      released.push(code);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(released, ["AAAA1111"]);
+});
+
+test("partial list polls keep cached statuses for missing Macs", () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function mergeListStatuses");
+  assert.notEqual(start, -1, "board.js must merge partial /list responses");
+  const end = src.indexOf("\n  function ", start + 10);
+  const mergeListStatuses = new Function(
+    `${src.slice(start, end)}\nreturn mergeListStatuses;`,
+  )();
+  const cached = [
+    { device_id: "good", active: true, display: "asleep" },
+    { device_id: "down", active: true, display: "asleep" },
+  ];
+  const partial = [{ device_id: "good", active: true, display: "asleep" }];
+  const merged = mergeListStatuses(cached, partial);
+  assert.equal(
+    merged.find((d) => d.device_id === "down").active,
+    true,
+    "a failed shard must not drop the last-known standby state",
+  );
+  assert.match(src, /lastStatuses = mergeListStatuses/);
+});
+
+test("beginClaim reuses an in-flight request for the same pairing code", () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function beginClaim");
+  assert.notEqual(start, -1);
+  const end = src.indexOf("\n  document.querySelectorAll", start);
+  const beginClaim = new Function(
+    `let claimPromise = null;\nlet claimInFlight = false;\nfunction claim() { return Promise.resolve(true); }\n${src.slice(start, end)}\nreturn beginClaim;`,
+  )();
+  const first = beginClaim("AB7K-2Q9M");
+  const second = beginClaim("AB7K-2Q9M");
+  assert.equal(first, second, "double submit must not start a second claim");
+  assert.match(src, /claimInFlight/);
 });

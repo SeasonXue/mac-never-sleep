@@ -310,7 +310,13 @@ pub fn run() {
     let mut toggle_gate = ToggleGate::default();
     let mut pairing: Option<(String, String)> = None;
     let cloud_identity = if cloud_enabled() {
-        Some(load_or_create_identity())
+        match load_or_create_identity() {
+            Ok(id) => Some(id),
+            Err(err) => {
+                eprintln!("never-sleep cloud identity: {err}");
+                None
+            }
+        }
     } else {
         None
     };

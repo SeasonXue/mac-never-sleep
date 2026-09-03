@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -190,12 +190,12 @@ fn fill_random(buf: &mut [u8]) {
     file.read_exact(buf).expect("urandom read");
 }
 
-pub fn load_or_create_identity() -> CloudIdentity {
+pub fn load_or_create_identity() -> io::Result<CloudIdentity> {
     let path = cloud_identity_path();
     if let Ok(text) = fs::read_to_string(&path) {
         if let Ok(id) = toml::from_str::<CloudIdentity>(&text) {
             if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
-                return id;
+                return Ok(id);
             }
         }
     }
@@ -204,17 +204,15 @@ pub fn load_or_create_identity() -> CloudIdentity {
     fill_random(&mut id_bytes);
     fill_random(&mut token_bytes);
     let identity = identity_from_bytes(&id_bytes, &token_bytes);
-    save_identity(&identity);
-    identity
+    save_identity(&identity)?;
+    Ok(identity)
 }
 
-fn save_identity(identity: &CloudIdentity) {
-    if ensure_data_dir().is_err() {
-        return;
-    }
-    if let Ok(text) = toml::to_string_pretty(identity) {
-        let _ = fs::write(cloud_identity_path(), text);
-    }
+fn save_identity(identity: &CloudIdentity) -> io::Result<()> {
+    ensure_data_dir()?;
+    let text = toml::to_string_pretty(identity)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    fs::write(cloud_identity_path(), text)
 }
 
 #[derive(Debug, Serialize)]
@@ -369,6 +367,17 @@ fn clone_latest(latest: &Mutex<Option<(JsonStatus, Lang)>>) -> Option<(JsonStatu
     latest.lock().ok().and_then(|slot| slot.clone())
 }
 
+fn shutting_down_from_wake(
+    recv: Result<(), RecvTimeoutError>,
+    disconnected_after_ok: bool,
+) -> bool {
+    match recv {
+        Ok(()) => disconnected_after_ok,
+        Err(RecvTimeoutError::Timeout) => false,
+        Err(RecvTimeoutError::Disconnected) => true,
+    }
+}
+
 fn reporter_loop(
     identity: CloudIdentity,
     display_name: String,
@@ -381,13 +390,15 @@ fn reporter_loop(
     let mut inbox = CommandInbox::default();
     let mut last: Option<(JsonStatus, Lang)> = None;
     loop {
-        let shutting_down = match wake_rx.recv_timeout(Duration::from_secs(3)) {
-            Ok(()) => {
+        let shutting_down = {
+            let recv = wake_rx.recv_timeout(Duration::from_secs(3));
+            let disconnected_after_ok = if recv.is_ok() {
                 while wake_rx.try_recv().is_ok() {}
+                matches!(wake_rx.try_recv(), Err(mpsc::TryRecvError::Disconnected))
+            } else {
                 false
-            }
-            Err(RecvTimeoutError::Timeout) => false,
-            Err(RecvTimeoutError::Disconnected) => true,
+            };
+            shutting_down_from_wake(recv, disconnected_after_ok)
         };
         if let Some(pair) = clone_latest(&latest) {
             last = Some(pair);
@@ -575,8 +586,8 @@ mod tests {
     #[test]
     fn load_or_create_identity_persists_random_token() {
         let _dir = TestDataDir::install();
-        let first = load_or_create_identity();
-        let second = load_or_create_identity();
+        let first = load_or_create_identity().expect("persist identity");
+        let second = load_or_create_identity().expect("reload identity");
         assert_eq!(first, second);
         assert_eq!(first.device_id.len(), 32);
         assert_eq!(first.device_token.len(), 64);
@@ -584,6 +595,17 @@ mod tests {
         let text = fs::read_to_string(cloud_identity_path()).unwrap();
         assert!(text.contains("device_id"));
         assert!(text.contains("device_token"));
+    }
+
+    #[test]
+    fn load_or_create_identity_fails_when_write_cannot_persist() {
+        let _dir = TestDataDir::install();
+        let path = cloud_identity_path();
+        fs::create_dir_all(&path).unwrap();
+        assert!(
+            load_or_create_identity().is_err(),
+            "an unpersisted identity must not be advertised for pairing"
+        );
     }
 
     #[test]
@@ -775,6 +797,23 @@ mod tests {
             Some(false),
             "exit must wait until the reporter has the inactive snapshot"
         );
+    }
+
+    #[test]
+    fn wake_then_disconnect_is_a_single_shutdown_tick() {
+        assert!(
+            shutting_down_from_wake(Ok(()), true),
+            "publish_and_flush must not post once for the wake and again for disconnect"
+        );
+        assert!(!shutting_down_from_wake(Ok(()), false));
+        assert!(!shutting_down_from_wake(
+            Err(RecvTimeoutError::Timeout),
+            false
+        ));
+        assert!(shutting_down_from_wake(
+            Err(RecvTimeoutError::Disconnected),
+            false
+        ));
     }
 
     #[test]

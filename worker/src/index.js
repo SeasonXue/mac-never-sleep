@@ -14,6 +14,9 @@ import {
   publicSiteOrigin,
   publishReservedPairing,
   shardName,
+  alarmNeedsUpdate,
+  bestEffortCleanup,
+  pairingCodeIsLive,
 } from "./board.js";
 
 /**
@@ -27,6 +30,7 @@ export class BoardHub {
     this.stored = null;
     this.board = new Board();
     this.enqueue = createSerialQueue();
+    this.alarmUnix = undefined;
     ctx.blockConcurrencyWhile(async () => {
       this.stored = (await ctx.storage.get("board")) || null;
       this.board = Board.fromJSON(this.stored);
@@ -54,6 +58,7 @@ export class BoardHub {
   }
 
   async #onAlarm() {
+    this.alarmUnix = undefined;
     this.board.nowSecs = () => Math.floor(Date.now() / 1000);
     this.board.expireOffers();
     await this.#persist();
@@ -75,6 +80,8 @@ export class BoardHub {
 
   async #scheduleAlarm() {
     const next = this.board.nextAlarmUnix();
+    if (!alarmNeedsUpdate(this.alarmUnix, next)) return;
+    this.alarmUnix = next;
     if (next == null) {
       await this.ctx.storage.deleteAlarm();
     } else {
@@ -168,8 +175,9 @@ async function routeApi(request, env) {
       body,
       origin,
     );
-    await dropPairShards(env, [body.pairing_code], origin);
-    return res;
+    return bestEffortCleanup(res, () =>
+      dropPairShards(env, [body.pairing_code], origin),
+    );
   }
 
   if (path === "/api/pair/start") {
@@ -213,6 +221,17 @@ async function routeApi(request, env) {
       },
       release: async (code) => {
         await dropPairShards(env, [code], origin);
+      },
+      confirmLive: async (code) => {
+        const live = await stubFetch(
+          env,
+          name,
+          "https://do/internal/live-pairing",
+          { device_id: body.device_id },
+          origin,
+        );
+        const json = await live.json().catch(() => ({}));
+        return pairingCodeIsLive(json.pairing_code, formatPairingCode(code));
       },
     });
     if (started.ok) {
