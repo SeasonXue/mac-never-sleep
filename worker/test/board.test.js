@@ -907,6 +907,37 @@ test("list fan-out keeps healthy Macs when one shard fails", async () => {
   );
 });
 
+function quotaStorage(limitBytes) {
+  const data = new Map();
+  const used = () => {
+    let n = 0;
+    for (const [key, value] of data) n += key.length + value.length;
+    return n;
+  };
+  return {
+    getItem(key) {
+      return data.has(key) ? data.get(key) : null;
+    },
+    setItem(key, value) {
+      const next = String(value);
+      const projected =
+        used() -
+        (data.has(key) ? key.length + data.get(key).length : 0) +
+        key.length +
+        next.length;
+      if (projected > limitBytes) {
+        const err = new Error("QuotaExceededError");
+        err.name = "QuotaExceededError";
+        throw err;
+      }
+      data.set(key, next);
+    },
+    removeItem(key) {
+      data.delete(key);
+    },
+  };
+}
+
 function boardClientHelpers() {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const src = fs.readFileSync(path.join(root, "site/assets/board.js"), "utf8");
@@ -1184,14 +1215,52 @@ test("refresh completion is not tied to continuous polling", () => {
   );
 });
 
-test("claim probes local storage before consuming the pairing code", () => {
+test("claim reserves space for the credential when quota is almost full", () => {
   const { src } = boardClientHelpers();
-  assert.match(src, /function storageWritable/);
-  const writableAt = src.indexOf("storageWritable()");
+  const start = src.indexOf("function withDevices");
+  assert.notEqual(
+    start,
+    -1,
+    "board.js must build the prospective device list before claiming",
+  );
+  const end = src.indexOf("\n  async function post(");
+  const { withDevices, storageCanHold, canStoreClaim, claimReservation } =
+    new Function(
+      `const LIST_MAX_DEVICES = 32;\n${src.slice(start, end)}\nreturn { withDevices, storageCanHold, canStoreClaim, claimReservation };`,
+    )();
+
+  const STORAGE_KEY = "never-sleep-devices";
+  const existing = [];
+  for (let i = 0; i < 31; i += 1) {
+    existing.push({
+      device_id: String(i).padStart(32, "a"),
+      device_token: String(i).padStart(64, "b"),
+      display_name: "Studio",
+    });
+  }
+  const existingRaw = JSON.stringify(existing);
+  const used = STORAGE_KEY.length + existingRaw.length;
+  const tinyExtra = `${STORAGE_KEY}:ok`.length + 1;
+  const storage = quotaStorage(used + tinyExtra + 16);
+  storage.setItem(STORAGE_KEY, existingRaw);
+  storage.setItem(`${STORAGE_KEY}:ok`, "1");
+  storage.removeItem(`${STORAGE_KEY}:ok`);
+
+  assert.equal(
+    canStoreClaim(storage, STORAGE_KEY, existing, claimReservation()),
+    false,
+    "a 1-byte probe must not hide a quota that cannot hold the new token",
+  );
+  assert.equal(
+    storageCanHold(storage, STORAGE_KEY, withDevices(existing, claimReservation())),
+    false,
+  );
+
+  const reserveAt = src.indexOf("canStoreClaim(");
   const claimPost = src.indexOf('post("/pair/claim"');
   assert.ok(
-    writableAt >= 0 && writableAt < claimPost,
-    "do not burn a one-time code when the token cannot be stored",
+    reserveAt >= 0 && reserveAt < claimPost,
+    "do not consume the one-time code before the credential payload fits",
   );
   assert.match(src, /storageError/);
 });

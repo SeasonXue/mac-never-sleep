@@ -77,15 +77,41 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(devices));
   }
 
-  function storageWritable() {
+  function withDevices(devices, entry) {
+    const next = (devices || []).filter((d) => d.device_id !== entry.device_id);
+    next.push(entry);
+    while (next.length > LIST_MAX_DEVICES) next.shift();
+    return next;
+  }
+
+  function claimReservation() {
+    return {
+      device_id: "f".repeat(64),
+      device_token: "f".repeat(128),
+      display_name: "Mac".repeat(16),
+    };
+  }
+
+  function storageCanHold(storage, key, value) {
+    const raw = typeof value === "string" ? value : JSON.stringify(value);
+    const probe = `${key}:probe`;
     try {
-      const probe = `${STORAGE_KEY}:ok`;
-      localStorage.setItem(probe, "1");
-      localStorage.removeItem(probe);
-      return true;
+      storage.setItem(probe, raw);
+      const ok = storage.getItem(probe) === raw;
+      storage.removeItem(probe);
+      return ok;
     } catch {
+      try {
+        storage.removeItem(probe);
+      } catch {
+        // quota restore is best-effort
+      }
       return false;
     }
+  }
+
+  function canStoreClaim(storage, key, devices, entry) {
+    return storageCanHold(storage, key, withDevices(devices, entry));
   }
 
   async function post(path, body) {
@@ -406,7 +432,7 @@
   async function claim(code) {
     showError("");
     const input = document.getElementById("pair-code");
-    if (!storageWritable()) {
+    if (!canStoreClaim(localStorage, STORAGE_KEY, loadDevices(), claimReservation())) {
       showError(copy.storageError);
       return false;
     }
@@ -416,13 +442,11 @@
         showError(copy.badCode);
         return false;
       }
-      const devices = loadDevices().filter((d) => d.device_id !== json.device_id);
-      devices.push({
+      const devices = withDevices(loadDevices(), {
         device_id: json.device_id,
         device_token: json.device_token,
         display_name: json.display_name,
       });
-      while (devices.length > LIST_MAX_DEVICES) devices.shift();
       saveDevices(devices);
       input.value = "";
       clearPairingQuery();

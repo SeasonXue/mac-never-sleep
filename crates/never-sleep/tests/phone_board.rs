@@ -90,8 +90,8 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     );
     assert!(js.contains("withListFailure(lastStatuses)"));
     assert!(js.contains("LIST_MAX_DEVICES = 32"));
-    assert!(js.contains("while (devices.length > LIST_MAX_DEVICES)"));
-    assert!(js.contains("devices.shift()"));
+    assert!(js.contains("while (next.length > LIST_MAX_DEVICES)"));
+    assert!(js.contains("next.shift()"));
     assert!(js.contains("function hrefWithPairingCode"));
     assert!(js.contains("waitForClaimThenLanguageHref"));
     assert!(js.contains("preventDefault"));
@@ -107,7 +107,9 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("refreshQueued"));
     assert!(js.contains("void refresh()"));
     assert!(!js.contains("} while (refreshQueued);"));
-    assert!(js.contains("function storageWritable"));
+    assert!(js.contains("function canStoreClaim"));
+    assert!(js.contains("storageCanHold"));
+    assert!(js.contains("claimReservation"));
     assert!(js.contains("storageError"));
     assert!(
         !js.contains("padStart(2, \"0\")}:00"),
