@@ -116,6 +116,24 @@
     return (statuses || []).map((st) => Object.assign({}, st, { online: false }));
   }
 
+  function hrefWithPairingCode(href, code) {
+    const path = String(href || "").split("?")[0];
+    if (!code) return path;
+    return `${path}?code=${encodeURIComponent(code)}`;
+  }
+
+  function syncLanguageLinks(code) {
+    document.querySelectorAll(".language-row a[hreflang]").forEach((link) => {
+      link.setAttribute("href", hrefWithPairingCode(link.getAttribute("href"), code));
+    });
+  }
+
+  function clearPairingQuery() {
+    if (!new URLSearchParams(location.search).get("code")) return;
+    history.replaceState({}, "", location.pathname + location.hash);
+    syncLanguageLinks("");
+  }
+
   function trustedView(stored, incoming, previous) {
     const src = incoming || {};
     const prev = previous || {};
@@ -305,6 +323,7 @@
       while (devices.length > LIST_MAX_DEVICES) devices.shift();
       saveDevices(devices);
       input.value = "";
+      clearPairingQuery();
       await refresh();
     } catch {
       showError(copy.networkError);
@@ -320,6 +339,7 @@
   const params = new URLSearchParams(location.search);
   const initial = params.get("code");
   if (initial) {
+    syncLanguageLinks(initial);
     document.getElementById("pair-code").value = initial;
     claim(initial);
   } else {

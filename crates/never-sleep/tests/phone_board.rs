@@ -92,6 +92,9 @@ fn board_client_uses_public_prefix_and_has_no_unauthenticated_toggle() {
     assert!(js.contains("LIST_MAX_DEVICES = 32"));
     assert!(js.contains("while (devices.length > LIST_MAX_DEVICES)"));
     assert!(js.contains("devices.shift()"));
+    assert!(js.contains("function hrefWithPairingCode"));
+    assert!(js.contains("clearPairingQuery"));
+    assert!(js.contains("history.replaceState"));
 }
 
 #[test]

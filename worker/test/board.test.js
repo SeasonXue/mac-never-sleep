@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   Board,
   capListEntries,
@@ -880,4 +883,28 @@ test("list fan-out keeps healthy Macs when one shard fails", async () => {
     devices.map((d) => d.device_id),
     ["good", "also"],
   );
+});
+
+test("language href keeps the pairing code until claim succeeds", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const src = fs.readFileSync(path.join(root, "site/assets/board.js"), "utf8");
+  const start = src.indexOf("function hrefWithPairingCode");
+  assert.notEqual(start, -1, "board.js must expose hrefWithPairingCode");
+  const end = src.indexOf("\n  function ", start + 10);
+  const hrefWithPairingCode = new Function(
+    `${src.slice(start, end)}\nreturn hrefWithPairingCode;`,
+  )();
+  assert.equal(
+    hrefWithPairingCode("../zh/board/", "AB7K-2Q9M"),
+    "../zh/board/?code=AB7K-2Q9M",
+  );
+  assert.equal(
+    hrefWithPairingCode("../../board/?code=OLD", ""),
+    "../../board/",
+  );
+  const saveAt = src.indexOf("saveDevices(devices)");
+  const clearAt = src.indexOf("clearPairingQuery");
+  assert.ok(saveAt >= 0 && clearAt > saveAt, "strip ?code= only after the token is stored");
+  assert.match(src, /history\.replaceState/);
+  assert.match(src, /syncLanguageLinks/);
 });
