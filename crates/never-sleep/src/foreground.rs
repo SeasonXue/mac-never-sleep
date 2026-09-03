@@ -54,7 +54,22 @@ pub fn run_foreground(
     println!("{}", t.foreground_status_hint());
 
     while running.load(Ordering::SeqCst) && engine.is_active() {
-        if cloud.is_some() && try_send(&IpcRequest::Ping).is_some() {
+        if try_send(&IpcRequest::Ping).is_some() {
+            let _ = try_send(&IpcRequest::On {
+                duration: Some(crate::protocol::duration_pref_to_ipc(
+                    engine.config.duration,
+                )),
+            });
+            if engine.is_active() {
+                dispatch(
+                    &mut engine,
+                    platform,
+                    Input::Stop {
+                        reason: StopReason::User,
+                    },
+                );
+            }
+            stop_for_quit(&mut engine, platform);
             if let Some(handle) = cloud.take() {
                 crate::cloud::publish_and_flush(
                     handle,
@@ -62,6 +77,8 @@ pub fn run_foreground(
                     engine.config.lang(),
                 );
             }
+            println!("{}", engine.config.tr().foreground_ended());
+            return Ok(());
         }
         dispatch(&mut engine, platform, Input::Tick);
         if let Some(handle) = cloud.as_ref() {
@@ -130,6 +147,32 @@ mod tests {
         assert!(
             body.contains("publish_and_flush") && body.contains("take()"),
             "a later menu launch must stop the foreground reporter so only one process heartbeats"
+        );
+    }
+
+    #[test]
+    fn foreground_hands_off_engine_when_menu_appears() {
+        let src = include_str!("foreground.rs");
+        let start = src.find("pub fn run_foreground").expect("run_foreground");
+        let body = src[start..]
+            .split("pub fn parse_optional_duration")
+            .next()
+            .unwrap();
+        let ping_at = body
+            .find("IpcRequest::Ping")
+            .expect("menu presence is detected with Ping");
+        let after_ping = &body[ping_at..];
+        assert!(
+            after_ping.contains("IpcRequest::On"),
+            "hand the live duration to the menu so remote Off/hotkey target the same session"
+        );
+        assert!(
+            after_ping.contains("StopReason::User") && after_ping.contains("stop_for_quit"),
+            "release foreground power assertions; do not keep a hidden Engine running"
+        );
+        assert!(
+            after_ping.contains("return Ok(())"),
+            "exit the fallback loop after handoff so Tick cannot re-apply assertions"
         );
     }
 

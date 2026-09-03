@@ -1396,7 +1396,7 @@ test("refresh completion is not tied to continuous polling", () => {
   );
 });
 
-test("claim reserves space for the credential when quota is almost full", () => {
+test("claim reserves space for the credential when quota is almost full", async () => {
   const { src } = boardClientHelpers();
   const start = src.indexOf("function withDevices");
   assert.notEqual(
@@ -1433,7 +1433,7 @@ test("claim reserves space for the credential when quota is almost full", () => 
   storage.removeItem(`${STORAGE_KEY}:ok`);
 
   assert.equal(
-    canStoreClaim(storage, STORAGE_KEY, existing, claimReservation()),
+    await canStoreClaim(storage, STORAGE_KEY, existing, claimReservation()),
     false,
     "a 1-byte probe must not hide a quota that cannot hold the new token",
   );
@@ -1452,7 +1452,7 @@ test("claim reserves space for the credential when quota is almost full", () => 
   assert.equal(boundDisplayName("名".repeat(200)).length, MAX_DISPLAY_NAME_CHARS);
 });
 
-test("claim reservation covers a max-length display name near quota", () => {
+test("claim reservation covers a max-length display name near quota", async () => {
   const { src } = boardClientHelpers();
   const start = src.indexOf("function withDevices");
   const end = src.indexOf("\n  async function post(");
@@ -1493,18 +1493,18 @@ test("claim reservation covers a max-length display name near quota", () => {
   storage.setItem(STORAGE_KEY, existingRaw);
 
   assert.equal(
-    canStoreClaim(storage, STORAGE_KEY, existing, shortPlaceholder),
+    await canStoreClaim(storage, STORAGE_KEY, existing, shortPlaceholder),
     true,
     "the old 48-character placeholder still fits this constrained quota",
   );
   assert.equal(
-    canStoreClaim(storage, STORAGE_KEY, existing, reserved),
+    await canStoreClaim(storage, STORAGE_KEY, existing, reserved),
     false,
     "do not consume the one-time code when a max-length name will not fit",
   );
 });
 
-test("claim reservation covers JSON-escaped and emoji display names near quota", () => {
+test("claim reservation covers JSON-escaped and emoji display names near quota", async () => {
   const { src } = boardClientHelpers();
   const start = src.indexOf("function withDevices");
   const end = src.indexOf("\n  async function post(");
@@ -1561,17 +1561,17 @@ test("claim reservation covers JSON-escaped and emoji display names near quota",
   storage.setItem(STORAGE_KEY, existingRaw);
 
   assert.equal(
-    canStoreClaim(storage, STORAGE_KEY, existing, asciiPlaceholder),
+    await canStoreClaim(storage, STORAGE_KEY, existing, asciiPlaceholder),
     true,
     "the old 128-M placeholder still fits this constrained quota",
   );
   assert.equal(
-    canStoreClaim(storage, STORAGE_KEY, existing, quotesReal),
+    await canStoreClaim(storage, STORAGE_KEY, existing, quotesReal),
     false,
     "quotes expand in JSON and must not sneak past the probe",
   );
   assert.equal(
-    canStoreClaim(storage, STORAGE_KEY, existing, reserved),
+    await canStoreClaim(storage, STORAGE_KEY, existing, reserved),
     false,
     "do not consume the one-time code when the serialized name will not fit",
   );
@@ -1643,7 +1643,62 @@ test("claim commits merge under a cross-tab lock", async () => {
   assert.match(src, /navigator\?\.locks/);
 });
 
-test("capacity probe treats blocked localStorage reads as a miss", () => {
+test("capacity probe shares the claim lock so it cannot restore a stale list", async () => {
+  const { src } = boardClientHelpers();
+  const start = src.indexOf("function withDevices");
+  const end = src.indexOf("\n  async function post(");
+  const { canStoreClaim, commitClaimedDevice, claimReservation } = new Function(
+    `const LIST_MAX_DEVICES = 32;\nconst MAX_DISPLAY_NAME_CHARS = 128;\n${src.slice(start, end)}\nreturn { canStoreClaim, commitClaimedDevice, claimReservation };`,
+  )();
+
+  const STORAGE_KEY = "never-sleep-devices";
+  const storage = quotaStorage(1_000_000);
+  storage.setItem(STORAGE_KEY, "[]");
+  let held = false;
+  let probeUsedLock = false;
+  let chain = Promise.resolve();
+  const locks = {
+    request(_name, fn) {
+      const run = chain.then(() => {
+        held = true;
+        try {
+          return fn();
+        } finally {
+          held = false;
+        }
+      });
+      chain = run.catch(() => {});
+      return run;
+    },
+  };
+  const wrapped = {
+    getItem(key) {
+      if (held) probeUsedLock = true;
+      return storage.getItem(key);
+    },
+    setItem(key, value) {
+      if (held) probeUsedLock = true;
+      storage.setItem(key, value);
+    },
+    removeItem(key) {
+      storage.removeItem(key);
+    },
+  };
+  const real = {
+    device_id: "a".repeat(32),
+    device_token: "b".repeat(64),
+    display_name: "Studio",
+  };
+  await Promise.all([
+    canStoreClaim(wrapped, STORAGE_KEY, [], claimReservation(), locks),
+    commitClaimedDevice(storage, STORAGE_KEY, real, locks),
+  ]);
+  assert.equal(probeUsedLock, true, "the capacity probe must run inside the same Web Lock");
+  const stored = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.equal(stored[0]?.device_id, real.device_id);
+});
+
+test("capacity probe treats blocked localStorage reads as a miss", async () => {
   const { src } = boardClientHelpers();
   const start = src.indexOf("function withDevices");
   const end = src.indexOf("\n  async function post(");
@@ -1668,7 +1723,7 @@ test("capacity probe treats blocked localStorage reads as a miss", () => {
     "SecurityError on getItem must not reject claim(); treat it as no capacity",
   );
   assert.equal(
-    canStoreClaim(blocked, "never-sleep-devices", [], claimReservation()),
+    await canStoreClaim(blocked, "never-sleep-devices", [], claimReservation()),
     false,
   );
 

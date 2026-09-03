@@ -102,6 +102,14 @@
     };
   }
 
+  function withStorageLock(locks, key, fn) {
+    const lock = locks || globalThis.navigator?.locks;
+    if (lock && typeof lock.request === "function") {
+      return lock.request(key, fn);
+    }
+    return Promise.resolve(fn());
+  }
+
   function storageCanHold(storage, key, value) {
     const raw = typeof value === "string" ? value : JSON.stringify(value);
     try {
@@ -133,7 +141,7 @@
   }
 
   function commitClaimedDevice(storage, key, entry, locks) {
-    const apply = () => {
+    return withStorageLock(locks, key, () => {
       let devices = [];
       try {
         const raw = storage.getItem(key);
@@ -145,16 +153,13 @@
       const next = withDevices(devices, entry);
       storage.setItem(key, JSON.stringify(next));
       return next;
-    };
-    const lock = locks || globalThis.navigator?.locks;
-    if (lock && typeof lock.request === "function") {
-      return lock.request(key, apply);
-    }
-    return Promise.resolve(apply());
+    });
   }
 
-  function canStoreClaim(storage, key, devices, entry) {
-    return storageCanHold(storage, key, withDevices(devices, entry));
+  function canStoreClaim(storage, key, devices, entry, locks) {
+    return withStorageLock(locks, key, () =>
+      storageCanHold(storage, key, withDevices(devices, entry)),
+    );
   }
 
   async function post(path, body) {
@@ -484,7 +489,7 @@
   async function claim(code) {
     showError("");
     const input = document.getElementById("pair-code");
-    if (!canStoreClaim(localStorage, STORAGE_KEY, loadDevices(), claimReservation())) {
+    if (!(await canStoreClaim(localStorage, STORAGE_KEY, loadDevices(), claimReservation()))) {
       showError(copy.storageError);
       return false;
     }

@@ -94,6 +94,18 @@ pub fn parse_on_duration_in(raw: Option<&str>, lang: Lang) -> Result<Option<Dura
     }
 }
 
+/// Stable CLI/IPC spelling for a duration so a foreground fallback can hand
+/// the live session to the menu with `IpcRequest::On`.
+pub fn duration_pref_to_ipc(pref: DurationPref) -> String {
+    match pref {
+        DurationPref::Indefinite => "indefinite".into(),
+        DurationPref::Hours { hours } => format!("{hours}h"),
+        DurationPref::UntilLocal { hour, minute } => {
+            format!("until={hour:02}:{minute:02}")
+        }
+    }
+}
+
 /// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
 pub fn human_ipc_error(code: &str, lang: Lang) -> String {
     match code {
@@ -161,6 +173,12 @@ mod tests {
         assert_ne!(
             err,
             parse_on_duration_in(Some("nope"), Lang::En).unwrap_err()
+        );
+        assert_eq!(duration_pref_to_ipc(DurationPref::Indefinite), "indefinite");
+        assert_eq!(duration_pref_to_ipc(DurationPref::Hours { hours: 8 }), "8h");
+        assert_eq!(
+            duration_pref_to_ipc(DurationPref::UntilLocal { hour: 8, minute: 0 }),
+            "until=08:00"
         );
     }
 
