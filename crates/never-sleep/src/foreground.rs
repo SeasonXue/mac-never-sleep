@@ -122,6 +122,7 @@ pub fn run_foreground(
                         std::process::id(),
                     )),
                     handoff_seq,
+                    Some(engine.config.keep_awake_on_lid_close),
                 ));
             }
             let req = handoff_request(
@@ -455,8 +456,9 @@ mod tests {
             loop_body.contains("handoff_id")
                 && loop_body.contains("handoff_seq")
                 && loop_body.contains("format_handoff_id")
-                && loop_body.contains("process_instance_token"),
-            "handoff ids must include a process-start token so PID reuse cannot collide"
+                && loop_body.contains("process_instance_token")
+                && loop_body.contains("keep_awake_on_lid_close"),
+            "handoff ids must include a process-start token and the donor clamshell bit"
         );
         assert!(
             loop_body.contains("should_stop_successor_on_cancel")

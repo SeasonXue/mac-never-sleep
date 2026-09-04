@@ -277,23 +277,51 @@ pub fn should_stop_donor_after_ended_prior_handoff(
 }
 
 /// `{pid}-{starttime}-{seq}` so a reused PID cannot collide with a prior adopt.
-pub fn format_handoff_id(pid: u32, starttime: Option<u64>, seq: u64) -> String {
-    match starttime {
+/// Optional trailing `-0`/`-1` carries the donor's original clamshell bit.
+pub fn format_handoff_id(
+    pid: u32,
+    starttime: Option<u64>,
+    seq: u64,
+    clamshell: Option<bool>,
+) -> String {
+    let base = match starttime {
         Some(start) => format!("{pid}-{start}-{seq}"),
         None => format!("{pid}-{seq}-{seq}"),
+    };
+    match clamshell {
+        Some(claimed) => format!("{base}-{}", u8::from(claimed)),
+        None => base,
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg(any(test, target_os = "macos"))]
-pub fn parse_handoff_owner(id: &str) -> Option<(u32, u64)> {
+pub struct HandoffOwner {
+    pub pid: u32,
+    pub starttime: u64,
+    pub clamshell: Option<bool>,
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn parse_handoff_owner(id: &str) -> Option<HandoffOwner> {
     let mut parts = id.split('-');
     let pid = parts.next()?.parse().ok()?;
     let start = parts.next()?.parse().ok()?;
     let _seq: u64 = parts.next()?.parse().ok()?;
+    let clamshell = match parts.next() {
+        None => None,
+        Some("0") => Some(false),
+        Some("1") => Some(true),
+        Some(_) => return None,
+    };
     if parts.next().is_some() || pid == 0 {
         return None;
     }
-    Some((pid, start))
+    Some(HandoffOwner {
+        pid,
+        starttime: start,
+        clamshell,
+    })
 }
 
 /// Ctrl-C during handoff must stop a successor that may already have adopted.
@@ -650,9 +678,36 @@ mod tests {
                 .contains("handoff_id"),
             "CLI On must keep omitting the internal-only field"
         );
-        assert_eq!(format_handoff_id(11, Some(100), 1), "11-100-1");
-        assert_eq!(parse_handoff_owner("11-100-1"), Some((11, 100)));
+        assert_eq!(format_handoff_id(11, Some(100), 1, None), "11-100-1");
+        assert_eq!(
+            parse_handoff_owner("11-100-1"),
+            Some(HandoffOwner {
+                pid: 11,
+                starttime: 100,
+                clamshell: None,
+            })
+        );
+        assert_eq!(
+            parse_handoff_owner("11-100-1-0"),
+            Some(HandoffOwner {
+                pid: 11,
+                starttime: 100,
+                clamshell: Some(false),
+            })
+        );
+        assert_eq!(
+            parse_handoff_owner("11-100-1-1"),
+            Some(HandoffOwner {
+                pid: 11,
+                starttime: 100,
+                clamshell: Some(true),
+            })
+        );
         assert!(parse_handoff_owner("h1").is_none());
+        assert_eq!(
+            format_handoff_id(11, Some(100), 1, Some(false)),
+            "11-100-1-0"
+        );
         assert!(
             should_stop_successor_on_cancel(true, true, true),
             "Ctrl-C during an in-flight handoff must stop a successor that already adopted"
@@ -661,8 +716,8 @@ mod tests {
         assert!(!should_stop_successor_on_cancel(true, false, true));
         assert!(!should_stop_successor_on_cancel(true, true, false));
         assert_ne!(
-            format_handoff_id(11, Some(100), 1),
-            format_handoff_id(11, Some(200), 1),
+            format_handoff_id(11, Some(100), 1, None),
+            format_handoff_id(11, Some(200), 1, None),
             "a reused PID with a new starttime must not collide with a prior handoff id"
         );
         assert!(

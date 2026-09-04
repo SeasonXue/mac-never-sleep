@@ -3,8 +3,6 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Whether this process should restore clamshell sleep and delete `session.lock`.
 ///
@@ -157,6 +155,10 @@ pub fn pid_is_alive(pid: u32) -> bool {
     std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// Written when kernel starttime is unreadable. Peers treat a live pid as the
+/// owner instead of comparing a process-local random value they cannot observe.
+pub const UNVERIFIED_INSTANCE_TOKEN: u64 = u64::MAX;
+
 /// A live pid is not enough: SIGKILL can leave `session.lock` for a reused pid.
 pub fn lock_holder_is_live(
     pid_alive: bool,
@@ -168,6 +170,7 @@ pub fn lock_holder_is_live(
     }
     match recorded_start {
         None => true,
+        Some(UNVERIFIED_INSTANCE_TOKEN) => true,
         Some(want) => observed_start == Some(want),
     }
 }
@@ -197,15 +200,9 @@ pub fn process_starttime(pid: u32) -> Option<u64> {
 }
 
 /// Token written into every new `session.lock`. Kernel starttime when readable,
-/// otherwise a per-process fallback so PID reuse cannot look like the writer.
+/// otherwise the peer-visible unverified sentinel.
 pub fn process_instance_token(pid: u32) -> u64 {
-    process_starttime(pid).unwrap_or_else(|| {
-        if pid == std::process::id() {
-            local_instance_token()
-        } else {
-            0
-        }
-    })
+    process_starttime(pid).unwrap_or(UNVERIFIED_INSTANCE_TOKEN)
 }
 
 /// Token to compare against a recorded lock. Our pid uses the same fallback as
@@ -216,17 +213,6 @@ pub fn observed_instance_token(pid: u32) -> Option<u64> {
     } else {
         process_starttime(pid)
     }
-}
-
-fn local_instance_token() -> u64 {
-    static TOKEN: OnceLock<u64> = OnceLock::new();
-    *TOKEN.get_or_init(|| {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-        nanos ^ ((std::process::id() as u64) << 32)
-    })
 }
 
 #[cfg(target_os = "macos")]
@@ -364,12 +350,19 @@ pub fn should_restore_donor_lock_on_adopt_rollback(reject_adopt: bool) -> bool {
     reject_adopt
 }
 
+/// Rollback must write the donor's original clamshell bit, not the successor's.
 #[cfg(any(test, target_os = "macos"))]
-pub fn restore_donor_session_lock(pid: u32, starttime: u64) -> bool {
+pub fn restored_donor_clamshell_bit(donor_claimed: bool, _successor_claimed: bool) -> bool {
+    donor_claimed
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn restore_donor_session_lock(pid: u32, starttime: u64, donor_clamshell: bool) -> bool {
     if pid == 0 {
         return false;
     }
-    let clamshell = read_lock_record().map(|rec| rec.clamshell).unwrap_or(true);
+    let successor = read_lock_record().map(|rec| rec.clamshell).unwrap_or(false);
+    let clamshell = restored_donor_clamshell_bit(donor_clamshell, successor);
     let Ok(_) = crate::paths::ensure_data_dir() else {
         return false;
     };
@@ -972,11 +965,19 @@ mod tests {
             format_lock_text(99, true, Some(1)),
         )
         .unwrap();
-        assert!(restore_donor_session_lock(11, 100));
+        assert!(
+            !restored_donor_clamshell_bit(false, true),
+            "rollback must keep the donor's original clamshell bit, not the successor's"
+        );
+        assert!(restored_donor_clamshell_bit(true, false));
+        assert!(restore_donor_session_lock(11, 100, false));
         let rec = read_lock_record().expect("donor lock");
         assert_eq!(rec.pid, 11);
         assert_eq!(rec.starttime, Some(100));
-        assert!(rec.clamshell);
+        assert!(
+            !rec.clamshell,
+            "a donor that never claimed clamshell must not inherit the menu's clamshell=1"
+        );
         assert!(
             loop_src.contains("stop_donor"),
             "apply the remembered escape after drain when the response stops the donor"
@@ -996,6 +997,15 @@ mod tests {
         );
         assert!(!lock_holder_is_live(true, Some(10), None));
         assert!(!lock_holder_is_live(false, Some(10), Some(10)));
+        assert!(
+            lock_holder_is_live(true, Some(UNVERIFIED_INSTANCE_TOKEN), None),
+            "a peer-visible unverified token keeps a live pid as owner when sysctl is unreadable"
+        );
+        assert!(!lock_holder_is_live(
+            false,
+            Some(UNVERIFIED_INSTANCE_TOKEN),
+            None
+        ));
         let rec = parse_lock_record("pid=22\nclamshell=1\nstarttime=4242\n");
         assert_eq!(rec.pid, 22);
         assert!(rec.clamshell);
@@ -1019,6 +1029,18 @@ mod tests {
         assert_ne!(
             own, 0,
             "new locks must always record a process instance token"
+        );
+        let token_src = include_str!("session_lock.rs")
+            .split("pub fn process_instance_token")
+            .nth(1)
+            .expect("process_instance_token")
+            .split("pub fn observed_instance_token")
+            .next()
+            .unwrap();
+        assert!(
+            token_src.contains("UNVERIFIED_INSTANCE_TOKEN")
+                && !token_src.contains("local_instance_token"),
+            "sysctl-miss fallback must be a peer-readable sentinel, not a process-local random"
         );
         assert_eq!(observed_instance_token(std::process::id()), Some(own));
         assert!(lock_holder_is_live(

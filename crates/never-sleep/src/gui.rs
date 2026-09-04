@@ -1213,11 +1213,15 @@ fn handle_ipc(
         {
             if reject_adopt {
                 if crate::session_lock::should_restore_donor_lock_on_adopt_rollback(true) {
-                    if let Some((pid, start)) = ack_id
+                    if let Some(owner) = ack_id
                         .as_deref()
                         .and_then(crate::protocol::parse_handoff_owner)
                     {
-                        let _ = crate::session_lock::restore_donor_session_lock(pid, start);
+                        let _ = crate::session_lock::restore_donor_session_lock(
+                            owner.pid,
+                            owner.starttime,
+                            owner.clamshell.unwrap_or(false),
+                        );
                     }
                 }
                 dispatch(
