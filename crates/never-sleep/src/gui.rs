@@ -381,7 +381,12 @@ pub fn run() {
                 toggle_want_stop,
             );
             if quitting {
-                flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
+                flush_cloud_on_quit(
+                    &engine,
+                    platform.as_mut(),
+                    &mut cloud,
+                    last_handoff_id.as_deref(),
+                );
                 *control_flow = ControlFlow::Exit;
                 break;
             } else {
@@ -498,7 +503,12 @@ pub fn run() {
                     toggle_want_stop,
                 );
                 if matches!(*control_flow, ControlFlow::Exit) {
-                    flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
+                    flush_cloud_on_quit(
+                        &engine,
+                        platform.as_mut(),
+                        &mut cloud,
+                        last_handoff_id.as_deref(),
+                    );
                 } else {
                     refresh_ui(
                         &handles,
@@ -586,7 +596,12 @@ pub fn run() {
                     toggle_want_stop,
                 );
                 if matches!(*control_flow, ControlFlow::Exit) {
-                    flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
+                    flush_cloud_on_quit(
+                        &engine,
+                        platform.as_mut(),
+                        &mut cloud,
+                        last_handoff_id.as_deref(),
+                    );
                 } else {
                     refresh_ui(
                         &handles,
@@ -640,7 +655,12 @@ pub fn run() {
             }
             Event::LoopDestroyed => {
                 stop_for_quit(&mut engine, platform.as_mut());
-                flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
+                flush_cloud_on_quit(
+                    &engine,
+                    platform.as_mut(),
+                    &mut cloud,
+                    last_handoff_id.as_deref(),
+                );
             }
             _ => {}
         }
@@ -880,8 +900,14 @@ fn flush_cloud_on_quit(
     engine: &Engine,
     platform: &mut dyn Platform,
     cloud: &mut Option<CloudHandle>,
+    last_handoff_id: Option<&str>,
 ) {
-    let had_live_reporter = crate::protocol::read_handoff_ack().is_some_and(|ack| ack.reporter);
+    let ack = crate::protocol::read_handoff_ack();
+    let had_live_reporter = crate::protocol::successor_reporter_live_on_matching_ack(
+        last_handoff_id,
+        ack.as_ref().map(|ack| ack.id.as_str()),
+        ack.as_ref().is_some_and(|ack| ack.reporter),
+    );
     let clear_ok = crate::protocol::mark_handoff_ack_reporter_gone();
     if let Some(handle) = cloud.take() {
         let would_detach = crate::session_lock::should_detach_cloud_on_quit(
@@ -1313,7 +1339,10 @@ fn handle_ipc(
             }
         }
     }
-    resp.clamshell_reapply = crate::session_lock::take_ipc_donor_clamshell_reapply();
+    resp.clamshell_reapply = crate::session_lock::should_signal_ipc_donor_clamshell_reapply(
+        handoff_attempt,
+        crate::session_lock::peek_ipc_donor_clamshell_reapply(),
+    );
     let _ = reply.send(resp);
     (quitting, adopted, stop_donor, skip_drain)
 }

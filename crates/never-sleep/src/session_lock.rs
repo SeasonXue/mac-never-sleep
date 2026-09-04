@@ -631,6 +631,19 @@ pub fn take_ipc_donor_clamshell_reapply() -> bool {
     DONOR_CLAMSHELL_REAPPLY.swap(false, Ordering::SeqCst)
 }
 
+/// Read the IPC bit without dropping it. A timed-out `reply.send` or a later
+/// `write_resp` miss must still see the signal on the donor's next handoff.
+#[cfg(any(test, target_os = "macos"))]
+pub fn peek_ipc_donor_clamshell_reapply() -> bool {
+    DONOR_CLAMSHELL_REAPPLY.load(Ordering::SeqCst)
+}
+
+/// Only handoff replies carry the bit; Ping must not consume a signal the donor ignores.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_signal_ipc_donor_clamshell_reapply(handoff_reply: bool, signaled: bool) -> bool {
+    handoff_reply && signaled
+}
+
 pub fn should_reapply_donor_clamshell(engine_active: bool, ipc_signaled: bool) -> bool {
     engine_active && ipc_signaled
 }
@@ -879,16 +892,36 @@ mod tests {
         let _ = take_ipc_donor_clamshell_reapply();
         request_donor_clamshell_reapply();
         assert!(
+            peek_ipc_donor_clamshell_reapply() && peek_ipc_donor_clamshell_reapply(),
+            "peeking the IPC bit must leave it for a retried handoff after a lost reply"
+        );
+        assert!(
+            should_signal_ipc_donor_clamshell_reapply(true, true)
+                && !should_signal_ipc_donor_clamshell_reapply(false, true)
+                && !should_signal_ipc_donor_clamshell_reapply(true, false),
+            "only a handoff reply may carry the bit; Ping must not drop a signal the donor ignores"
+        );
+        assert!(
             take_ipc_donor_clamshell_reapply(),
             "the IPC bit must not depend on writing clamshell.reapply"
         );
         assert!(
             !take_ipc_donor_clamshell_reapply(),
-            "the IPC reapply bit is one-shot"
+            "take still clears the bit when delivery is known"
         );
+        let handle = gui
+            .split("fn handle_ipc")
+            .nth(1)
+            .expect("handle_ipc")
+            .split("fn local_controls_deferred")
+            .next()
+            .unwrap();
         assert!(
-            gui.contains("take_ipc_donor_clamshell_reapply") && gui.contains("clamshell_reapply"),
-            "handoff replies must carry the reapply bit without the data directory"
+            handle.contains("peek_ipc_donor_clamshell_reapply")
+                && handle.contains("should_signal_ipc_donor_clamshell_reapply")
+                && handle.contains("clamshell_reapply")
+                && !handle.contains("take_ipc_donor_clamshell_reapply"),
+            "handoff replies must copy the reapply bit without dropping it before send"
         );
         assert!(
             fg.contains("donor_should_reapply_clamshell")
@@ -1426,8 +1459,9 @@ mod tests {
             flush.contains("mark_handoff_ack_reporter_gone")
                 && flush.contains("should_flush_offline_if_ack_reporter_clear_failed")
                 && flush.contains("should_flush_offline_after_abandoning_successor_reporter")
+                && flush.contains("successor_reporter_live_on_matching_ack")
                 && flush.contains("publish_and_flush"),
-            "Quit must clear ack reporter ownership, flush if that clear fails, and flush after abandoning reporter=1"
+            "Quit must clear ack reporter ownership, flush if that clear fails, and flush after abandoning this session's reporter=1"
         );
         assert!(
             handle.contains("handoff_ack_reporter")

@@ -466,6 +466,16 @@ pub fn should_flush_offline_after_abandoning_successor_reporter(
     had_live_reporter && clear_ok
 }
 
+/// A stale `reporter=1` ack from a crashed prior menu must not count as this session's reporter.
+#[cfg(any(test, target_os = "macos"))]
+pub fn successor_reporter_live_on_matching_ack(
+    our_handoff_id: Option<&str>,
+    ack_id: Option<&str>,
+    ack_reporter: bool,
+) -> bool {
+    matching_handoff_ack_reporter(our_handoff_id, ack_id, ack_reporter) == Some(true)
+}
+
 /// Re-check a matching ack after the adopted IPC snapshot looked live.
 pub fn successor_reporter_after_fresh_ack(
     previous: bool,
@@ -1047,6 +1057,15 @@ mod tests {
             true, false
         ));
         assert!(
+            successor_reporter_live_on_matching_ack(Some("h1"), Some("h1"), true),
+            "Quit after adopt must see this session's reporter=1 ack"
+        );
+        assert!(
+            !successor_reporter_live_on_matching_ack(Some("h2"), Some("h1"), true)
+                && !successor_reporter_live_on_matching_ack(None, Some("h1"), true),
+            "a stale reporter=1 ack from a crashed prior menu must not flush offline over a live donor"
+        );
+        assert!(
             !successor_reporter_after_fresh_ack(true, Some(true), Some(false)),
             "a later matching ack with reporter=0 must override the first live snapshot before detach"
         );
@@ -1091,8 +1110,10 @@ mod tests {
             .unwrap();
         assert!(
             flush.contains("should_flush_offline_after_abandoning_successor_reporter")
-                && flush.contains("had_live_reporter"),
-            "menu must flush after abandoning reporter=1 while the donor may still hold reporter.lock"
+                && flush.contains("had_live_reporter")
+                && flush.contains("successor_reporter_live_on_matching_ack")
+                && flush.contains("last_handoff_id"),
+            "menu must flush after abandoning this session's reporter=1, not a stale prior ack"
         );
     }
 
