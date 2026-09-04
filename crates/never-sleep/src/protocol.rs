@@ -1,3 +1,12 @@
+#[cfg(any(test, target_os = "macos"))]
+use std::fs::File;
+#[cfg(any(test, target_os = "macos"))]
+use std::io::Write;
+#[cfg(any(test, target_os = "macos"))]
+use std::path::{Path, PathBuf};
+#[cfg(any(test, target_os = "macos"))]
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use serde::{Deserialize, Serialize};
 
 use never_sleep_core::{parse_duration_pref_in, DurationPref, JsonStatus, Lang, Tr};
@@ -436,10 +445,15 @@ pub fn donor_should_flush_offline_after_ipc_adopt(successor_reporter: Option<boo
 }
 
 /// Prefer the IPC reporter bit; fall back to the persisted ack; default live for older menus.
+/// A matching ack with reporter=0 is newer than an in-flight adopted reply (Quit rewrites
+/// the ack after sending it) and must flush rather than detach.
 pub fn successor_reporter_after_adopt(
     ipc_reporter: Option<bool>,
     ack_reporter: Option<bool>,
 ) -> bool {
+    if ipc_reporter == Some(false) || ack_reporter == Some(false) {
+        return false;
+    }
     ipc_reporter.or(ack_reporter).unwrap_or(true)
 }
 
@@ -514,6 +528,26 @@ pub fn read_handoff_ack() -> Option<HandoffAck> {
 }
 
 #[cfg(any(test, target_os = "macos"))]
+static HANDOFF_ACK_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(any(test, target_os = "macos"))]
+fn create_private_handoff_ack_tmp(path: &Path) -> std::io::Result<(PathBuf, File)> {
+    let pid = std::process::id();
+    let mut last_err = None;
+    for _ in 0..32 {
+        let seq = HANDOFF_ACK_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_file_name(format!("handoff.ack.tmp.{pid}.{seq}"));
+        match File::create_new(&tmp) {
+            Ok(file) => return Ok((tmp, file)),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::AlreadyExists, "handoff.ack tmp")
+    }))
+}
+
+#[cfg(any(test, target_os = "macos"))]
 pub fn write_handoff_ack(
     id: &str,
     outcome: HandoffAckOutcome,
@@ -526,10 +560,23 @@ pub fn write_handoff_ack(
         ));
     }
     crate::paths::ensure_data_dir()?;
-    std::fs::write(
-        crate::paths::handoff_ack_path(),
-        format_handoff_ack(id, outcome, reporter),
-    )
+    let path = crate::paths::handoff_ack_path();
+    let body = format_handoff_ack(id, outcome, reporter);
+    let (tmp, mut file) = create_private_handoff_ack_tmp(&path)?;
+    if let Err(err) = file
+        .write_all(body.as_bytes())
+        .and_then(|_| file.sync_all())
+    {
+        drop(file);
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    drop(file);
+    if let Err(err) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// Quit teardown: IPC may still accept Ping after this reporter has flushed.
@@ -688,6 +735,10 @@ mod tests {
         assert!(
             !successor_reporter_after_adopt(Some(false), Some(true)),
             "the IPC reporter bit wins over a stale ack"
+        );
+        assert!(
+            !successor_reporter_after_adopt(Some(true), Some(false)),
+            "Quit rewrote reporter=0 after the adopted reply; the donor must flush, not detach"
         );
         assert!(!successor_reporter_after_adopt(None, Some(false)));
         assert!(
@@ -951,18 +1002,6 @@ mod tests {
             Some(false),
             "Quit must clear reporter ownership before the socket goes away"
         );
-        write_handoff_ack("h1", HandoffAckOutcome::Adopted, true).unwrap();
-        let ack_path = crate::paths::handoff_ack_path();
-        let saved = std::fs::metadata(&ack_path).unwrap().permissions();
-        let mut perms = saved.clone();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o444);
-        std::fs::set_permissions(&ack_path, perms).unwrap();
-        let clear_ok = mark_handoff_ack_reporter_gone();
-        std::fs::set_permissions(&ack_path, saved).unwrap();
-        assert!(
-            !clear_ok,
-            "a read-only ack file must surface reporter clear failure"
-        );
         clear_handoff_ack();
         assert!(read_handoff_ack().is_none());
         std::fs::create_dir(crate::paths::handoff_ack_path()).unwrap();
@@ -971,6 +1010,62 @@ mod tests {
             "adopt must not report success when handoff.ack cannot be written"
         );
         let _ = std::fs::remove_dir(crate::paths::handoff_ack_path());
+    }
+
+    #[test]
+    fn interrupted_reporter_gone_keeps_previous_ack() {
+        let src = include_str!("protocol.rs");
+        let write_fn = src
+            .split("fn create_private_handoff_ack_tmp")
+            .nth(1)
+            .expect("create_private_handoff_ack_tmp")
+            .split("pub fn mark_handoff_ack_reporter_gone")
+            .next()
+            .unwrap();
+        assert!(
+            write_fn.contains("handoff.ack.tmp")
+                && write_fn.contains("sync_all")
+                && write_fn.contains("rename")
+                && write_fn.contains("create_new")
+                && !write_fn.contains("fs::write"),
+            "reporter-gone must replace handoff.ack atomically so a truncated write cannot drop the stop signal"
+        );
+        let mark_fn = src
+            .split("pub fn mark_handoff_ack_reporter_gone")
+            .nth(1)
+            .expect("mark_handoff_ack_reporter_gone")
+            .split("pub fn clear_handoff_ack")
+            .next()
+            .unwrap();
+        assert!(
+            mark_fn.contains("write_handoff_ack"),
+            "Quit reporter-gone must go through the atomic ack write"
+        );
+
+        let _dir = crate::paths::TestDataDir::install();
+        write_handoff_ack("h1", HandoffAckOutcome::Adopted, true).unwrap();
+        crate::paths::ensure_data_dir().unwrap();
+        let dir = crate::paths::data_dir();
+        let orig = std::fs::metadata(&dir).unwrap().permissions();
+        let mut perms = orig.clone();
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&dir, perms).unwrap();
+        let clear_ok = mark_handoff_ack_reporter_gone();
+        std::fs::set_permissions(&dir, orig).unwrap();
+        assert!(
+            !clear_ok,
+            "a read-only data dir must surface reporter clear failure"
+        );
+        assert_eq!(
+            read_handoff_ack(),
+            Some(HandoffAck {
+                id: "h1".into(),
+                outcome: HandoffAckOutcome::Adopted,
+                reporter: true,
+            }),
+            "the previous valid ack must survive an interrupted reporter-bit update"
+        );
     }
 
     #[test]
