@@ -1196,7 +1196,7 @@ fn handle_ipc(
         } else {
             crate::protocol::HandoffAckOutcome::Stop
         };
-        let reporter = identity.is_some() && adopted;
+        let reporter = crate::protocol::handoff_ack_reporter(identity.is_some());
         let persist_ok = ack_id
             .as_deref()
             .filter(|id| !id.is_empty())

@@ -16,12 +16,26 @@ pub fn run_foreground(
 ) -> Result<(), String> {
     platform.cleanup_orphans();
     let mut engine = Engine::new(load_config());
+    let cloud_ok = crate::cloud::cloud_enabled();
+    let needs_reporter =
+        crate::session_lock::should_claim_foreground_reporter_lock(cloud_ok, menu_socket_absent());
+    let reporter_claimed =
+        needs_reporter && crate::session_lock::try_claim_reporter_lock(std::process::id());
+    if crate::session_lock::should_abort_foreground_without_reporter_lock(
+        needs_reporter,
+        reporter_claimed,
+    ) {
+        return Err(engine.config.tr().foreground_already_running().into());
+    }
     let input = match duration {
         Some(d) => Input::StartWith(d),
         None => Input::Start,
     };
     dispatch(&mut engine, platform, input);
     if !engine.is_active() {
+        if reporter_claimed {
+            crate::session_lock::release_reporter_lock(std::process::id());
+        }
         return Err(engine.config.tr().foreground_failed().into());
     }
 
@@ -31,9 +45,8 @@ pub fn run_foreground(
         r.store(false, Ordering::SeqCst);
     });
 
-    let cloud_ok = crate::cloud::cloud_enabled();
-    let mut cloud = if cloud_ok && menu_socket_absent() {
-        spawn_foreground_reporter(engine.config.lang())
+    let mut cloud = if reporter_claimed {
+        spawn_foreground_reporter(engine.config.lang(), true)
     } else {
         None
     };
@@ -71,6 +84,7 @@ pub fn run_foreground(
                         handle.detach();
                     }
                 }
+                crate::session_lock::release_reporter_lock(std::process::id());
                 crate::protocol::clear_handoff_ack();
                 println!("{}", engine.config.tr().foreground_ended());
                 return Ok(());
@@ -112,6 +126,7 @@ pub fn run_foreground(
                     if let Some(handle) = take_foreground_reporter(&mut cloud) {
                         handle.detach();
                     }
+                    crate::session_lock::release_reporter_lock(std::process::id());
                     if engine.is_active() {
                         dispatch(
                             &mut engine,
@@ -139,6 +154,7 @@ pub fn run_foreground(
                     if let Some(handle) = take_foreground_reporter(&mut cloud) {
                         handle.detach();
                     }
+                    crate::session_lock::release_reporter_lock(std::process::id());
                     println!("{}", engine.config.tr().foreground_ended());
                     return Ok(());
                 }
@@ -153,7 +169,7 @@ pub fn run_foreground(
                 }
             }
             if cloud.is_none() && cloud_ok && menu_socket_absent() {
-                cloud = spawn_foreground_reporter(engine.config.lang());
+                cloud = spawn_foreground_reporter(engine.config.lang(), false);
             }
         }
         dispatch(&mut engine, platform, Input::Tick);
@@ -183,6 +199,7 @@ pub fn run_foreground(
             engine.config.lang(),
         );
     }
+    crate::session_lock::release_reporter_lock(std::process::id());
     println!("{}", engine.config.tr().foreground_ended());
     Ok(())
 }
@@ -211,15 +228,14 @@ fn handoff_request(
 fn take_foreground_reporter(
     cloud: &mut Option<crate::cloud::CloudHandle>,
 ) -> Option<crate::cloud::CloudHandle> {
-    let handle = cloud.take();
-    if handle.is_some() {
-        crate::session_lock::release_reporter_lock(std::process::id());
-    }
-    handle
+    cloud.take()
 }
 
-fn spawn_foreground_reporter(lang: Lang) -> Option<crate::cloud::CloudHandle> {
-    if !crate::session_lock::try_claim_reporter_lock(std::process::id()) {
+fn spawn_foreground_reporter(
+    lang: Lang,
+    already_claimed: bool,
+) -> Option<crate::cloud::CloudHandle> {
+    if !already_claimed && !crate::session_lock::try_claim_reporter_lock(std::process::id()) {
         return None;
     }
     match crate::cloud::load_or_create_identity() {

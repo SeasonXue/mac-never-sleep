@@ -672,6 +672,13 @@ impl Tr {
         self.pick("Could not enter standby", "未能进入待命")
     }
 
+    pub fn foreground_already_running(self) -> &'static str {
+        self.pick(
+            "Standby is already running in another Never Sleep process.",
+            "另一 Never Sleep 进程已在待命。",
+        )
+    }
+
     pub fn foreground_started(self) -> &'static str {
         self.pick(
             "Standby is on. The display will sleep; the Mac stays awake. Press Ctrl-C to end.",
@@ -1092,5 +1099,20 @@ mod tests {
         assert!(zh.contains("合盖"));
         assert_ne!(en, zh);
         assert!(!zh.contains("熄屏待命"));
+    }
+
+    #[test]
+    fn foreground_already_running_is_bilingual() {
+        assert_eq!(
+            Tr::new(Lang::En).foreground_already_running(),
+            "Standby is already running in another Never Sleep process."
+        );
+        assert_eq!(
+            Tr::new(Lang::Zh).foreground_already_running(),
+            "另一 Never Sleep 进程已在待命。"
+        );
+        assert!(!Tr::new(Lang::Zh)
+            .foreground_already_running()
+            .contains("熄屏待命"));
     }
 }

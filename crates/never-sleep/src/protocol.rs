@@ -359,6 +359,13 @@ pub fn donor_should_flush_offline_after_ack(successor_reporter: bool) -> bool {
     !successor_reporter
 }
 
+/// Persist whether this process still owns the cloud reporter, including Stop
+/// acks after a failed adopt: the menu reporter may still be heartbeating.
+#[cfg(any(test, target_os = "macos"))]
+pub fn handoff_ack_reporter(owns_reporter: bool) -> bool {
+    owns_reporter
+}
+
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_persist_handoff_ack(handoff: bool, adopted: bool, stop_donor: bool) -> bool {
     handoff && (adopted || stop_donor)
@@ -653,6 +660,14 @@ mod tests {
         assert!(
             !donor_should_flush_offline_after_ack(true),
             "a live successor reporter must not be marked offline by this donor"
+        );
+        assert!(
+            handoff_ack_reporter(true),
+            "a Stop ack must record reporter=1 while the menu reporter is still alive"
+        );
+        assert!(
+            !handoff_ack_reporter(false),
+            "Quit-cleared ownership must flush rather than detach into a missing reporter"
         );
         assert!(should_reject_adopt_if_ack_unpersisted(true, true, false));
         assert!(!should_reject_adopt_if_ack_unpersisted(true, false, false));

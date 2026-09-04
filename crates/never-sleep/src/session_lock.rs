@@ -1,4 +1,8 @@
-use std::io::{Read, Write};
+use std::cell::RefCell;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
+use std::path::PathBuf;
 
 /// Whether this process should restore clamshell sleep and delete `session.lock`.
 ///
@@ -291,6 +295,7 @@ pub fn should_stop_donor_on_failed_handoff(
 }
 
 /// Only one foreground process may poll commands for the persisted identity.
+#[cfg(test)]
 pub fn should_claim_reporter_lock(
     our_pid: u32,
     lock_pid: Option<u32>,
@@ -303,65 +308,133 @@ pub fn should_claim_reporter_lock(
     }
 }
 
+/// Cloud polling for `never-sleep on` when no menu owns IPC.
+pub fn should_claim_foreground_reporter_lock(cloud_ok: bool, menu_socket_absent: bool) -> bool {
+    cloud_ok && menu_socket_absent
+}
+
+/// Do not Start a second local session if this process cannot own the reporter.
+pub fn should_abort_foreground_without_reporter_lock(needs_reporter: bool, claimed: bool) -> bool {
+    needs_reporter && !claimed
+}
+
 fn read_reporter_lock() -> Option<SessionLockRecord> {
     let text = std::fs::read_to_string(crate::paths::reporter_lock_path()).ok()?;
     Some(parse_lock_record(&text))
 }
 
-fn reporter_lock_holder_alive(rec: &SessionLockRecord) -> bool {
-    lock_holder_is_live(
-        pid_is_alive(rec.pid),
-        rec.starttime,
-        process_starttime(rec.pid),
-    )
+thread_local! {
+    static REPORTER_LOCK: RefCell<Option<(PathBuf, File)>> = const { RefCell::new(None) };
+}
+
+fn lock_reporter_file(file: &File) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let mut lock = libc::flock {
+            l_type: libc::F_WRLCK as i16,
+            l_whence: libc::SEEK_SET as i16,
+            l_start: 0,
+            l_len: 0,
+            l_pid: 0,
+        };
+        // SAFETY: `file` is an fd we own; F_OFD_SETLK takes a non-blocking
+        // exclusive open-file-description lock so two opens cannot both succeed.
+        unsafe { libc::fcntl(file.as_raw_fd(), libc::F_OFD_SETLK, &mut lock) == 0 }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // SAFETY: `file` is an fd we own; flock(LOCK_EX|LOCK_NB) excludes other
+        // processes until this fd is dropped.
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+    }
+}
+
+fn holding_current_reporter_lock() -> bool {
+    let path = crate::paths::reporter_lock_path();
+    REPORTER_LOCK.with(|slot| {
+        let mismatch = slot
+            .borrow()
+            .as_ref()
+            .is_some_and(|(held, _)| held != &path);
+        if mismatch {
+            slot.borrow_mut().take();
+            false
+        } else {
+            slot.borrow().is_some()
+        }
+    })
 }
 
 /// Exclusive cloud polling for `never-sleep on` when no menu owns IPC.
+///
+/// Ownership is the held flock / OFD lock, not pid liveness. A leftover file
+/// from a crash is taken over without unlink-then-create_new.
 pub fn try_claim_reporter_lock(our_pid: u32) -> bool {
     if our_pid == 0 {
         return false;
     }
-    for _ in 0..3 {
-        if let Some(rec) = read_reporter_lock() {
-            let alive = reporter_lock_holder_alive(&rec);
-            if rec.pid == our_pid && alive {
-                return true;
-            }
-            if !should_claim_reporter_lock(our_pid, Some(rec.pid), alive) {
-                return false;
-            }
-            let _ = std::fs::remove_file(crate::paths::reporter_lock_path());
-        }
-        let Ok(_) = crate::paths::ensure_data_dir() else {
-            return false;
-        };
-        let body = format_lock_text(our_pid, false, process_starttime(our_pid));
-        let path = crate::paths::reporter_lock_path();
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                if file.write_all(body.as_bytes()).is_ok() {
-                    return true;
-                }
-                let _ = std::fs::remove_file(&path);
-                return false;
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(_) => return false,
-        }
+    if holding_current_reporter_lock() {
+        return true;
     }
-    false
+    let Ok(_) = crate::paths::ensure_data_dir() else {
+        return false;
+    };
+    let path = crate::paths::reporter_lock_path();
+    let mut file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    if !lock_reporter_file(&file) {
+        return false;
+    }
+    let body = format_lock_text(our_pid, false, process_starttime(our_pid));
+    if file.set_len(0).is_err()
+        || file.seek(SeekFrom::Start(0)).is_err()
+        || file.write_all(body.as_bytes()).is_err()
+    {
+        return false;
+    }
+    REPORTER_LOCK.with(|slot| {
+        *slot.borrow_mut() = Some((path, file));
+    });
+    true
 }
 
 pub fn release_reporter_lock(our_pid: u32) {
-    if let Some(rec) = read_reporter_lock() {
-        if rec.pid == our_pid {
-            let _ = std::fs::remove_file(crate::paths::reporter_lock_path());
+    REPORTER_LOCK.with(|slot| {
+        let held = slot.borrow_mut().take();
+        if held.is_some() {
+            if let Some(rec) = read_reporter_lock() {
+                if rec.pid == our_pid {
+                    let _ = std::fs::remove_file(crate::paths::reporter_lock_path());
+                }
+            }
         }
-    }
+        drop(held);
+    });
+}
+
+#[cfg(test)]
+fn hold_reporter_lock_for_test() -> File {
+    let _ = crate::paths::ensure_data_dir();
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(crate::paths::reporter_lock_path())
+        .expect("open reporter.lock for the competing test holder");
+    assert!(
+        lock_reporter_file(&file),
+        "test holder must take the exclusive reporter lock"
+    );
+    file
 }
 
 /// Keep a foreign clamshell=1 lock when inherited restore failed, even if the
@@ -791,6 +864,12 @@ mod tests {
             "Quit must clear ack reporter ownership before the socket disappears"
         );
         assert!(
+            handle.contains("handoff_ack_reporter")
+                && handle.contains("identity.is_some()")
+                && !handle.contains("identity.is_some() && adopted"),
+            "Stop acks must record a surviving menu reporter, not only Adopted"
+        );
+        assert!(
             loop_src.contains("stop_donor"),
             "apply the remembered escape after drain when the response stops the donor"
         );
@@ -855,6 +934,29 @@ mod tests {
         assert!(should_claim_reporter_lock(11, Some(22), false));
         assert!(should_claim_reporter_lock(11, Some(11), true));
         assert!(should_claim_reporter_lock(11, None, false));
+        assert!(
+            should_abort_foreground_without_reporter_lock(true, false),
+            "a second never-sleep on must not Start when reporter.lock is denied"
+        );
+        assert!(!should_abort_foreground_without_reporter_lock(true, true));
+        assert!(
+            !should_abort_foreground_without_reporter_lock(false, false),
+            "a live menu still accepts handoff; lock denial must not reject that path"
+        );
+        assert!(should_claim_foreground_reporter_lock(true, true));
+        assert!(!should_claim_foreground_reporter_lock(true, false));
+        assert!(!should_claim_foreground_reporter_lock(false, true));
+        let claim_src = include_str!("session_lock.rs")
+            .split("pub fn try_claim_reporter_lock")
+            .nth(1)
+            .expect("try_claim_reporter_lock")
+            .split("pub fn release_reporter_lock")
+            .next()
+            .unwrap();
+        assert!(
+            !claim_src.contains("remove_file"),
+            "replacing a leftover reporter.lock must not unlink then create_new"
+        );
         let _dir = crate::paths::TestDataDir::install();
         let ours = std::process::id();
         assert!(
@@ -865,24 +967,26 @@ mod tests {
             try_claim_reporter_lock(ours),
             "the owning process may re-enter the lock"
         );
-        let init_start = process_starttime(1);
+        release_reporter_lock(ours);
         std::fs::write(
             crate::paths::reporter_lock_path(),
-            format_lock_text(1, false, init_start),
-        )
-        .unwrap();
-        assert!(
-            !try_claim_reporter_lock(ours),
-            "a second foreground must not steal a live reporter lock"
-        );
-        std::fs::write(
-            crate::paths::reporter_lock_path(),
-            format_lock_text(1, false, Some(1)),
+            format_lock_text(1, false, process_starttime(1)),
         )
         .unwrap();
         assert!(
             try_claim_reporter_lock(ours),
-            "a leftover lock from a reused pid must not block polling"
+            "a leftover reporter.lock without a held flock must be taken over atomically"
+        );
+        release_reporter_lock(ours);
+        let foreign = hold_reporter_lock_for_test();
+        assert!(
+            !try_claim_reporter_lock(ours),
+            "a second foreground must not steal a held reporter lock"
+        );
+        drop(foreign);
+        assert!(
+            try_claim_reporter_lock(ours),
+            "releasing the held lock must allow the next foreground to poll"
         );
         release_reporter_lock(ours);
         assert!(read_reporter_lock().is_none());
@@ -891,5 +995,44 @@ mod tests {
             fg.contains("try_claim_reporter_lock") && fg.contains("release_reporter_lock"),
             "foreground must take exclusive reporter ownership before heartbeats"
         );
+        let start = fg.find("pub fn run_foreground").expect("run_foreground");
+        let before_loop = fg[start..]
+            .split("while running")
+            .next()
+            .expect("foreground loop");
+        let claim_at = before_loop
+            .find("try_claim_reporter_lock")
+            .expect("claim reporter.lock before Start");
+        let dispatch_at = before_loop
+            .find("dispatch(")
+            .expect("Start dispatch after the reporter claim");
+        assert!(
+            claim_at < dispatch_at
+                && before_loop.contains("should_abort_foreground_without_reporter_lock"),
+            "a denied reporter.lock must abort before dispatching Start"
+        );
+        let take = fg
+            .split("fn take_foreground_reporter")
+            .nth(1)
+            .expect("take_foreground_reporter")
+            .split("fn spawn_foreground_reporter")
+            .next()
+            .unwrap();
+        assert!(
+            !take.contains("release_reporter_lock"),
+            "the lock must stay held until detach or publish_and_flush has joined"
+        );
+        for marker in ["handle.detach();", "publish_and_flush("] {
+            let at = fg.find(marker).unwrap_or_else(|| panic!("{marker}"));
+            let after = &fg[at + marker.len()..];
+            let release_at = after
+                .find("release_reporter_lock")
+                .unwrap_or_else(|| panic!("release after {marker}"));
+            let next_fn = after.find("\nfn ").unwrap_or(after.len());
+            assert!(
+                release_at < next_fn,
+                "{marker} must drop the lock only after the reporter has stopped"
+            );
+        }
     }
 }
