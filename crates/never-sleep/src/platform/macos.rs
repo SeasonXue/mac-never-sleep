@@ -427,15 +427,17 @@ fn escape_as(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn write_lock(clamshell: bool) {
-    let _ = ensure_data_dir();
+fn write_lock(clamshell: bool) -> Result<(), String> {
     let pid = std::process::id();
-    let body = crate::session_lock::format_lock_text(
+    if crate::session_lock::write_session_lock(
         pid,
         clamshell,
         Some(crate::session_lock::process_instance_token(pid)),
-    );
-    let _ = fs::write(session_lock_path(), body);
+    ) {
+        Ok(())
+    } else {
+        Err("session.lock".into())
+    }
 }
 
 fn pid_alive(pid: u32) -> bool {
@@ -696,7 +698,14 @@ impl Platform for MacPlatform {
 
         if self.owns_power {
             if may_own {
-                write_lock(self.clamshell_on);
+                let write_ok = write_lock(self.clamshell_on).is_ok();
+                if crate::session_lock::should_fail_apply_if_lock_write_failed(
+                    may_own,
+                    self.owns_power,
+                    write_ok,
+                ) {
+                    return Err("session.lock".into());
+                }
             }
         } else if may_own {
             let _ = fs::remove_file(session_lock_path());

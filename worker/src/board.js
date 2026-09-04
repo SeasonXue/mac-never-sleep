@@ -97,8 +97,12 @@ export function shardName(path, body) {
     return code ? `pair:${code}` : null;
   }
   if (p === "/api/list") return null;
+  if (p === "/api/pair/start") {
+    if (!deviceCredentialsAreValid(body?.device_id, body?.device_token)) return null;
+    return `device:${body.device_id}`;
+  }
   const id = body?.device_id;
-  if (typeof id === "string" && id.length >= 16) {
+  if (isHexLen(id, DEVICE_ID_LEN)) {
     return `device:${id}`;
   }
   return null;
@@ -107,6 +111,17 @@ export function shardName(path, body) {
 export const LIST_MAX_DEVICES = 32;
 /** Phone-board cards and localStorage reservations share this cap. */
 export const MAX_DISPLAY_NAME_CHARS = 128;
+export const DEVICE_ID_LEN = 32;
+export const DEVICE_TOKEN_LEN = 64;
+
+export function isHexLen(value, len) {
+  return typeof value === "string" && value.length === len && /^[0-9a-f]+$/i.test(value);
+}
+
+/** Reject attacker-controlled credentials before `idFromName` or DO storage. */
+export function deviceCredentialsAreValid(deviceId, deviceToken) {
+  return isHexLen(deviceId, DEVICE_ID_LEN) && isHexLen(deviceToken, DEVICE_TOKEN_LEN);
+}
 
 export function boundDisplayName(name) {
   if (typeof name !== "string") return "Mac";
@@ -680,12 +695,7 @@ export class Board {
     expiresUnix,
   }) {
     const now = this.nowSecs();
-    if (
-      typeof deviceId !== "string" ||
-      typeof deviceToken !== "string" ||
-      deviceId.length < 16 ||
-      deviceToken.length < 16
-    ) {
+    if (!deviceCredentialsAreValid(deviceId, deviceToken)) {
       return { ok: false, error: "bad_identity", status: 400 };
     }
     const existing = this.devices.get(deviceId);
@@ -745,8 +755,7 @@ export class Board {
     const code = normalizePairingCode(pairingCode);
     if (
       !code ||
-      typeof deviceId !== "string" ||
-      typeof deviceToken !== "string"
+      !deviceCredentialsAreValid(deviceId, deviceToken)
     ) {
       return { ok: false, error: "bad_offer", status: 400 };
     }

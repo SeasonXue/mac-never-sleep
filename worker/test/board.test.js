@@ -42,6 +42,9 @@ import {
   DEVICE_HEARTBEAT_INTERVAL_MS,
   DEVICE_IP_MIN_MACS,
   DEVICE_GLOBAL_MIN_MACS,
+  DEVICE_ID_LEN,
+  DEVICE_TOKEN_LEN,
+  deviceCredentialsAreValid,
   takePairStartSlot,
   takeListSlot,
   takeClaimSlot,
@@ -580,6 +583,47 @@ test("API traffic is sharded per device and pairing code, never a global board",
   assert.equal(shardName("/api/list", { devices: [id] }), null);
   assert.notEqual(shardName("/api/pair/start", id), "board");
   assert.notEqual(shardName("/api/heartbeat", id), "board");
+});
+
+test("pair/start rejects oversized credentials before allocating a shard", async () => {
+  const id = identity();
+  assert.equal(id.device_id.length, DEVICE_ID_LEN);
+  assert.equal(id.device_token.length, DEVICE_TOKEN_LEN);
+  assert.equal(deviceCredentialsAreValid(id.device_id, id.device_token), true);
+  assert.equal(
+    shardName("/api/pair/start", {
+      device_id: "f".repeat(64),
+      device_token: "f".repeat(128),
+    }),
+    null,
+  );
+  assert.equal(
+    shardName("/api/pair/start", {
+      device_id: id.device_id,
+      device_token: "f".repeat(128),
+    }),
+    null,
+  );
+  const board = new Board(() => 1_000);
+  const huge = await json(
+    await post(board, "/api/pair/start", {
+      device_id: "f".repeat(64),
+      device_token: "f".repeat(128),
+    }),
+  );
+  assert.equal(huge.status, 400);
+  assert.equal(huge.body.error, "bad_identity");
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  const startAt = index.indexOf('if (path === "/api/pair/start")');
+  const shardAt = index.indexOf("const name = shardName(path, body);", startAt);
+  const stubAt = index.indexOf("stubFetch", shardAt);
+  assert.ok(startAt >= 0 && shardAt > startAt && stubAt > shardAt);
+  const region = index.slice(startAt, stubAt);
+  assert.ok(
+    region.includes("bad_identity"),
+    "pair/start must reject before idFromName or pair-offer reservation",
+  );
 });
 
 test("expired pairing codes are returned so the router can drop pair shards", async () => {

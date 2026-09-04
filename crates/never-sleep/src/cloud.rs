@@ -70,6 +70,9 @@ pub struct CloudHandle {
     /// Keep applied ids for the successor even after the Worker drops them.
     retain_applied: Arc<AtomicBool>,
     idle: Arc<(Mutex<bool>, Condvar)>,
+    /// Last successfully parsed Worker pending-command ids. `None` until the
+    /// reporter has seen a heartbeat; `Some([])` means the Worker has none.
+    last_pending: Arc<Mutex<Option<Vec<String>>>>,
 }
 
 impl CloudHandle {
@@ -248,6 +251,15 @@ impl CloudHandle {
         if let Ok(mut held) = self.held_commands.lock() {
             held.extend(commands);
         }
+    }
+
+    fn last_pending_ids(&self) -> Option<Vec<String>> {
+        self.last_pending.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    #[cfg(test)]
+    fn note_pending(&self, pending: &[RemoteCommand]) {
+        store_pending_ids(&self.last_pending, pending);
     }
 }
 
@@ -670,6 +682,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
     let idle = Arc::new((Mutex::new(false), Condvar::new()));
     let applied_ids = Arc::new(Mutex::new(Vec::new()));
     let applied_history = Arc::new(Mutex::new(Vec::new()));
+    let last_pending = Arc::new(Mutex::new(None));
     let (wake_tx, wake_rx) = mpsc::sync_channel(2);
     let (event_tx, event_rx) = mpsc::channel();
     let latest_for_thread = Arc::clone(&latest);
@@ -679,6 +692,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
     let idle_for_thread = Arc::clone(&idle);
     let applied_for_thread = Arc::clone(&applied_ids);
     let history_for_thread = Arc::clone(&applied_history);
+    let pending_for_thread = Arc::clone(&last_pending);
     let join = thread::Builder::new()
         .name("never-sleep-cloud".into())
         .spawn(move || {
@@ -697,6 +711,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
                 idle_for_thread,
                 applied_for_thread,
                 history_for_thread,
+                pending_for_thread,
             );
         })
         .ok();
@@ -712,6 +727,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
         paused,
         retain_applied,
         idle,
+        last_pending,
     }
 }
 
@@ -890,6 +906,7 @@ fn reporter_loop(
     idle: Arc<(Mutex<bool>, Condvar)>,
     applied_ids: Arc<Mutex<Vec<String>>>,
     applied_history: Arc<Mutex<Vec<String>>>,
+    last_pending: Arc<Mutex<Option<Vec<String>>>>,
 ) {
     let mut gate = ReporterGate::default();
     let mut inbox = CommandInbox::default();
@@ -947,6 +964,9 @@ fn reporter_loop(
             &event_tx,
             shutting_down,
         );
+        if let Some(ref cmds) = pending {
+            store_pending_ids(&last_pending, cmds);
+        }
         prune_applied_history_after_heartbeat(
             &applied_history,
             pending.as_deref(),
@@ -973,6 +993,9 @@ fn reporter_loop(
                         &event_tx,
                         true,
                     );
+                    if let Some(ref cmds) = pending {
+                        store_pending_ids(&last_pending, cmds);
+                    }
                     prune_applied_history_after_heartbeat(
                         &applied_history,
                         pending.as_deref(),
@@ -1100,7 +1123,35 @@ impl CloudTransport for UreqTransport {
     }
 }
 
-/// Apply pending remote commands using the same Engine path as local IPC.
+fn store_pending_ids(slot: &Mutex<Option<Vec<String>>>, pending: &[RemoteCommand]) {
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(pending.iter().map(|cmd| cmd.id.clone()).collect());
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeldCommandDisposition {
+    Apply,
+    Keep,
+    Drop,
+}
+
+/// Idle menus must not replay a held On after the donor already acked it.
+fn held_command_disposition(
+    engine_active: bool,
+    last_pending: Option<&[String]>,
+    command_id: &str,
+) -> HeldCommandDisposition {
+    if engine_active {
+        return HeldCommandDisposition::Apply;
+    }
+    match last_pending {
+        None => HeldCommandDisposition::Keep,
+        Some(ids) if ids.iter().any(|id| id == command_id) => HeldCommandDisposition::Apply,
+        Some(_) => HeldCommandDisposition::Drop,
+    }
+}
+
 /// Drop the retained pairing state if its deadline has passed.
 /// Call before rendering the pairing code in the panel or answering
 /// `IpcRequest::Pair` so connectivity loss doesn't show a stale code forever.
@@ -1112,6 +1163,7 @@ pub fn expire_stale_pairing(pairing: &mut Option<(String, String, u64)>) {
     }
 }
 
+/// Apply pending remote commands using the same Engine path as local IPC.
 pub fn apply_polled_commands(
     engine: &mut Engine,
     platform: &mut dyn Platform,
@@ -1135,8 +1187,25 @@ pub fn apply_polled_commands(
                     handle.hold_commands(commands);
                     continue;
                 }
-                let ids: Vec<String> = commands.iter().map(|c| c.id.clone()).collect();
-                apply_cloud_commands(engine, platform, &commands);
+                let pending = handle.last_pending_ids();
+                let pending = pending.as_deref();
+                let mut apply = Vec::new();
+                let mut keep = Vec::new();
+                for cmd in commands {
+                    match held_command_disposition(engine.is_active(), pending, &cmd.id) {
+                        HeldCommandDisposition::Apply => apply.push(cmd),
+                        HeldCommandDisposition::Keep => keep.push(cmd),
+                        HeldCommandDisposition::Drop => {}
+                    }
+                }
+                if !keep.is_empty() {
+                    handle.hold_commands(keep);
+                }
+                if apply.is_empty() {
+                    continue;
+                }
+                let ids: Vec<String> = apply.iter().map(|c| c.id.clone()).collect();
+                apply_cloud_commands(engine, platform, &apply);
                 handle.mark_applied(ids);
             }
             CloudEvent::Pairing {
@@ -1194,6 +1263,7 @@ mod tests {
             paused: Arc::new(AtomicBool::new(false)),
             retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
+            last_pending: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1726,6 +1796,56 @@ mod tests {
     }
 
     #[test]
+    fn held_phone_on_is_dropped_when_the_donor_already_completed_it() {
+        assert_eq!(
+            held_command_disposition(false, Some(&[]), "phone-on"),
+            HeldCommandDisposition::Drop,
+            "Worker no longer listing the On means the donor already acked it"
+        );
+        assert_eq!(
+            held_command_disposition(false, None, "phone-on"),
+            HeldCommandDisposition::Keep,
+            "do not start standby from a held On until a later heartbeat confirms it"
+        );
+        assert_eq!(
+            held_command_disposition(false, Some(&["phone-on".into()]), "phone-on"),
+            HeldCommandDisposition::Apply
+        );
+        assert_eq!(
+            held_command_disposition(true, None, "phone-on"),
+            HeldCommandDisposition::Apply,
+            "handoff drain still applies held Off/On once this engine is active"
+        );
+        let _guard = TestDataDir::install();
+        crate::paths::ensure_data_dir().unwrap();
+        std::fs::write(crate::paths::session_lock_path(), "pid=1\nclamshell=1\n").unwrap();
+        let (event_tx, event_rx) = mpsc::channel();
+        event_tx
+            .send(CloudEvent::Commands(vec![RemoteCommand::on(
+                "phone-on", None,
+            )]))
+            .unwrap();
+        let handle = test_cloud_handle(mpsc::sync_channel(2).0, event_rx);
+        let mut pairing = None;
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(!engine.is_active(), "idle menu must hold the On");
+        std::fs::remove_file(crate::paths::session_lock_path()).unwrap();
+        handle.note_pending(&[]);
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(
+            !engine.is_active(),
+            "a held no-duration On must not restart standby after the donor already completed it"
+        );
+        let src = include_str!("cloud.rs");
+        assert!(
+            src.contains("held_command_disposition") && src.contains("store_pending_ids"),
+            "reporter heartbeats must drop held commands the Worker no longer lists"
+        );
+    }
+
+    #[test]
     fn hostname_from_c_buffer_reads_gethostname_bytes() {
         assert_eq!(
             hostname_from_c_buffer(b"Studio.local\0trailing"),
@@ -2000,6 +2120,7 @@ mod tests {
             paused: Arc::new(AtomicBool::new(false)),
             retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
+            last_pending: Arc::new(Mutex::new(None)),
         };
         let mut inactive = sample_status();
         inactive.active = false;
@@ -2084,6 +2205,7 @@ mod tests {
             paused: Arc::new(AtomicBool::new(false)),
             retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
+            last_pending: Arc::new(Mutex::new(None)),
         };
         handle.detach();
         assert!(
@@ -2116,6 +2238,7 @@ mod tests {
             paused: Arc::clone(&paused),
             retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::clone(&idle),
+            last_pending: Arc::new(Mutex::new(None)),
         };
         handle.resume();
         assert!(
@@ -2156,6 +2279,7 @@ mod tests {
             paused: Arc::new(AtomicBool::new(false)),
             retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
+            last_pending: Arc::new(Mutex::new(None)),
         };
         handle.detach();
         assert_eq!(
@@ -2188,6 +2312,7 @@ mod tests {
             paused: Arc::new(AtomicBool::new(false)),
             retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
+            last_pending: Arc::new(Mutex::new(None)),
         };
         let mut inactive = sample_status();
         inactive.active = false;

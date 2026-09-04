@@ -368,6 +368,32 @@ pub fn should_retain_clamshell_power_callback(may_own: bool, clamshell_on: bool)
     may_own && clamshell_on
 }
 
+/// Claiming `session.lock` is part of ApplyPower; a silent write miss would
+/// let the menu acknowledge adopt while the donor still holds the file.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_fail_apply_if_lock_write_failed(
+    may_own: bool,
+    owns_power: bool,
+    write_ok: bool,
+) -> bool {
+    may_own && owns_power && !write_ok
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn write_session_lock(pid: u32, clamshell: bool, starttime: Option<u64>) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    if crate::paths::ensure_data_dir().is_err() {
+        return false;
+    }
+    std::fs::write(
+        crate::paths::session_lock_path(),
+        format_lock_text(pid, clamshell, starttime),
+    )
+    .is_ok()
+}
+
 /// Rollback must write the donor's original clamshell bit, not the successor's.
 #[cfg(any(test, target_os = "macos"))]
 pub fn restored_donor_clamshell_bit(donor_claimed: bool, _successor_claimed: bool) -> bool {
@@ -540,6 +566,12 @@ mod tests {
             "a donor that no longer owns session.lock must not reassert clamshell on wake"
         );
         assert!(
+            should_fail_apply_if_lock_write_failed(true, true, false)
+                && !should_fail_apply_if_lock_write_failed(true, true, true)
+                && !should_fail_apply_if_lock_write_failed(false, true, false),
+            "a successor that cannot rewrite session.lock must not acknowledge adopt"
+        );
+        assert!(
             should_claim_session_lock(11, Some(22), true, false),
             "the adopting menu must take the live donor's lock during handoff"
         );
@@ -555,6 +587,11 @@ mod tests {
         assert!(
             apply.contains("should_retain_clamshell_power_callback"),
             "ApplyPower must drop CLAMSHELL_OWNED when a successor holds the lock"
+        );
+        assert!(
+            apply.contains("should_fail_apply_if_lock_write_failed")
+                && apply.contains("write_lock(self.clamshell_on)"),
+            "adopt must not succeed when the successor cannot rewrite session.lock"
         );
         let claim_at = apply
             .find("should_claim_session_lock")
@@ -572,6 +609,38 @@ mod tests {
         assert!(
             claim_at < write_at,
             "a live menu lock must survive a timed-out donor's later ApplyPower"
+        );
+    }
+
+    #[test]
+    fn adopt_fails_when_session_lock_cannot_be_rewritten() {
+        let macos = include_str!("platform/macos.rs");
+        let write_fn = macos
+            .split("fn write_lock")
+            .nth(1)
+            .expect("write_lock")
+            .split("fn pid_alive")
+            .next()
+            .unwrap();
+        assert!(
+            write_fn.contains("write_session_lock") && write_fn.contains("Result<(), String>"),
+            "write_lock must surface a failed session.lock rewrite"
+        );
+        let _dir = crate::paths::TestDataDir::install();
+        crate::paths::ensure_data_dir().unwrap();
+        let path = crate::paths::session_lock_path();
+        std::fs::write(&path, "pid=1\nclamshell=1\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o444);
+        std::fs::set_permissions(&path, perms).unwrap();
+        let wrote = write_session_lock(std::process::id(), false, Some(1));
+        let mut restore = std::fs::metadata(&path).unwrap().permissions();
+        restore.set_mode(0o644);
+        std::fs::set_permissions(&path, restore).unwrap();
+        assert!(
+            !wrote,
+            "a read-only session.lock must not be treated as a successful successor claim"
         );
     }
 
@@ -1065,7 +1134,7 @@ mod tests {
         );
         let macos = include_str!("platform/macos.rs");
         assert!(
-            macos.contains("format_lock_text") && macos.contains("process_instance_token"),
+            macos.contains("write_session_lock") && macos.contains("process_instance_token"),
             "apply_power must write pid+instance token so orphan cleanup can reject pid reuse"
         );
         assert!(

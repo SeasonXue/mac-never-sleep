@@ -152,6 +152,8 @@ fn worker_shards_per_device_not_one_global_board() {
     let board = read("worker/src/board.js");
     assert!(board.contains("pairingCodeIsLive"));
     assert!(board.contains("LIST_MAX_DEVICES = 32"));
+    assert!(board.contains("DEVICE_ID_LEN"));
+    assert!(board.contains("deviceCredentialsAreValid"));
     assert!(board.contains("COMMAND_TTL_SECS"));
     assert!(board.contains("fitStoredDevices"));
     assert!(board.contains("expireOffers"));
