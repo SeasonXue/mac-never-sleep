@@ -16,6 +16,9 @@ pub fn run_foreground(
 ) -> Result<(), String> {
     platform.cleanup_orphans();
     let mut engine = Engine::new(load_config());
+    if crate::ipc::should_refuse_foreground_while_menu_live(menu_socket_absent()) {
+        return Err(engine.config.tr().menu_ipc_timed_out().into());
+    }
     let cloud_ok = crate::cloud::cloud_enabled();
     let needs_reporter =
         crate::session_lock::should_claim_foreground_reporter_lock(cloud_ok, menu_socket_absent());
@@ -284,6 +287,11 @@ mod tests {
         assert!(
             body.contains("try_send") && body.contains("IpcRequest::Ping"),
             "foreground must not spawn a reporter while the menu process is already serving IPC"
+        );
+        assert!(
+            body.contains("should_refuse_foreground_while_menu_live")
+                && body.contains("menu_ipc_timed_out"),
+            "a live ipc.sock after a timed-out CLI On must not dispatch a second local Start"
         );
         assert!(
             body.contains("publish_and_flush") && body.contains("take()"),

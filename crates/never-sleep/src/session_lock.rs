@@ -318,6 +318,7 @@ pub fn should_abort_foreground_without_reporter_lock(needs_reporter: bool, claim
     needs_reporter && !claimed
 }
 
+#[cfg(test)]
 fn read_reporter_lock() -> Option<SessionLockRecord> {
     let text = std::fs::read_to_string(crate::paths::reporter_lock_path()).ok()?;
     Some(parse_lock_record(&text))
@@ -406,17 +407,9 @@ pub fn try_claim_reporter_lock(our_pid: u32) -> bool {
     true
 }
 
-pub fn release_reporter_lock(our_pid: u32) {
+pub fn release_reporter_lock(_our_pid: u32) {
     REPORTER_LOCK.with(|slot| {
-        let held = slot.borrow_mut().take();
-        if held.is_some() {
-            if let Some(rec) = read_reporter_lock() {
-                if rec.pid == our_pid {
-                    let _ = std::fs::remove_file(crate::paths::reporter_lock_path());
-                }
-            }
-        }
-        drop(held);
+        slot.borrow_mut().take();
     });
 }
 
@@ -989,7 +982,21 @@ mod tests {
             "releasing the held lock must allow the next foreground to poll"
         );
         release_reporter_lock(ours);
-        assert!(read_reporter_lock().is_none());
+        assert!(
+            read_reporter_lock().is_some(),
+            "release must drop the fd without unlinking, so a racer cannot lock a new inode"
+        );
+        let release_src = include_str!("session_lock.rs")
+            .split("pub fn release_reporter_lock")
+            .nth(1)
+            .expect("release_reporter_lock")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert!(
+            !release_src.contains("remove_file"),
+            "ownership is the held fd; unlinking during release splits the inode"
+        );
         let fg = include_str!("foreground.rs");
         assert!(
             fg.contains("try_claim_reporter_lock") && fg.contains("release_reporter_lock"),
@@ -1003,13 +1010,17 @@ mod tests {
         let claim_at = before_loop
             .find("try_claim_reporter_lock")
             .expect("claim reporter.lock before Start");
+        let refuse_at = before_loop
+            .find("should_refuse_foreground_while_menu_live")
+            .expect("refuse Start while ipc.sock is live");
         let dispatch_at = before_loop
             .find("dispatch(")
             .expect("Start dispatch after the reporter claim");
         assert!(
-            claim_at < dispatch_at
+            refuse_at < dispatch_at
+                && claim_at < dispatch_at
                 && before_loop.contains("should_abort_foreground_without_reporter_lock"),
-            "a denied reporter.lock must abort before dispatching Start"
+            "a live menu or denied reporter.lock must abort before dispatching Start"
         );
         let take = fg
             .split("fn take_foreground_reporter")

@@ -589,6 +589,13 @@ impl Tr {
         )
     }
 
+    pub fn menu_ipc_timed_out(self) -> &'static str {
+        self.pick(
+            "The menu bar did not answer in time. Standby was not started in this process.",
+            "菜单栏未及时响应，本进程未开启待命。",
+        )
+    }
+
     pub fn ipc_not_started(self, err: &str) -> String {
         match self.lang {
             Lang::En => format!("IPC did not start: {err} (CLI will run in the foreground)"),
@@ -1114,5 +1121,18 @@ mod tests {
         assert!(!Tr::new(Lang::Zh)
             .foreground_already_running()
             .contains("熄屏待命"));
+    }
+
+    #[test]
+    fn menu_ipc_timed_out_is_bilingual() {
+        assert_eq!(
+            Tr::new(Lang::En).menu_ipc_timed_out(),
+            "The menu bar did not answer in time. Standby was not started in this process."
+        );
+        assert_eq!(
+            Tr::new(Lang::Zh).menu_ipc_timed_out(),
+            "菜单栏未及时响应，本进程未开启待命。"
+        );
+        assert!(!Tr::new(Lang::Zh).menu_ipc_timed_out().contains("熄屏待命"));
     }
 }

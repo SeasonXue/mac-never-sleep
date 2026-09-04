@@ -46,6 +46,12 @@ pub fn menu_socket_absent() -> bool {
     }
 }
 
+/// CLI `on` may occupy the foreground only when no menu owns `ipc.sock`.
+/// A timed-out `try_send` is not absence: the menu may already have started.
+pub fn should_refuse_foreground_while_menu_live(menu_socket_absent: bool) -> bool {
+    !menu_socket_absent
+}
+
 pub fn send(req: &IpcRequest) -> Result<IpcResponse, String> {
     let path = ipc_socket_path();
     let mut stream = UnixStream::connect(&path).map_err(|e| e.to_string())?;
@@ -154,5 +160,10 @@ mod tests {
         );
         assert!(!is_absent(&io::Error::from(ErrorKind::WouldBlock)));
         assert!(is_absent(&io::Error::from(ErrorKind::ConnectionRefused)));
+        assert!(
+            should_refuse_foreground_while_menu_live(false),
+            "a live menu socket must not start a second local session after a timed-out On"
+        );
+        assert!(!should_refuse_foreground_while_menu_live(true));
     }
 }

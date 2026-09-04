@@ -25,7 +25,7 @@ use clap::Parser;
 use never_sleep_core::{Lang, StopReason, Tr, LANG_ENV};
 
 use crate::cli::{Cli, Command};
-use crate::ipc::try_send;
+use crate::ipc::{menu_socket_absent, try_send};
 use crate::persist::load_config;
 use crate::platform::default_platform;
 use crate::protocol::{IpcRequest, IpcResponse};
@@ -180,6 +180,14 @@ fn cmd_on(for_raw: Option<String>, json: bool) {
         print_resp(&resp, json);
         return;
     }
+    if crate::ipc::should_refuse_foreground_while_menu_live(menu_socket_absent()) {
+        if let Some(resp) = try_send(&req) {
+            print_resp(&resp, json);
+            return;
+        }
+        eprintln!("{}", t.menu_ipc_timed_out());
+        std::process::exit(1);
+    }
     if json {
         eprintln!("{}", t.menubar_missing_foreground_json());
     }
@@ -228,6 +236,22 @@ mod tests {
         let after = &src[start + needle.len()..];
         let end = after.find("\nfn ").unwrap_or(after.len());
         &src[start..start + needle.len() + end]
+    }
+
+    #[test]
+    fn cmd_on_does_not_start_foreground_while_menu_socket_is_live() {
+        let src = include_str!("main.rs");
+        let cmd = rust_fn_src(src, "cmd_on");
+        let refuse_at = cmd
+            .find("should_refuse_foreground_while_menu_live")
+            .expect("timed-out On must not fall back while ipc.sock is live");
+        let fg_at = cmd
+            .find("run_foreground")
+            .expect("foreground fallback is for a missing menu");
+        assert!(
+            refuse_at < fg_at && cmd.contains("menu_ipc_timed_out"),
+            "retry or time out while the menu socket is live instead of dispatching a second Start"
+        );
     }
 
     #[test]
