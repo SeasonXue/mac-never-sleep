@@ -138,6 +138,18 @@ pub fn take_pending_stop_on_adopt(adopted: bool, pending_stop: &mut bool) -> boo
     apply
 }
 
+/// `never-sleep off` while idle behind a live donor is the same escape as ⌥⌘P.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_record_deferred_off(engine_active: bool, deferred: bool) -> bool {
+    !engine_active && deferred
+}
+
+/// Quit before adopt: the donor will resume. Do not POST `offline:true`.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_detach_cloud_on_quit(engine_active: bool, our_pid: u32) -> bool {
+    should_defer_local_controls(engine_active, our_pid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +369,23 @@ mod tests {
             gui.contains("note_deferred_escape") && gui.contains("take_pending_stop_on_adopt"),
             "menu Toggle / ⌥⌘P must record a pending stop and apply it after adopt"
         );
+        let loop_src = gui
+            .split("while let Ok(incoming) = ipc_rx.try_recv()")
+            .nth(1)
+            .expect("ipc loop")
+            .split("match event")
+            .next()
+            .unwrap();
+        let drain_at = loop_src
+            .rfind("apply_polled_commands")
+            .expect("post-handoff drain");
+        let stop_at = loop_src
+            .find("take_pending_stop_on_adopt")
+            .expect("escape after held commands");
+        assert!(
+            drain_at < stop_at,
+            "held phone On must not restart standby after the remembered escape"
+        );
         let handle = gui
             .split("fn handle_ipc")
             .nth(1)
@@ -365,12 +394,47 @@ mod tests {
             .next()
             .unwrap();
         let send_at = handle.find("reply.send").expect("IPC reply");
-        let stop_at = handle
-            .find("take_pending_stop_on_adopt")
-            .expect("apply escape after adopt");
         assert!(
-            send_at < stop_at,
+            !handle.contains("take_pending_stop_on_adopt"),
+            "do not Stop inside handle_ipc before the handoff_first drain"
+        );
+        assert!(
+            loop_src.find("handle_ipc").expect("handle_ipc call") < stop_at && send_at > 0,
             "donor must see adopted+active before the menu applies the remembered escape"
+        );
+        let off = gui
+            .split("IpcRequest::Off")
+            .nth(1)
+            .expect("Off")
+            .split("IpcRequest::Toggle")
+            .next()
+            .unwrap();
+        assert!(
+            off.contains("note_deferred_escape")
+                && (off.contains("should_record_deferred_off")
+                    || off.contains("local_controls_deferred")),
+            "never-sleep off during the donor overlap must record the same pending stop"
+        );
+        assert!(
+            should_record_deferred_off(false, true),
+            "idle menu + live donor: Off is an escape, not a no-op"
+        );
+        assert!(!should_record_deferred_off(true, false));
+        assert!(!should_record_deferred_off(false, false));
+        let flush = gui
+            .split("fn flush_cloud_on_quit")
+            .nth(1)
+            .expect("flush_cloud_on_quit")
+            .split("fn handle_menu_event")
+            .next()
+            .unwrap();
+        assert!(
+            flush.contains("should_detach_cloud_on_quit") && flush.contains("detach"),
+            "quit before adopt must detach so the donor can resume without an offline heartbeat"
+        );
+        assert!(
+            should_detach_cloud_on_quit(false, 11) == should_defer_local_controls(false, 11),
+            "pre-adopt quit follows the same live-donor lock as deferred Toggle"
         );
     }
 }

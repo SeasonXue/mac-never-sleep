@@ -360,14 +360,15 @@ pub fn run() {
                     );
                 }
             }
-            if handle_ipc(
+            let (quitting, adopted) = handle_ipc(
                 &mut engine,
                 platform.as_mut(),
                 incoming,
                 &mut pairing,
                 cloud_identity.as_ref(),
                 &mut pending_stop,
-            ) {
+            );
+            if quitting {
                 flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
                 *control_flow = ControlFlow::Exit;
                 break;
@@ -381,6 +382,15 @@ pub fn run() {
                             &mut pairing,
                         );
                     }
+                }
+                if crate::session_lock::take_pending_stop_on_adopt(adopted, &mut pending_stop) {
+                    dispatch(
+                        &mut engine,
+                        platform.as_mut(),
+                        Input::Stop {
+                            reason: StopReason::User,
+                        },
+                    );
                 }
                 refresh_ui(
                     &handles,
@@ -828,11 +838,16 @@ fn flush_cloud_on_quit(
     cloud: &mut Option<CloudHandle>,
 ) {
     if let Some(handle) = cloud.take() {
-        crate::cloud::publish_and_flush(
-            handle,
-            engine.json_status(&platform.snapshot()),
-            engine.config.lang(),
-        );
+        if crate::session_lock::should_detach_cloud_on_quit(engine.is_active(), std::process::id())
+        {
+            handle.detach();
+        } else {
+            crate::cloud::publish_and_flush(
+                handle,
+                engine.json_status(&platform.snapshot()),
+                engine.config.lang(),
+            );
+        }
     }
 }
 
@@ -1027,7 +1042,7 @@ fn handle_ipc(
     pairing: &mut Option<(String, String, u64)>,
     identity: Option<&never_sleep_core::CloudIdentity>,
     pending_stop: &mut bool,
-) -> bool {
+) -> (bool, bool) {
     crate::cloud::expire_stale_pairing(pairing);
     let IpcIncoming::Request { req, reply } = incoming;
     let host_status = |engine: &Engine, platform: &mut dyn Platform| {
@@ -1061,7 +1076,7 @@ fn handle_ipc(
                 Ok(d) => d,
                 Err(e) => {
                     let _ = reply.send(IpcResponse::err(e));
-                    return false;
+                    return (false, false);
                 }
             };
             let input = if handoff {
@@ -1112,6 +1127,11 @@ fn handle_ipc(
                         reason: StopReason::User,
                     },
                 );
+            } else if crate::session_lock::should_record_deferred_off(
+                engine.is_active(),
+                local_controls_deferred(engine),
+            ) {
+                crate::session_lock::note_deferred_escape(true, pending_stop);
             }
             IpcResponse::ok_status(host_status(engine, platform))
         }
@@ -1126,16 +1146,7 @@ fn handle_ipc(
         }
     };
     let _ = reply.send(resp);
-    if crate::session_lock::take_pending_stop_on_adopt(adopted, pending_stop) {
-        dispatch(
-            engine,
-            platform,
-            Input::Stop {
-                reason: StopReason::User,
-            },
-        );
-    }
-    quitting
+    (quitting, adopted)
 }
 
 fn local_controls_deferred(engine: &Engine) -> bool {
