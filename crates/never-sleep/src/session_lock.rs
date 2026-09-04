@@ -328,9 +328,16 @@ mod tests {
         let claim_at = apply
             .find("should_claim_session_lock")
             .expect("ApplyPower must consult successor ownership before write_lock");
+        let clamshell_at = apply
+            .find("should_clear_unclaimed_clamshell")
+            .expect("clamshell selector follows ownership");
         let write_at = apply
             .rfind("write_lock")
             .expect("success path still records the lock when this process owns it");
+        assert!(
+            claim_at < clamshell_at,
+            "a live successor's clamshell flag must not be restored by a timed-out donor Tick"
+        );
         assert!(
             claim_at < write_at,
             "a live menu lock must survive a timed-out donor's later ApplyPower"
@@ -691,6 +698,11 @@ mod tests {
         assert!(
             persist_at < send_at,
             "a timed-out donor must be able to read the ack after the menu has already quit"
+        );
+        assert!(
+            handle.contains("should_reject_adopt_if_ack_unpersisted")
+                && handle.contains("handoff_ack_failed"),
+            "adopt must roll back when handoff.ack cannot be written"
         );
         assert!(
             loop_src.contains("stop_donor"),

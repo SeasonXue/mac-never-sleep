@@ -52,6 +52,37 @@ pub fn run_foreground(
         if !engine.is_active() {
             break;
         }
+        let successor_live = !menu_socket_absent();
+        if let Some((persisted, outcome)) = crate::protocol::read_handoff_ack() {
+            if crate::protocol::donor_should_stop_after_successor_gone(
+                handoff_id.as_deref(),
+                successor_live,
+                Some(persisted.as_str()),
+            ) {
+                let reason = match outcome {
+                    crate::protocol::HandoffAckOutcome::Adopted => StopReason::AppQuit,
+                    crate::protocol::HandoffAckOutcome::Stop => StopReason::User,
+                };
+                if engine.is_active() {
+                    dispatch(&mut engine, platform, Input::Stop { reason });
+                }
+                stop_for_quit(&mut engine, platform);
+                if let Some(handle) = cloud.take() {
+                    if crate::protocol::donor_should_flush_offline_after_ack(successor_live) {
+                        crate::cloud::publish_and_flush(
+                            handle,
+                            engine.json_status(&platform.snapshot()),
+                            engine.config.lang(),
+                        );
+                    } else {
+                        handle.detach();
+                    }
+                }
+                crate::protocol::clear_handoff_ack();
+                println!("{}", engine.config.tr().foreground_ended());
+                return Ok(());
+            }
+        }
         if try_send(&IpcRequest::Ping).is_some() {
             if let Some(handle) = cloud.as_ref() {
                 handle.quiesce();
@@ -117,32 +148,9 @@ pub fn run_foreground(
                 handle.resume();
             }
         } else {
-            let successor_live = !menu_socket_absent();
-            if crate::cloud::should_release_applied_retention(successor_live) {
+            if crate::cloud::should_release_applied_retention(!menu_socket_absent()) {
                 if let Some(handle) = cloud.as_ref() {
                     handle.release_applied_retention();
-                }
-            }
-            if let Some((persisted, outcome)) = crate::protocol::read_handoff_ack() {
-                if crate::protocol::donor_should_stop_after_successor_gone(
-                    handoff_id.as_deref(),
-                    successor_live,
-                    Some(persisted.as_str()),
-                ) {
-                    let reason = match outcome {
-                        crate::protocol::HandoffAckOutcome::Adopted => StopReason::AppQuit,
-                        crate::protocol::HandoffAckOutcome::Stop => StopReason::User,
-                    };
-                    if engine.is_active() {
-                        dispatch(&mut engine, platform, Input::Stop { reason });
-                    }
-                    stop_for_quit(&mut engine, platform);
-                    if let Some(handle) = cloud.take() {
-                        handle.detach();
-                    }
-                    crate::protocol::clear_handoff_ack();
-                    println!("{}", engine.config.tr().foreground_ended());
-                    return Ok(());
                 }
             }
             if cloud.is_none() && cloud_ok && menu_socket_absent() {
@@ -349,7 +357,7 @@ mod tests {
             "failed adopt with a deferred Off must stop this donor before resume"
         );
         let stop_arm = loop_body
-            .split("donor_should_stop")
+            .split("donor_should_stop(&resp)")
             .nth(1)
             .expect("stop_donor arm")
             .split("resume(")
@@ -377,19 +385,18 @@ mod tests {
                 && loop_body.contains("read_handoff_ack"),
             "a lost adopt reply then menu Quit must stop this donor from a persisted ack, not Tick"
         );
-        let absent = loop_body
-            .split("} else {")
-            .nth(1)
-            .expect("Ping-failed / socket-absent arm")
-            .split("Input::Tick")
-            .next()
-            .unwrap();
+        let ack_at = loop_body
+            .find("read_handoff_ack")
+            .expect("read persisted adopt/stop before contacting a replacement menu");
+        let ping_at = loop_body.find("IpcRequest::Ping").expect("loop Ping");
         assert!(
-            absent.contains("donor_should_stop_after_successor_gone")
-                && absent.contains("return Ok(())")
-                && absent.contains("detach(")
-                && !absent.contains("publish_and_flush"),
-            "successor-gone after adopt must detach and exit; Tick would keep the donor's assertions"
+            ack_at < ping_at,
+            "a matching ack must stop this donor before it can hand off to a freshly launched menu"
+        );
+        assert!(
+            loop_body.contains("donor_should_flush_offline_after_ack")
+                && loop_body.contains("publish_and_flush"),
+            "ack stop with no successor reporter must POST offline so the board does not stay live"
         );
     }
 

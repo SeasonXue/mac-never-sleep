@@ -1061,6 +1061,7 @@ fn handle_ipc(
     let mut handoff_attempt = false;
     let mut prior_handoff = false;
     let mut ack_id: Option<String> = None;
+    let mut dispatched_now = false;
     let mut resp = match req {
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
@@ -1119,6 +1120,7 @@ fn handle_ipc(
                     adopted = true;
                 } else if !prior_handoff && !engine.is_active() {
                     dispatch(engine, platform, input);
+                    dispatched_now = true;
                     adopted = engine.is_active();
                     if adopted {
                         *last_handoff_id = handoff_id.clone();
@@ -1185,13 +1187,31 @@ fn handle_ipc(
     }
     let stop_donor = resp.stop_donor;
     if crate::protocol::should_persist_handoff_ack(handoff_attempt, adopted, stop_donor) {
-        if let Some(id) = ack_id.as_deref().filter(|s| !s.is_empty()) {
-            let outcome = if adopted {
-                crate::protocol::HandoffAckOutcome::Adopted
-            } else {
-                crate::protocol::HandoffAckOutcome::Stop
-            };
-            crate::protocol::write_handoff_ack(id, outcome);
+        let outcome = if adopted {
+            crate::protocol::HandoffAckOutcome::Adopted
+        } else {
+            crate::protocol::HandoffAckOutcome::Stop
+        };
+        let persist_ok = ack_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .map(|id| crate::protocol::write_handoff_ack(id, outcome).is_ok())
+            .unwrap_or(false);
+        if crate::protocol::should_reject_adopt_if_ack_unpersisted(
+            adopted,
+            dispatched_now,
+            persist_ok,
+        ) {
+            dispatch(
+                engine,
+                platform,
+                Input::Stop {
+                    reason: StopReason::AppQuit,
+                },
+            );
+            *last_handoff_id = None;
+            adopted = false;
+            resp = IpcResponse::err("handoff_ack_failed");
         }
     }
     let _ = reply.send(resp);
