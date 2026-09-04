@@ -2336,6 +2336,55 @@ test("startDevice failure during pair reservation releases the shard", async () 
   assert.equal(result.pairing_code, "BBBB2222");
 });
 
+test("confirmLive failure during pair reservation releases the shard", async () => {
+  const released = [];
+  const result = await publishReservedPairing({
+    generateCode: () => "AAAA1111",
+    reserve: async () => ({ ok: true }),
+    startDevice: async (code) => ({
+      ok: true,
+      pairing_code: code,
+      status: 200,
+    }),
+    confirmLive: async () => {
+      throw new Error("live-pairing durable object down");
+    },
+    release: async (code) => {
+      released.push(code);
+    },
+  });
+  assert.deepEqual(
+    released,
+    ["AAAA1111"],
+    "a reserved pair shard must be dropped if live confirmation throws",
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "pair_busy");
+  assert.equal(result.status, 503);
+});
+
+test("release failure after startDevice throw still retries the next code", async () => {
+  const released = [];
+  const result = await publishReservedPairing({
+    generateCode: () => (released.length ? "BBBB2222" : "AAAA1111"),
+    reserve: async () => ({ ok: true }),
+    startDevice: async (code) => {
+      if (code === "AAAA1111") throw new Error("durable object put failed");
+      return {
+        ok: true,
+        pairing_code: code,
+        status: 200,
+      };
+    },
+    release: async (code) => {
+      released.push(code);
+      if (code === "AAAA1111") throw new Error("drop pair shard failed");
+    },
+  });
+  assert.deepEqual(released, ["AAAA1111"]);
+  assert.equal(result.pairing_code, "BBBB2222");
+});
+
 test("pair start still returns the new code when replaced-shard cleanup fails", () => {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");

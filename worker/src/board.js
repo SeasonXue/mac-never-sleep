@@ -415,13 +415,15 @@ export async function publishReservedPairing({
   confirmLive,
   maxAttempts = PAIR_RESERVE_ATTEMPTS,
 }) {
+  const drop = (code) =>
+    release ? bestEffortCleanup(undefined, () => release(code)) : Promise.resolve();
   for (let i = 0; i < maxAttempts; i++) {
     const code = generateCode();
     let reserved;
     try {
       reserved = await reserve(code);
     } catch {
-      if (release) await release(code);
+      await drop(code);
       continue;
     }
     if (!reserved?.ok) continue;
@@ -429,17 +431,25 @@ export async function publishReservedPairing({
     try {
       started = await startDevice(code);
     } catch {
-      if (release) await release(code);
+      await drop(code);
       continue;
     }
     if (started?.ok) {
-      if (confirmLive && !(await confirmLive(code, started))) {
-        if (release) await release(code);
-        return { ok: false, error: "pair_busy", status: 503 };
+      if (confirmLive) {
+        let live = false;
+        try {
+          live = await confirmLive(code, started);
+        } catch {
+          live = false;
+        }
+        if (!live) {
+          await drop(code);
+          return { ok: false, error: "pair_busy", status: 503 };
+        }
       }
       return started;
     }
-    if (release) await release(code);
+    await drop(code);
   }
   return { ok: false, error: "pair_busy", status: 503 };
 }

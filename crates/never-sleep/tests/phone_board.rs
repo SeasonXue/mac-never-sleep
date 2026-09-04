@@ -271,10 +271,26 @@ fn worker_shards_per_device_not_one_global_board() {
         client.contains("retryLater") && client.contains("稍后再试"),
         "claim 429 must not reuse the invalid-code copy"
     );
+    let pairing = board
+        .split("export async function publishReservedPairing")
+        .nth(1)
+        .expect("publishReservedPairing")
+        .split("function asBool")
+        .next()
+        .unwrap();
     assert!(
-        board.contains("reserved = await reserve(code)")
-            && board.contains("if (release) await release(code);\n      continue;"),
+        pairing.contains("reserved = await reserve(code)")
+            && pairing.contains("bestEffortCleanup")
+            && pairing.contains("continue;"),
         "setAlarm rejection after pair-offer persist must drop the shard"
+    );
+    let confirm = pairing
+        .split("if (confirmLive)")
+        .nth(1)
+        .expect("confirmLive");
+    assert!(
+        confirm.contains("catch") && confirm.contains("drop(code)"),
+        "live-pairing confirmation failures must drop the reserved shard"
     );
     assert!(board.contains("rate_limited"));
     assert!(board.contains("commitAlarmUnix"));
