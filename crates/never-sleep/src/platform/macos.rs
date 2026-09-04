@@ -609,6 +609,7 @@ impl Platform for MacPlatform {
     }
 
     fn apply_power(&mut self, plan: PowerPlan) -> Result<(), String> {
+        let already_holding = self.owns_power;
         self.ensure_clamshell_conn();
         let t = tr();
         let reason = t.assertion_reason();
@@ -686,6 +687,7 @@ impl Platform for MacPlatform {
                 std::process::id(),
                 parsed.map(|rec| rec.pid),
                 holder_alive,
+                already_holding,
             ) {
                 write_lock(self.clamshell_on);
             }

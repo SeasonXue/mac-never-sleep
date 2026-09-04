@@ -276,6 +276,14 @@ pub fn should_stop_donor_after_ended_prior_handoff(
     already_processed && !engine_active
 }
 
+/// `{pid}-{starttime}-{seq}` so a reused PID cannot collide with a prior adopt.
+pub fn format_handoff_id(pid: u32, starttime: Option<u64>, seq: u64) -> String {
+    match starttime {
+        Some(start) => format!("{pid}-{start}-{seq}"),
+        None => format!("{pid}-{seq}-{seq}"),
+    }
+}
+
 /// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
 pub fn human_ipc_error(code: &str, lang: Lang) -> String {
     match code {
@@ -474,6 +482,12 @@ mod tests {
                 .unwrap()
                 .contains("handoff_id"),
             "CLI On must keep omitting the internal-only field"
+        );
+        assert_eq!(format_handoff_id(11, Some(100), 1), "11-100-1");
+        assert_ne!(
+            format_handoff_id(11, Some(100), 1),
+            format_handoff_id(11, Some(200), 1),
+            "a reused PID with a new starttime must not collide with a prior handoff id"
         );
     }
 

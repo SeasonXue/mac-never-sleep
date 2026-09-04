@@ -62,7 +62,11 @@ pub fn run_foreground(
             }
             if handoff_id.is_none() {
                 handoff_seq += 1;
-                handoff_id = Some(format!("{}-{handoff_seq}", std::process::id()));
+                handoff_id = Some(crate::protocol::format_handoff_id(
+                    std::process::id(),
+                    crate::session_lock::process_starttime(std::process::id()),
+                    handoff_seq,
+                ));
             }
             let req = handoff_request(
                 &engine,
@@ -103,11 +107,7 @@ pub fn run_foreground(
                     }
                     stop_for_quit(&mut engine, platform);
                     if let Some(handle) = cloud.take() {
-                        crate::cloud::publish_and_flush(
-                            handle,
-                            engine.json_status(&platform.snapshot()),
-                            engine.config.lang(),
-                        );
+                        handle.detach();
                     }
                     println!("{}", engine.config.tr().foreground_ended());
                     return Ok(());
@@ -325,9 +325,23 @@ mod tests {
             between.contains("donor_should_stop") && between.contains("StopReason::User"),
             "failed adopt with a deferred Off must stop this donor before resume"
         );
+        let stop_arm = loop_body
+            .split("donor_should_stop")
+            .nth(1)
+            .expect("stop_donor arm")
+            .split("resume(")
+            .next()
+            .unwrap();
         assert!(
-            loop_body.contains("handoff_id") && loop_body.contains("handoff_seq"),
-            "reuse the same handoff id until the menu confirms adopt after a lost reply"
+            stop_arm.contains("detach(") && !stop_arm.contains("publish_and_flush"),
+            "stop_donor must detach so the surviving menu reporter is not marked offline"
+        );
+        assert!(
+            loop_body.contains("handoff_id")
+                && loop_body.contains("handoff_seq")
+                && loop_body.contains("format_handoff_id")
+                && loop_body.contains("process_starttime"),
+            "handoff ids must include a process-start token so PID reuse cannot collide"
         );
         assert!(
             loop_body.contains("release_applied_retention")

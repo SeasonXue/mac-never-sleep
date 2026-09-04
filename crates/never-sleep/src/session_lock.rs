@@ -20,16 +20,23 @@ pub fn should_release_clamshell_lock(
 
 /// Whether ApplyPower may replace `session.lock` with this process's PID.
 ///
-/// After a lost handoff reply the donor stays active and may Tick. A live
-/// successor already wrote its lock; overwriting it makes later donor cleanup
-/// restore clamshell sleep and delete the menu's recovery file.
+/// `already_holding` is this process's `owns_power` *before* the current
+/// ApplyPower. The adopting menu is not yet holding, so it may take a live
+/// donor's lock. A timed-out donor is already holding, so it must not steal
+/// the successor's lock back on Tick.
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_claim_session_lock(
     our_pid: u32,
     lock_pid: Option<u32>,
     lock_holder_alive: bool,
+    already_holding: bool,
 ) -> bool {
-    should_release_clamshell_lock(our_pid, lock_pid, lock_holder_alive)
+    match lock_pid {
+        None => true,
+        Some(pid) if pid == our_pid => true,
+        Some(_) if !lock_holder_alive => true,
+        Some(_) => !already_holding,
+    }
 }
 
 /// Whether this process should call `set_clamshell_sleep_disabled(false)`.
@@ -302,14 +309,22 @@ mod tests {
     #[test]
     fn timed_out_donor_does_not_overwrite_live_successor_lock() {
         assert!(
-            !should_claim_session_lock(11, Some(22), true),
+            !should_claim_session_lock(11, Some(22), true, true),
             "after a lost adopt reply, Tick/ApplyPower must not replace the menu's session.lock"
         );
-        assert!(should_claim_session_lock(11, Some(11), true));
-        assert!(should_claim_session_lock(11, Some(22), false));
-        assert!(should_claim_session_lock(11, None, false));
+        assert!(
+            should_claim_session_lock(11, Some(22), true, false),
+            "the adopting menu must take the live donor's lock during handoff"
+        );
+        assert!(should_claim_session_lock(11, Some(11), true, true));
+        assert!(should_claim_session_lock(11, Some(22), false, true));
+        assert!(should_claim_session_lock(11, None, false, false));
         let macos = include_str!("platform/macos.rs");
         let apply = macos.split("fn apply_power").nth(1).expect("apply_power");
+        assert!(
+            apply.contains("already_holding"),
+            "ApplyPower must snapshot owns_power before assigning it, so adopt is not treated as a donor retry"
+        );
         let claim_at = apply
             .find("should_claim_session_lock")
             .expect("ApplyPower must consult successor ownership before write_lock");
