@@ -431,6 +431,28 @@ pub fn successor_reporter_after_adopt(
     ipc_reporter.or(ack_reporter).unwrap_or(true)
 }
 
+/// Older menus omit `resp.reporter`; only a matching `handoff.ack` may fill it in.
+pub fn matching_handoff_ack_reporter(
+    our_handoff_id: Option<&str>,
+    ack_id: Option<&str>,
+    ack_reporter: bool,
+) -> Option<bool> {
+    let ours = our_handoff_id.filter(|id| !id.is_empty())?;
+    let theirs = ack_id.filter(|id| !id.is_empty())?;
+    (ours == theirs).then_some(ack_reporter)
+}
+
+/// User stopped a successor that we kept after an unpersisted adopt; tell the
+/// still-connected donor even if Stop cannot be written to `handoff.ack`.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_keep_unpersisted_stop_donor_after_kept_adopt(
+    reject_stop: bool,
+    last_handoff_present: bool,
+    adopted_now: bool,
+) -> bool {
+    reject_stop && last_handoff_present && !adopted_now
+}
+
 /// A detach Quit that cannot clear `reporter=1` must POST offline instead.
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_flush_offline_if_ack_reporter_clear_failed(
@@ -660,6 +682,31 @@ mod tests {
             successor_reporter_after_adopt(None, None),
             "a missing reporter field must not POST offline over an older live menu"
         );
+        assert!(
+            matching_handoff_ack_reporter(Some("h1"), Some("h2"), false).is_none(),
+            "a stale handoff.ack must not mark a live successor reporter offline"
+        );
+        assert_eq!(
+            matching_handoff_ack_reporter(Some("h1"), Some("h1"), false),
+            Some(false)
+        );
+        assert!(
+            successor_reporter_after_adopt(
+                None,
+                matching_handoff_ack_reporter(Some("h1"), Some("h2"), false)
+            ),
+            "older menus omit reporter; mismatched ack must keep detach"
+        );
+        assert!(
+            should_keep_unpersisted_stop_donor_after_kept_adopt(true, true, false),
+            "⌥⌘P after an unpersisted kept-adopt must still stop the live donor"
+        );
+        assert!(!should_keep_unpersisted_stop_donor_after_kept_adopt(
+            true, false, false
+        ));
+        assert!(!should_keep_unpersisted_stop_donor_after_kept_adopt(
+            true, true, true
+        ));
         accepted.active = false;
         assert!(!menu_accepted_handoff(&IpcResponse::ok_adopted(
             accepted.clone()

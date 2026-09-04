@@ -155,9 +155,8 @@ pub fn pid_is_alive(pid: u32) -> bool {
     std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-/// Written when kernel starttime is unreadable. Peers treat a live pid as the
-/// owner only while starttime stays unreadable; a later readable starttime is
-/// a different process that reused the pid.
+/// Written when kernel starttime is unreadable. A live pid stays the owner:
+/// a later readable starttime cannot tell lookup recovery from PID reuse.
 pub const UNVERIFIED_INSTANCE_TOKEN: u64 = u64::MAX;
 
 /// A live pid is not enough: SIGKILL can leave `session.lock` for a reused pid.
@@ -171,7 +170,9 @@ pub fn lock_holder_is_live(
     }
     match recorded_start {
         None => true,
-        Some(UNVERIFIED_INSTANCE_TOKEN) => observed_start.is_none(),
+        // A later readable starttime can be lookup recovery on the same live
+        // process; treating it as PID reuse would drop clamshell under a live owner.
+        Some(UNVERIFIED_INSTANCE_TOKEN) => true,
         Some(want) => observed_start == Some(want),
     }
 }
@@ -360,6 +361,13 @@ pub fn should_rollback_adopt_after_donor_lock_restore(
     reject_adopt && restore_ok
 }
 
+/// After a successor takes `session.lock`, the previous process must not
+/// reassert the global clamshell flag from `MSG_SYSTEM_HAS_POWERED_ON`.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_retain_clamshell_power_callback(may_own: bool, clamshell_on: bool) -> bool {
+    may_own && clamshell_on
+}
+
 /// Rollback must write the donor's original clamshell bit, not the successor's.
 #[cfg(any(test, target_os = "macos"))]
 pub fn restored_donor_clamshell_bit(donor_claimed: bool, _successor_claimed: bool) -> bool {
@@ -526,6 +534,12 @@ mod tests {
             "after a lost adopt reply, Tick/ApplyPower must not replace the menu's session.lock"
         );
         assert!(
+            should_retain_clamshell_power_callback(true, true)
+                && !should_retain_clamshell_power_callback(false, true)
+                && !should_retain_clamshell_power_callback(true, false),
+            "a donor that no longer owns session.lock must not reassert clamshell on wake"
+        );
+        assert!(
             should_claim_session_lock(11, Some(22), true, false),
             "the adopting menu must take the live donor's lock during handoff"
         );
@@ -537,6 +551,10 @@ mod tests {
         assert!(
             apply.contains("already_holding"),
             "ApplyPower must snapshot owns_power before assigning it, so adopt is not treated as a donor retry"
+        );
+        assert!(
+            apply.contains("should_retain_clamshell_power_callback"),
+            "ApplyPower must drop CLAMSHELL_OWNED when a successor holds the lock"
         );
         let claim_at = apply
             .find("should_claim_session_lock")
@@ -950,10 +968,15 @@ mod tests {
         );
         assert!(
             handle.contains("handoff_ack_reporter")
-                && handle.contains("identity.is_some()")
-                && !handle.contains("identity.is_some() && adopted")
+                && handle.contains("reporter_running")
+                && gui.contains("reporter_is_running")
+                && !handle.contains("resp.reporter = Some(identity.is_some())")
                 && handle.contains("resp.reporter"),
-            "Stop acks must record a surviving menu reporter, and adopt IPC must tell the donor"
+            "adopt IPC must report a running reporter thread, not only a loaded identity"
+        );
+        assert!(
+            handle.contains("should_keep_unpersisted_stop_donor_after_kept_adopt"),
+            "an unpersisted Stop after a kept adopt must still reach the live donor"
         );
         assert!(
             should_restore_donor_lock_on_adopt_rollback(true)
@@ -1022,8 +1045,8 @@ mod tests {
             "a peer-visible unverified token keeps a live pid as owner when sysctl is unreadable"
         );
         assert!(
-            !lock_holder_is_live(true, Some(UNVERIFIED_INSTANCE_TOKEN), Some(99)),
-            "an unverified lock must not follow a later process whose starttime is readable"
+            lock_holder_is_live(true, Some(UNVERIFIED_INSTANCE_TOKEN), Some(99)),
+            "a recovered starttime lookup must not evict a still-live unverified owner"
         );
         assert!(!lock_holder_is_live(
             false,

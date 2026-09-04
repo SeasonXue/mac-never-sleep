@@ -689,7 +689,10 @@ impl Platform for MacPlatform {
         self.owns_power = plan.prevent_idle_sleep || plan.disable_clamshell_sleep;
         OWNS_POWER.store(self.owns_power, Ordering::SeqCst);
         SESSION_ACTIVE.store(self.owns_power, Ordering::SeqCst);
-        CLAMSHELL_OWNED.store(self.clamshell_on, Ordering::SeqCst);
+        CLAMSHELL_OWNED.store(
+            crate::session_lock::should_retain_clamshell_power_callback(may_own, self.clamshell_on),
+            Ordering::SeqCst,
+        );
 
         if self.owns_power {
             if may_own {

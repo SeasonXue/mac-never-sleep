@@ -367,6 +367,7 @@ pub fn run() {
                 incoming,
                 &mut pairing,
                 cloud_identity.as_ref(),
+                cloud.as_ref().is_some_and(CloudHandle::reporter_is_running),
                 &mut pending_stop,
                 &mut last_handoff_id,
             );
@@ -1058,6 +1059,7 @@ fn handle_ipc(
     incoming: IpcIncoming,
     pairing: &mut Option<(String, String, u64)>,
     identity: Option<&never_sleep_core::CloudIdentity>,
+    reporter_running: bool,
     pending_stop: &mut bool,
     last_handoff_id: &mut Option<String>,
 ) -> (bool, bool, bool, bool) {
@@ -1155,7 +1157,7 @@ fn handle_ipc(
             }
             if adopted {
                 let mut resp = IpcResponse::ok_adopted(host_status(engine, platform));
-                resp.reporter = Some(identity.is_some());
+                resp.reporter = Some(reporter_running);
                 resp
             } else {
                 IpcResponse::ok_status(host_status(engine, platform))
@@ -1206,7 +1208,7 @@ fn handle_ipc(
         } else {
             crate::protocol::HandoffAckOutcome::Stop
         };
-        let reporter = crate::protocol::handoff_ack_reporter(identity.is_some());
+        let reporter = crate::protocol::handoff_ack_reporter(reporter_running);
         let persist_ok = ack_id
             .as_deref()
             .filter(|id| !id.is_empty())
@@ -1252,9 +1254,19 @@ fn handle_ipc(
                     adopted = false;
                 }
             }
-            stop_donor = false;
+            let keep_stop = crate::protocol::should_keep_unpersisted_stop_donor_after_kept_adopt(
+                reject_stop,
+                last_handoff_id.is_some(),
+                adopted,
+            );
+            if !keep_stop {
+                stop_donor = false;
+            }
             skip_drain = true;
             resp = IpcResponse::err("handoff_ack_failed");
+            if keep_stop {
+                resp.stop_donor = true;
+            }
         }
     }
     let _ = reply.send(resp);

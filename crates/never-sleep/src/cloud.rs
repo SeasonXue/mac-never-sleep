@@ -73,6 +73,11 @@ pub struct CloudHandle {
 }
 
 impl CloudHandle {
+    /// True only while the reporter thread actually started.
+    #[cfg(target_os = "macos")]
+    pub fn reporter_is_running(&self) -> bool {
+        self.join.is_some()
+    }
     pub fn push_status(&self, status: JsonStatus, lang: Lang) {
         self.queue_latest(status, lang);
         if let Some(wake) = &self.wake {

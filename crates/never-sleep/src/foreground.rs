@@ -151,7 +151,13 @@ pub fn run_foreground(
                     if let Some(handle) = take_foreground_reporter(&mut cloud) {
                         let successor_reporter = crate::protocol::successor_reporter_after_adopt(
                             resp.reporter,
-                            crate::protocol::read_handoff_ack().map(|ack| ack.reporter),
+                            crate::protocol::read_handoff_ack().and_then(|ack| {
+                                crate::protocol::matching_handoff_ack_reporter(
+                                    handoff_id.as_deref(),
+                                    Some(ack.id.as_str()),
+                                    ack.reporter,
+                                )
+                            }),
                         );
                         if crate::protocol::donor_should_flush_offline_after_ack(successor_reporter)
                         {
@@ -420,6 +426,7 @@ mod tests {
         );
         assert!(
             handoff.contains("successor_reporter_after_adopt")
+                && handoff.contains("matching_handoff_ack_reporter")
                 && handoff.contains("resp.reporter")
                 && handoff.contains("detach(")
                 && handoff.contains("publish_and_flush")
