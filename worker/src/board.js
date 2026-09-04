@@ -441,7 +441,10 @@ export async function publishReservedPairing({
     try {
       started = await startDevice(code);
     } catch {
-      await drop(code);
+      const forgotten = await forget(code);
+      if (forgotten) {
+        await drop(code);
+      }
       continue;
     }
     if (started?.ok) {

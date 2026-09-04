@@ -6,7 +6,7 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(any(test, target_os = "macos"))]
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Whether this process should restore clamshell sleep and delete `session.lock`.
 ///
@@ -612,13 +612,27 @@ pub fn should_request_donor_clamshell_reapply(need_reassert: bool, iokit_ok: boo
 }
 
 #[cfg(any(test, target_os = "macos"))]
+static DONOR_CLAMSHELL_REAPPLY: AtomicBool = AtomicBool::new(false);
+
+#[cfg(any(test, target_os = "macos"))]
 pub fn request_donor_clamshell_reapply() {
+    DONOR_CLAMSHELL_REAPPLY.store(true, Ordering::SeqCst);
     let _ = crate::paths::ensure_data_dir();
     let _ = std::fs::write(crate::paths::clamshell_reapply_path(), b"1\n");
 }
 
 pub fn take_donor_clamshell_reapply() -> bool {
     std::fs::remove_file(crate::paths::clamshell_reapply_path()).is_ok()
+}
+
+/// Cross-process signal for the live donor. Does not use the data directory.
+#[cfg(any(test, target_os = "macos"))]
+pub fn take_ipc_donor_clamshell_reapply() -> bool {
+    DONOR_CLAMSHELL_REAPPLY.swap(false, Ordering::SeqCst)
+}
+
+pub fn should_reapply_donor_clamshell(engine_active: bool, ipc_signaled: bool) -> bool {
+    engine_active && ipc_signaled
 }
 
 /// Only the still-active donor may consume the request; an idle menu must not.
@@ -856,6 +870,31 @@ mod tests {
             fg.contains("take_pending_donor_clamshell_reapply") && fg.contains("apply_power(plan)"),
             "the still-active donor Tick must reapply clamshell after a failed successor reassert"
         );
+        assert!(
+            should_reapply_donor_clamshell(true, true)
+                && !should_reapply_donor_clamshell(false, true)
+                && !should_reapply_donor_clamshell(true, false),
+            "a live donor must ApplyPower when the handoff reply says reapply"
+        );
+        let _ = take_ipc_donor_clamshell_reapply();
+        request_donor_clamshell_reapply();
+        assert!(
+            take_ipc_donor_clamshell_reapply(),
+            "the IPC bit must not depend on writing clamshell.reapply"
+        );
+        assert!(
+            !take_ipc_donor_clamshell_reapply(),
+            "the IPC reapply bit is one-shot"
+        );
+        assert!(
+            gui.contains("take_ipc_donor_clamshell_reapply") && gui.contains("clamshell_reapply"),
+            "handoff replies must carry the reapply bit without the data directory"
+        );
+        assert!(
+            fg.contains("donor_should_reapply_clamshell")
+                && fg.contains("should_reapply_donor_clamshell"),
+            "the donor must ApplyPower from the live IPC reply, not only the marker file"
+        );
     }
 
     #[test]
@@ -902,12 +941,12 @@ mod tests {
             .next()
             .unwrap();
         let resume_at = refresh
-            .find("should_resume_paused_menu_reporter")
+            .find("handle.resume()")
             .expect("resume paused menu reporter");
         let sync_at = refresh.find("sync_cloud").expect("sync_cloud");
         assert!(
-            resume_at < sync_at,
-            "unpause before queuing a snapshot so the phone sees the successor's state"
+            sync_at < resume_at,
+            "queue the adopted snapshot before unpausing so the first POST is not stale idle"
         );
     }
 

@@ -202,6 +202,14 @@ pub fn run_foreground(
                     println!("{}", engine.config.tr().foreground_ended());
                     return Ok(());
                 }
+                if crate::session_lock::should_reapply_donor_clamshell(
+                    engine.is_active(),
+                    crate::protocol::donor_should_reapply_clamshell(&resp),
+                ) {
+                    let host = platform.snapshot();
+                    let plan = PowerPlan::for_session(&engine.config, host.on_ac);
+                    let _ = platform.apply_power(plan);
+                }
             }
             if let Some(handle) = cloud.as_ref() {
                 handle.resume();

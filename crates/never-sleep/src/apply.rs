@@ -27,7 +27,12 @@ pub fn apply_effects(engine: &Engine, platform: &mut dyn Platform, effects: &[Ef
             Effect::Notify { title, body } => platform.notify(title, body),
         }
     }
-    save_config(&engine.config);
+    if crate::persist::should_persist_config(
+        crate::ipc::this_process_owns_ipc(),
+        crate::ipc::menu_socket_absent(),
+    ) {
+        save_config(&engine.config);
+    }
     power_ok
 }
 

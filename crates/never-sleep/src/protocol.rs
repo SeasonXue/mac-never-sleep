@@ -58,6 +58,10 @@ pub struct IpcResponse {
     /// Internal only; CLI JSON omits the field when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reporter: Option<bool>,
+    /// Ask the live donor to ApplyPower again after a successor IOKit miss.
+    /// Internal only; CLI JSON omits the field when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clamshell_reapply: bool,
 }
 
 impl IpcRequest {
@@ -167,6 +171,7 @@ impl IpcResponse {
             adopted: false,
             stop_donor: false,
             reporter: None,
+            clamshell_reapply: false,
         }
     }
 
@@ -191,6 +196,7 @@ impl IpcResponse {
             adopted: false,
             stop_donor: false,
             reporter: None,
+            clamshell_reapply: false,
         }
     }
 
@@ -207,6 +213,7 @@ impl IpcResponse {
             adopted: false,
             stop_donor: false,
             reporter: None,
+            clamshell_reapply: false,
         }
     }
 
@@ -223,6 +230,7 @@ impl IpcResponse {
             adopted: false,
             stop_donor: false,
             reporter: None,
+            clamshell_reapply: false,
         }
     }
 }
@@ -252,6 +260,10 @@ pub fn menu_accepted_handoff(resp: &IpcResponse) -> bool {
 
 pub fn donor_should_stop(resp: &IpcResponse) -> bool {
     resp.stop_donor
+}
+
+pub fn donor_should_reapply_clamshell(resp: &IpcResponse) -> bool {
+    resp.clamshell_reapply
 }
 
 /// This donor already completed (or tried) this handoff id, even if standby ended.
@@ -737,11 +749,21 @@ mod tests {
         assert_eq!(stop_json["stop_donor"], true);
         assert!(donor_should_stop(&stop));
         assert!(
-            serde_json::to_value(IpcResponse::ok_status(accepted))
+            serde_json::to_value(IpcResponse::ok_status(accepted.clone()))
                 .unwrap()
                 .get("stop_donor")
                 .is_none(),
             "CLI status must omit the internal stop-donor flag"
+        );
+        let mut reapply = IpcResponse::ok_status(accepted.clone());
+        reapply.clamshell_reapply = true;
+        assert!(donor_should_reapply_clamshell(&reapply));
+        assert!(
+            serde_json::to_value(IpcResponse::ok_status(accepted))
+                .unwrap()
+                .get("clamshell_reapply")
+                .is_none(),
+            "CLI status must omit the internal clamshell-reapply flag"
         );
         let mut live = sample_status();
         live.active = true;

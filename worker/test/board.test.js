@@ -2322,6 +2322,7 @@ test("alarm failure during pair reservation releases the shard", async () => {
 
 test("startDevice failure during pair reservation releases the shard", async () => {
   const released = [];
+  const forgotten = [];
   const result = await publishReservedPairing({
     generateCode: () => (released.length ? "BBBB2222" : "AAAA1111"),
     reserve: async () => ({ ok: true }),
@@ -2336,13 +2337,46 @@ test("startDevice failure during pair reservation releases the shard", async () 
     release: async (code) => {
       released.push(code);
     },
+    forgetDevice: async (code) => {
+      forgotten.push(code);
+    },
   });
   assert.deepEqual(
     released,
     ["AAAA1111"],
     "a reserved pair shard must be dropped if device startup throws",
   );
+  assert.deepEqual(
+    forgotten,
+    ["AAAA1111"],
+    "an ambiguous startDevice throw must drop the device offer so heartbeat cannot advertise it",
+  );
   assert.equal(result.pairing_code, "BBBB2222");
+});
+
+test("startDevice throw keeps the pair shard when device forget fails", async () => {
+  const released = [];
+  const result = await publishReservedPairing({
+    generateCode: () => "AAAA1111",
+    reserve: async () => ({ ok: true }),
+    startDevice: async () => {
+      throw new Error("setAlarm after persist");
+    },
+    release: async (code) => {
+      released.push(code);
+    },
+    forgetDevice: async () => {
+      throw new Error("device durable object down");
+    },
+  });
+  assert.deepEqual(
+    released,
+    [],
+    "do not drop the pair shard while the device offer may still be advertised",
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "pair_busy");
+  assert.equal(result.status, 503);
 });
 
 test("confirmLive failure during pair reservation releases the shard", async () => {

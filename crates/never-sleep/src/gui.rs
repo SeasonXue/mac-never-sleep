@@ -256,7 +256,10 @@ pub fn run() {
             eprintln!("{}", load_config().tr().ipc_not_started(&e));
             false
         }
-        Ok(()) => true,
+        Ok(()) => {
+            crate::ipc::mark_ipc_server_owned(true);
+            true
+        }
     };
 
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
@@ -797,6 +800,7 @@ fn refresh_ui(
     pairing: &mut Option<(String, String, u64)>,
 ) {
     if let Some(handle) = cloud {
+        crate::cloud::sync_cloud(engine, platform, handle, pairing);
         if crate::session_lock::should_resume_paused_menu_reporter(
             handle.is_paused(),
             crate::session_lock::peer_reporter_lock_is_live(std::process::id()),
@@ -804,7 +808,6 @@ fn refresh_ui(
         ) {
             handle.resume();
         }
-        crate::cloud::sync_cloud(engine, platform, handle, pairing);
     }
     crate::cloud::expire_stale_pairing(pairing);
     let host = platform.snapshot();
@@ -1305,6 +1308,7 @@ fn handle_ipc(
             }
         }
     }
+    resp.clamshell_reapply = crate::session_lock::take_ipc_donor_clamshell_reapply();
     let _ = reply.send(resp);
     (quitting, adopted, stop_donor, skip_drain)
 }

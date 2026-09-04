@@ -886,8 +886,12 @@ pub(crate) fn should_release_applied_retention(successor_live: bool) -> bool {
     !successor_live
 }
 
-fn should_pair_start_on_tick(needs_pair: bool, offline: bool) -> bool {
-    needs_pair && !offline
+fn should_pair_start_after_heartbeat(
+    needs_pair: bool,
+    offline: bool,
+    heartbeat_resolved: bool,
+) -> bool {
+    needs_pair && !offline && heartbeat_resolved
 }
 
 fn prune_applied_history(
@@ -1032,7 +1036,36 @@ pub(crate) fn reporter_tick(
     offline: bool,
     last_pending: &Mutex<Option<Vec<String>>>,
 ) -> Option<Vec<RemoteCommand>> {
-    if should_pair_start_on_tick(gate.needs_pair_start(), offline) {
+    let body = heartbeat_request_json(
+        identity,
+        display_name,
+        status,
+        lang,
+        inbox.ack_ids(),
+        offline,
+    );
+    let heartbeat_resolved;
+    let pending = match transport.post_json("/api/heartbeat", &body) {
+        Ok(CloudPost::Unauthorized) => {
+            heartbeat_resolved = true;
+            gate.on_unauthorized();
+            None
+        }
+        Ok(CloudPost::Ok(raw)) => {
+            heartbeat_resolved = true;
+            parse_heartbeat_response(&raw)
+                .ok()
+                .map(|outcome| emit_outcome(gate, inbox, event_tx, last_pending, outcome))
+        }
+        Err(_) => {
+            heartbeat_resolved = false;
+            None
+        }
+    };
+    if pending.is_none() {
+        forget_pending_ids(last_pending);
+    }
+    if should_pair_start_after_heartbeat(gate.needs_pair_start(), offline, heartbeat_resolved) {
         let body = serde_json::to_string(&PairStartBody {
             device_id: &identity.device_id,
             device_token: &identity.device_token,
@@ -1054,28 +1087,6 @@ pub(crate) fn reporter_tick(
             Ok(CloudPost::Unauthorized) => gate.on_unauthorized(),
             Err(_) => {}
         }
-    }
-
-    let body = heartbeat_request_json(
-        identity,
-        display_name,
-        status,
-        lang,
-        inbox.ack_ids(),
-        offline,
-    );
-    let pending = match transport.post_json("/api/heartbeat", &body) {
-        Ok(CloudPost::Unauthorized) => {
-            gate.on_unauthorized();
-            None
-        }
-        Ok(CloudPost::Ok(raw)) => parse_heartbeat_response(&raw)
-            .ok()
-            .map(|outcome| emit_outcome(gate, inbox, event_tx, last_pending, outcome)),
-        Err(_) => None,
-    };
-    if pending.is_none() {
-        forget_pending_ids(last_pending);
     }
     pending
 }
@@ -1942,7 +1953,10 @@ mod tests {
     #[test]
     fn failed_heartbeat_forgets_stale_pending_ids() {
         let transport = ScriptedTransport {
-            pair: Mutex::new(vec![]),
+            pair: Mutex::new(vec![Ok(CloudPost::Ok(
+                r#"{"ok":true,"pairing_code":"AB7K-2Q9M","pairing_url":"https://x/board/?code=AB7K-2Q9M"}"#
+                    .into(),
+            ))]),
             beat: Mutex::new(vec![
                 Err("timeout".into()),
                 Ok(CloudPost::Unauthorized),
@@ -2624,6 +2638,7 @@ mod tests {
             false,
             &pending_slot,
         );
+        assert_eq!(*transport.pair_calls.lock().unwrap(), 0);
         assert!(
             !gate.needs_pair_start(),
             "an authenticated heartbeat that returns a live pairing must stop calling pair/start"
@@ -2652,8 +2667,8 @@ mod tests {
         );
         assert_eq!(
             *transport.pair_calls.lock().unwrap(),
-            1,
-            "the displayed code must not rotate on every tick after a lost pair/start response"
+            0,
+            "a live heartbeat offer must be reused; do not mint a replacement pair shard"
         );
     }
 
@@ -2727,9 +2742,9 @@ mod tests {
         );
         assert!(
             !gate.needs_pair_start(),
-            "successful pair/start plus a live offer registers the device"
+            "a later heartbeat that returns the live offer registers without rotating the code"
         );
-        assert_eq!(*transport.pair_calls.lock().unwrap(), 2);
+        assert_eq!(*transport.pair_calls.lock().unwrap(), 1);
 
         reporter_tick(
             &mut gate,
@@ -2743,11 +2758,12 @@ mod tests {
             false,
             &pending_slot,
         );
-        assert!(
-            gate.needs_pair_start(),
-            "unauthorized heartbeat must retry pair/start"
+        assert_eq!(
+            *transport.pair_calls.lock().unwrap(),
+            2,
+            "unauthorized heartbeat must retry pair/start in the same tick"
         );
-        assert_eq!(*transport.pair_calls.lock().unwrap(), 2);
+        assert!(!gate.needs_pair_start());
 
         reporter_tick(
             &mut gate,
@@ -2762,7 +2778,7 @@ mod tests {
             &pending_slot,
         );
         assert!(!gate.needs_pair_start());
-        assert_eq!(*transport.pair_calls.lock().unwrap(), 3);
+        assert_eq!(*transport.pair_calls.lock().unwrap(), 2);
         assert_eq!(*transport.beat_calls.lock().unwrap(), 4);
     }
 
@@ -2812,11 +2828,30 @@ mod tests {
             );
         }
         assert!(
-            should_pair_start_on_tick(true, false),
-            "an unregistered live reporter still calls pair/start"
+            should_pair_start_after_heartbeat(true, false, true),
+            "an unregistered live reporter still calls pair/start after a resolved heartbeat"
         );
-        assert!(!should_pair_start_on_tick(true, true));
-        assert!(!should_pair_start_on_tick(false, false));
+        assert!(!should_pair_start_after_heartbeat(true, true, true));
+        assert!(!should_pair_start_after_heartbeat(false, false, true));
+        assert!(
+            !should_pair_start_after_heartbeat(true, false, false),
+            "a transport error must not rotate an already-shown pairing code"
+        );
+        let tick = include_str!("cloud.rs")
+            .split("pub(crate) fn reporter_tick")
+            .nth(1)
+            .expect("reporter_tick")
+            .split("fn emit_outcome")
+            .next()
+            .unwrap();
+        let beat_at = tick.find("\"/api/heartbeat\"").expect("heartbeat first");
+        let pair_at = tick
+            .find("\"/api/pair/start\"")
+            .expect("pair/start fallback");
+        assert!(
+            beat_at < pair_at,
+            "reuse a live offer from heartbeat before minting a replacement code"
+        );
     }
 
     #[test]

@@ -284,6 +284,20 @@ fn worker_shards_per_device_not_one_global_board() {
             && pairing.contains("continue;"),
         "setAlarm rejection after pair-offer persist must drop the shard"
     );
+    let started = pairing
+        .split("started = await startDevice")
+        .nth(1)
+        .expect("startDevice")
+        .split("if (started?.ok)")
+        .next()
+        .unwrap();
+    assert!(
+        started.contains("forgotten")
+            && started.contains("if (forgotten)")
+            && started.contains("drop(code)")
+            && started.contains("forget(code)"),
+        "ambiguous startDevice failure must drop the device offer before the pair shard"
+    );
     let confirm = pairing
         .split("if (confirmLive)")
         .nth(1)

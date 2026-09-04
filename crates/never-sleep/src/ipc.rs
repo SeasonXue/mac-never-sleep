@@ -1,9 +1,21 @@
 use std::io::{self, BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::paths::ipc_socket_path;
 use crate::protocol::{IpcRequest, IpcResponse};
+
+static IPC_SERVER_OWNED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn mark_ipc_server_owned(owned: bool) {
+    IPC_SERVER_OWNED.store(owned, Ordering::SeqCst);
+}
+
+pub fn this_process_owns_ipc() -> bool {
+    IPC_SERVER_OWNED.load(Ordering::SeqCst)
+}
 
 #[cfg(target_os = "macos")]
 use std::os::unix::net::UnixListener;
