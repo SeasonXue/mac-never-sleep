@@ -63,6 +63,10 @@ pub fn handoff_ack_path() -> PathBuf {
     data_dir().join("handoff.ack")
 }
 
+pub fn reporter_lock_path() -> PathBuf {
+    data_dir().join("reporter.lock")
+}
+
 #[cfg(any(test, target_os = "macos"))]
 pub fn launch_agent_path() -> PathBuf {
     dirs::home_dir()
@@ -130,6 +134,7 @@ mod tests {
         assert_eq!(cloud_identity_path(), dir.join("cloud.toml"));
         assert_eq!(ipc_socket_path(), dir.join("ipc.sock"));
         assert_eq!(session_lock_path(), dir.join("session.lock"));
+        assert_eq!(reporter_lock_path(), dir.join("reporter.lock"));
         assert!(launch_agent_path().ends_with("com.seasonxue.never-sleep.plist"));
     }
 

@@ -361,7 +361,7 @@ pub fn run() {
                     );
                 }
             }
-            let (quitting, adopted, stop_donor) = handle_ipc(
+            let (quitting, adopted, stop_donor, skip_drain) = handle_ipc(
                 &mut engine,
                 platform.as_mut(),
                 incoming,
@@ -375,7 +375,9 @@ pub fn run() {
                 *control_flow = ControlFlow::Exit;
                 break;
             } else {
-                if handoff_first {
+                if handoff_first
+                    && !crate::protocol::should_skip_handoff_drain_after_ack_failure(skip_drain)
+                {
                     if let Some(handle) = cloud.as_ref() {
                         crate::cloud::apply_polled_commands(
                             &mut engine,
@@ -843,6 +845,7 @@ fn flush_cloud_on_quit(
     platform: &mut dyn Platform,
     cloud: &mut Option<CloudHandle>,
 ) {
+    crate::protocol::mark_handoff_ack_reporter_gone();
     if let Some(handle) = cloud.take() {
         if crate::session_lock::should_detach_cloud_on_quit(engine.is_active(), std::process::id())
         {
@@ -1049,7 +1052,7 @@ fn handle_ipc(
     identity: Option<&never_sleep_core::CloudIdentity>,
     pending_stop: &mut bool,
     last_handoff_id: &mut Option<String>,
-) -> (bool, bool, bool) {
+) -> (bool, bool, bool, bool) {
     crate::cloud::expire_stale_pairing(pairing);
     let IpcIncoming::Request { req, reply } = incoming;
     let host_status = |engine: &Engine, platform: &mut dyn Platform| {
@@ -1088,7 +1091,7 @@ fn handle_ipc(
                 Ok(d) => d,
                 Err(e) => {
                     let _ = reply.send(IpcResponse::err(e));
-                    return (false, false, false);
+                    return (false, false, false, false);
                 }
             };
             let input = if handoff {
@@ -1185,37 +1188,47 @@ fn handle_ipc(
     ) {
         resp.stop_donor = true;
     }
-    let stop_donor = resp.stop_donor;
+    let mut stop_donor = resp.stop_donor;
+    let mut skip_drain = false;
     if crate::protocol::should_persist_handoff_ack(handoff_attempt, adopted, stop_donor) {
         let outcome = if adopted {
             crate::protocol::HandoffAckOutcome::Adopted
         } else {
             crate::protocol::HandoffAckOutcome::Stop
         };
+        let reporter = identity.is_some() && adopted;
         let persist_ok = ack_id
             .as_deref()
             .filter(|id| !id.is_empty())
-            .map(|id| crate::protocol::write_handoff_ack(id, outcome).is_ok())
+            .map(|id| crate::protocol::write_handoff_ack(id, outcome, reporter).is_ok())
             .unwrap_or(false);
-        if crate::protocol::should_reject_adopt_if_ack_unpersisted(
+        let reject_adopt = crate::protocol::should_reject_adopt_if_ack_unpersisted(
             adopted,
             dispatched_now,
             persist_ok,
-        ) {
-            dispatch(
-                engine,
-                platform,
-                Input::Stop {
-                    reason: StopReason::AppQuit,
-                },
-            );
-            *last_handoff_id = None;
-            adopted = false;
+        );
+        let reject_stop =
+            crate::protocol::should_reject_stop_if_ack_unpersisted(stop_donor, persist_ok);
+        if crate::protocol::should_skip_handoff_drain_after_ack_failure(reject_adopt || reject_stop)
+        {
+            if reject_adopt {
+                dispatch(
+                    engine,
+                    platform,
+                    Input::Stop {
+                        reason: StopReason::AppQuit,
+                    },
+                );
+                *last_handoff_id = None;
+                adopted = false;
+            }
+            stop_donor = false;
+            skip_drain = true;
             resp = IpcResponse::err("handoff_ack_failed");
         }
     }
     let _ = reply.send(resp);
-    (quitting, adopted, stop_donor)
+    (quitting, adopted, stop_donor, skip_drain)
 }
 
 fn local_controls_deferred(engine: &Engine) -> bool {

@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 
 /// Whether this process should restore clamshell sleep and delete `session.lock`.
 ///
@@ -123,7 +123,6 @@ pub fn parse_lock_record(s: &str) -> SessionLockRecord {
     }
 }
 
-#[cfg(any(test, target_os = "macos"))]
 pub fn format_lock_text(pid: u32, clamshell: bool, starttime: Option<u64>) -> String {
     let mut body = format!("pid={pid}\nclamshell={}\n", u8::from(clamshell));
     if let Some(start) = starttime {
@@ -289,6 +288,80 @@ pub fn should_stop_donor_on_failed_handoff(
     pending_stop: bool,
 ) -> bool {
     handoff && !adopted && pending_stop
+}
+
+/// Only one foreground process may poll commands for the persisted identity.
+pub fn should_claim_reporter_lock(
+    our_pid: u32,
+    lock_pid: Option<u32>,
+    lock_holder_alive: bool,
+) -> bool {
+    match lock_pid {
+        None => true,
+        Some(pid) if pid == our_pid => true,
+        Some(_) => !lock_holder_alive,
+    }
+}
+
+fn read_reporter_lock() -> Option<SessionLockRecord> {
+    let text = std::fs::read_to_string(crate::paths::reporter_lock_path()).ok()?;
+    Some(parse_lock_record(&text))
+}
+
+fn reporter_lock_holder_alive(rec: &SessionLockRecord) -> bool {
+    lock_holder_is_live(
+        pid_is_alive(rec.pid),
+        rec.starttime,
+        process_starttime(rec.pid),
+    )
+}
+
+/// Exclusive cloud polling for `never-sleep on` when no menu owns IPC.
+pub fn try_claim_reporter_lock(our_pid: u32) -> bool {
+    if our_pid == 0 {
+        return false;
+    }
+    for _ in 0..3 {
+        if let Some(rec) = read_reporter_lock() {
+            let alive = reporter_lock_holder_alive(&rec);
+            if rec.pid == our_pid && alive {
+                return true;
+            }
+            if !should_claim_reporter_lock(our_pid, Some(rec.pid), alive) {
+                return false;
+            }
+            let _ = std::fs::remove_file(crate::paths::reporter_lock_path());
+        }
+        let Ok(_) = crate::paths::ensure_data_dir() else {
+            return false;
+        };
+        let body = format_lock_text(our_pid, false, process_starttime(our_pid));
+        let path = crate::paths::reporter_lock_path();
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if file.write_all(body.as_bytes()).is_ok() {
+                    return true;
+                }
+                let _ = std::fs::remove_file(&path);
+                return false;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+pub fn release_reporter_lock(our_pid: u32) {
+    if let Some(rec) = read_reporter_lock() {
+        if rec.pid == our_pid {
+            let _ = std::fs::remove_file(crate::paths::reporter_lock_path());
+        }
+    }
 }
 
 /// Keep a foreign clamshell=1 lock when inherited restore failed, even if the
@@ -705,6 +778,19 @@ mod tests {
             "adopt must roll back when handoff.ack cannot be written"
         );
         assert!(
+            handle.contains("should_reject_stop_if_ack_unpersisted"),
+            "a deferred Off must persist Stop before the donor can rely on the IPC reply"
+        );
+        assert!(
+            loop_src.contains("should_skip_handoff_drain_after_ack_failure")
+                && loop_src.contains("skip_drain"),
+            "held phone On must not restart standby after an unpersisted adopt rollback"
+        );
+        assert!(
+            flush.contains("mark_handoff_ack_reporter_gone"),
+            "Quit must clear ack reporter ownership before the socket disappears"
+        );
+        assert!(
             loop_src.contains("stop_donor"),
             "apply the remembered escape after drain when the response stops the donor"
         );
@@ -757,6 +843,53 @@ mod tests {
                 "1 (init) S 0 1 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 42 0 0 0 0 0 0 0 0 0 0 0"
             ),
             Some(42)
+        );
+    }
+
+    #[test]
+    fn second_foreground_does_not_claim_a_live_reporter_lock() {
+        assert!(
+            !should_claim_reporter_lock(11, Some(22), true),
+            "two never-sleep on processes must not both poll the same identity"
+        );
+        assert!(should_claim_reporter_lock(11, Some(22), false));
+        assert!(should_claim_reporter_lock(11, Some(11), true));
+        assert!(should_claim_reporter_lock(11, None, false));
+        let _dir = crate::paths::TestDataDir::install();
+        let ours = std::process::id();
+        assert!(
+            try_claim_reporter_lock(ours),
+            "the first foreground reporter may start cloud polling"
+        );
+        assert!(
+            try_claim_reporter_lock(ours),
+            "the owning process may re-enter the lock"
+        );
+        let init_start = process_starttime(1);
+        std::fs::write(
+            crate::paths::reporter_lock_path(),
+            format_lock_text(1, false, init_start),
+        )
+        .unwrap();
+        assert!(
+            !try_claim_reporter_lock(ours),
+            "a second foreground must not steal a live reporter lock"
+        );
+        std::fs::write(
+            crate::paths::reporter_lock_path(),
+            format_lock_text(1, false, Some(1)),
+        )
+        .unwrap();
+        assert!(
+            try_claim_reporter_lock(ours),
+            "a leftover lock from a reused pid must not block polling"
+        );
+        release_reporter_lock(ours);
+        assert!(read_reporter_lock().is_none());
+        let fg = include_str!("foreground.rs");
+        assert!(
+            fg.contains("try_claim_reporter_lock") && fg.contains("release_reporter_lock"),
+            "foreground must take exclusive reporter ownership before heartbeats"
         );
     }
 }

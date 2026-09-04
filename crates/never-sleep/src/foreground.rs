@@ -46,20 +46,13 @@ pub fn run_foreground(
     println!("{}", t.foreground_status_hint());
 
     while running.load(Ordering::SeqCst) && engine.is_active() {
-        if let Some(handle) = cloud.as_ref() {
-            crate::cloud::apply_polled_commands(&mut engine, platform, handle, &mut pairing);
-        }
-        if !engine.is_active() {
-            break;
-        }
-        let successor_live = !menu_socket_absent();
-        if let Some((persisted, outcome)) = crate::protocol::read_handoff_ack() {
+        if let Some(ack) = crate::protocol::read_handoff_ack() {
             if crate::protocol::donor_should_stop_after_successor_gone(
                 handoff_id.as_deref(),
-                successor_live,
-                Some(persisted.as_str()),
+                !menu_socket_absent(),
+                Some(ack.id.as_str()),
             ) {
-                let reason = match outcome {
+                let reason = match ack.outcome {
                     crate::protocol::HandoffAckOutcome::Adopted => StopReason::AppQuit,
                     crate::protocol::HandoffAckOutcome::Stop => StopReason::User,
                 };
@@ -67,8 +60,8 @@ pub fn run_foreground(
                     dispatch(&mut engine, platform, Input::Stop { reason });
                 }
                 stop_for_quit(&mut engine, platform);
-                if let Some(handle) = cloud.take() {
-                    if crate::protocol::donor_should_flush_offline_after_ack(successor_live) {
+                if let Some(handle) = take_foreground_reporter(&mut cloud) {
+                    if crate::protocol::donor_should_flush_offline_after_ack(ack.reporter) {
                         crate::cloud::publish_and_flush(
                             handle,
                             engine.json_status(&platform.snapshot()),
@@ -82,6 +75,12 @@ pub fn run_foreground(
                 println!("{}", engine.config.tr().foreground_ended());
                 return Ok(());
             }
+        }
+        if let Some(handle) = cloud.as_ref() {
+            crate::cloud::apply_polled_commands(&mut engine, platform, handle, &mut pairing);
+        }
+        if !engine.is_active() {
+            break;
         }
         if try_send(&IpcRequest::Ping).is_some() {
             if let Some(handle) = cloud.as_ref() {
@@ -110,7 +109,7 @@ pub fn run_foreground(
             );
             if let Some(resp) = try_send(&req) {
                 if crate::protocol::menu_accepted_handoff(&resp) {
-                    if let Some(handle) = cloud.take() {
+                    if let Some(handle) = take_foreground_reporter(&mut cloud) {
                         handle.detach();
                     }
                     if engine.is_active() {
@@ -137,7 +136,7 @@ pub fn run_foreground(
                         );
                     }
                     stop_for_quit(&mut engine, platform);
-                    if let Some(handle) = cloud.take() {
+                    if let Some(handle) = take_foreground_reporter(&mut cloud) {
                         handle.detach();
                     }
                     println!("{}", engine.config.tr().foreground_ended());
@@ -177,7 +176,7 @@ pub fn run_foreground(
         );
     }
     stop_for_quit(&mut engine, platform);
-    if let Some(handle) = cloud {
+    if let Some(handle) = take_foreground_reporter(&mut cloud) {
         crate::cloud::publish_and_flush(
             handle,
             engine.json_status(&platform.snapshot()),
@@ -209,7 +208,20 @@ fn handoff_request(
     }
 }
 
+fn take_foreground_reporter(
+    cloud: &mut Option<crate::cloud::CloudHandle>,
+) -> Option<crate::cloud::CloudHandle> {
+    let handle = cloud.take();
+    if handle.is_some() {
+        crate::session_lock::release_reporter_lock(std::process::id());
+    }
+    handle
+}
+
 fn spawn_foreground_reporter(lang: Lang) -> Option<crate::cloud::CloudHandle> {
+    if !crate::session_lock::try_claim_reporter_lock(std::process::id()) {
+        return None;
+    }
     match crate::cloud::load_or_create_identity() {
         Ok(identity) => Some(crate::cloud::spawn_reporter(
             identity,
@@ -217,6 +229,7 @@ fn spawn_foreground_reporter(lang: Lang) -> Option<crate::cloud::CloudHandle> {
             lang,
         )),
         Err(err) => {
+            crate::session_lock::release_reporter_lock(std::process::id());
             eprintln!("never-sleep cloud identity: {err}");
             None
         }
@@ -291,6 +304,13 @@ mod tests {
         let drain_at = loop_body
             .find("apply_polled_commands")
             .expect("drain the foreground reporter before handing off");
+        let ack_at = loop_body
+            .find("read_handoff_ack")
+            .expect("read persisted adopt/stop before contacting a replacement menu");
+        assert!(
+            ack_at < drain_at,
+            "a matching ack must stop this donor before it applies a phone Off that the menu still owns"
+        );
         let quiesce_at = loop_body
             .find("quiesce(")
             .expect("quiesce the reporter so an in-flight heartbeat cannot ack during IPC");
@@ -385,9 +405,6 @@ mod tests {
                 && loop_body.contains("read_handoff_ack"),
             "a lost adopt reply then menu Quit must stop this donor from a persisted ack, not Tick"
         );
-        let ack_at = loop_body
-            .find("read_handoff_ack")
-            .expect("read persisted adopt/stop before contacting a replacement menu");
         let ping_at = loop_body.find("IpcRequest::Ping").expect("loop Ping");
         assert!(
             ack_at < ping_at,
@@ -395,8 +412,9 @@ mod tests {
         );
         assert!(
             loop_body.contains("donor_should_flush_offline_after_ack")
+                && loop_body.contains("ack.reporter")
                 && loop_body.contains("publish_and_flush"),
-            "ack stop with no successor reporter must POST offline so the board does not stay live"
+            "ack stop must flush when the successor ack says no reporter remains"
         );
     }
 

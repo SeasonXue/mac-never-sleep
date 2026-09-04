@@ -291,18 +291,30 @@ pub enum HandoffAckOutcome {
     Stop,
 }
 
+/// Matching persisted ack, plus whether the successor still owns a reporter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffAck {
+    pub id: String,
+    pub outcome: HandoffAckOutcome,
+    pub reporter: bool,
+}
+
 #[cfg(any(test, target_os = "macos"))]
-pub fn format_handoff_ack(id: &str, outcome: HandoffAckOutcome) -> String {
+pub fn format_handoff_ack(id: &str, outcome: HandoffAckOutcome, reporter: bool) -> String {
     let outcome = match outcome {
         HandoffAckOutcome::Adopted => "adopted",
         HandoffAckOutcome::Stop => "stop",
     };
-    format!("handoff_id={id}\noutcome={outcome}\n")
+    format!(
+        "handoff_id={id}\noutcome={outcome}\nreporter={}\n",
+        u8::from(reporter)
+    )
 }
 
-pub fn parse_handoff_ack(s: &str) -> Option<(String, HandoffAckOutcome)> {
+pub fn parse_handoff_ack(s: &str) -> Option<HandoffAck> {
     let mut id = None;
     let mut outcome = None;
+    let mut reporter = false;
     for line in s.lines() {
         if let Some(v) = line.strip_prefix("handoff_id=") {
             let v = v.trim();
@@ -317,8 +329,15 @@ pub fn parse_handoff_ack(s: &str) -> Option<(String, HandoffAckOutcome)> {
                 _ => None,
             };
         }
+        if let Some(v) = line.strip_prefix("reporter=") {
+            reporter = v.trim() == "1";
+        }
     }
-    Some((id?, outcome?))
+    Some(HandoffAck {
+        id: id?,
+        outcome: outcome?,
+        reporter,
+    })
 }
 
 /// Matching persisted ack stops this donor even if another menu already rebound IPC.
@@ -334,8 +353,10 @@ pub fn donor_should_stop_after_successor_gone(
 }
 
 /// After an ack-driven stop, flush offline only when no successor reporter remains.
-pub fn donor_should_flush_offline_after_ack(successor_live: bool) -> bool {
-    !successor_live
+/// Socket liveness is not enough: a quitting menu can still accept Ping after
+/// its reporter has already flushed.
+pub fn donor_should_flush_offline_after_ack(successor_reporter: bool) -> bool {
+    !successor_reporter
 }
 
 #[cfg(any(test, target_os = "macos"))]
@@ -353,13 +374,29 @@ pub fn should_reject_adopt_if_ack_unpersisted(
     adopted && dispatched_now && !persist_ok
 }
 
-pub fn read_handoff_ack() -> Option<(String, HandoffAckOutcome)> {
+/// A deferred Off must not report `stop_donor` unless the Stop ack was written.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_reject_stop_if_ack_unpersisted(stop_donor: bool, persist_ok: bool) -> bool {
+    stop_donor && !persist_ok
+}
+
+/// Held phone On must not restart the menu after an unpersisted adopt/stop.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_skip_handoff_drain_after_ack_failure(ack_unpersisted: bool) -> bool {
+    ack_unpersisted
+}
+
+pub fn read_handoff_ack() -> Option<HandoffAck> {
     let text = std::fs::read_to_string(crate::paths::handoff_ack_path()).ok()?;
     parse_handoff_ack(&text)
 }
 
 #[cfg(any(test, target_os = "macos"))]
-pub fn write_handoff_ack(id: &str, outcome: HandoffAckOutcome) -> std::io::Result<()> {
+pub fn write_handoff_ack(
+    id: &str,
+    outcome: HandoffAckOutcome,
+    reporter: bool,
+) -> std::io::Result<()> {
     if id.is_empty() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -369,8 +406,17 @@ pub fn write_handoff_ack(id: &str, outcome: HandoffAckOutcome) -> std::io::Resul
     crate::paths::ensure_data_dir()?;
     std::fs::write(
         crate::paths::handoff_ack_path(),
-        format_handoff_ack(id, outcome),
+        format_handoff_ack(id, outcome, reporter),
     )
+}
+
+/// Quit teardown: IPC may still accept Ping after this reporter has flushed.
+#[cfg(any(test, target_os = "macos"))]
+pub fn mark_handoff_ack_reporter_gone() {
+    let Some(ack) = read_handoff_ack() else {
+        return;
+    };
+    let _ = write_handoff_ack(&ack.id, ack.outcome, false);
 }
 
 pub fn clear_handoff_ack() {
@@ -612,30 +658,58 @@ mod tests {
         assert!(!should_reject_adopt_if_ack_unpersisted(true, false, false));
         assert!(!should_reject_adopt_if_ack_unpersisted(true, true, true));
         assert!(!should_reject_adopt_if_ack_unpersisted(false, true, false));
+        assert!(
+            should_reject_stop_if_ack_unpersisted(true, false),
+            "a deferred Off must not rely on a one-shot IPC reply when Stop cannot be persisted"
+        );
+        assert!(!should_reject_stop_if_ack_unpersisted(true, true));
+        assert!(!should_reject_stop_if_ack_unpersisted(false, false));
+        assert!(should_skip_handoff_drain_after_ack_failure(true));
+        assert!(!should_skip_handoff_drain_after_ack_failure(false));
         assert!(should_persist_handoff_ack(true, true, false));
         assert!(should_persist_handoff_ack(true, false, true));
         assert!(!should_persist_handoff_ack(true, false, false));
         assert!(!should_persist_handoff_ack(false, true, false));
-        let ack = format_handoff_ack("11-100-1", HandoffAckOutcome::Adopted);
+        let ack = format_handoff_ack("11-100-1", HandoffAckOutcome::Adopted, true);
         assert_eq!(
             parse_handoff_ack(&ack),
-            Some(("11-100-1".into(), HandoffAckOutcome::Adopted))
+            Some(HandoffAck {
+                id: "11-100-1".into(),
+                outcome: HandoffAckOutcome::Adopted,
+                reporter: true,
+            })
         );
         assert_eq!(
-            parse_handoff_ack(&format_handoff_ack("h1", HandoffAckOutcome::Stop)).map(|(_, o)| o),
+            parse_handoff_ack(&format_handoff_ack("h1", HandoffAckOutcome::Stop, false))
+                .map(|ack| ack.outcome),
             Some(HandoffAckOutcome::Stop)
         );
+        assert_eq!(
+            parse_handoff_ack("handoff_id=h1\noutcome=adopted\n").map(|ack| ack.reporter),
+            Some(false),
+            "an older ack without reporter= must flush rather than assume a live successor reporter"
+        );
         let _dir = crate::paths::TestDataDir::install();
-        write_handoff_ack("h1", HandoffAckOutcome::Adopted).unwrap();
+        write_handoff_ack("h1", HandoffAckOutcome::Adopted, true).unwrap();
         assert_eq!(
             read_handoff_ack(),
-            Some(("h1".into(), HandoffAckOutcome::Adopted))
+            Some(HandoffAck {
+                id: "h1".into(),
+                outcome: HandoffAckOutcome::Adopted,
+                reporter: true,
+            })
+        );
+        mark_handoff_ack_reporter_gone();
+        assert_eq!(
+            read_handoff_ack().map(|ack| ack.reporter),
+            Some(false),
+            "Quit must clear reporter ownership before the socket goes away"
         );
         clear_handoff_ack();
         assert!(read_handoff_ack().is_none());
         std::fs::create_dir(crate::paths::handoff_ack_path()).unwrap();
         assert!(
-            write_handoff_ack("h1", HandoffAckOutcome::Adopted).is_err(),
+            write_handoff_ack("h1", HandoffAckOutcome::Adopted, true).is_err(),
             "adopt must not report success when handoff.ack cannot be written"
         );
         let _ = std::fs::remove_dir(crate::paths::handoff_ack_path());
