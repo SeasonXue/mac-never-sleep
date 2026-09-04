@@ -1425,8 +1425,9 @@ mod tests {
         assert!(
             flush.contains("mark_handoff_ack_reporter_gone")
                 && flush.contains("should_flush_offline_if_ack_reporter_clear_failed")
+                && flush.contains("should_flush_offline_after_abandoning_successor_reporter")
                 && flush.contains("publish_and_flush"),
-            "Quit must clear ack reporter ownership, and flush offline if that clear fails"
+            "Quit must clear ack reporter ownership, flush if that clear fails, and flush after abandoning reporter=1"
         );
         assert!(
             handle.contains("handoff_ack_reporter")

@@ -457,6 +457,27 @@ pub fn successor_reporter_after_adopt(
     ipc_reporter.or(ack_reporter).unwrap_or(true)
 }
 
+/// Quit cleared reporter=1 while the donor may still detach from a stale adopted reply.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_flush_offline_after_abandoning_successor_reporter(
+    had_live_reporter: bool,
+    clear_ok: bool,
+) -> bool {
+    had_live_reporter && clear_ok
+}
+
+/// Re-check a matching ack after the adopted IPC snapshot looked live.
+pub fn successor_reporter_after_fresh_ack(
+    previous: bool,
+    ipc_reporter: Option<bool>,
+    fresh_ack_reporter: Option<bool>,
+) -> bool {
+    if !previous {
+        return false;
+    }
+    successor_reporter_after_adopt(ipc_reporter, fresh_ack_reporter)
+}
+
 /// Older menus omit `resp.reporter`; only a matching `handoff.ack` may fill it in.
 pub fn matching_handoff_ack_reporter(
     our_handoff_id: Option<&str>,
@@ -1010,6 +1031,69 @@ mod tests {
             "adopt must not report success when handoff.ack cannot be written"
         );
         let _ = std::fs::remove_dir(crate::paths::handoff_ack_path());
+    }
+
+    #[test]
+    fn quit_during_adopt_reply_does_not_drop_offline_heartbeat() {
+        assert!(
+            should_flush_offline_after_abandoning_successor_reporter(true, true),
+            "Quit that cleared reporter=1 must POST offline; the donor may still detach from a stale adopted reply"
+        );
+        assert!(
+            !should_flush_offline_after_abandoning_successor_reporter(false, true),
+            "Quit before adopt still detaches so the donor can resume"
+        );
+        assert!(!should_flush_offline_after_abandoning_successor_reporter(
+            true, false
+        ));
+        assert!(
+            !successor_reporter_after_fresh_ack(true, Some(true), Some(false)),
+            "a later matching ack with reporter=0 must override the first live snapshot before detach"
+        );
+        assert!(successor_reporter_after_fresh_ack(
+            true,
+            Some(true),
+            Some(true)
+        ));
+        assert!(
+            !successor_reporter_after_fresh_ack(false, Some(true), Some(true)),
+            "do not undo an already-decided flush"
+        );
+
+        let accept = include_str!("foreground.rs")
+            .split("if crate::protocol::menu_accepted_handoff(&resp) {")
+            .nth(1)
+            .expect("accepted handoff")
+            .split("if crate::protocol::donor_should_stop(&resp)")
+            .next()
+            .unwrap();
+        let first = accept
+            .find("successor_reporter_after_adopt")
+            .expect("first snapshot");
+        let fresh = accept
+            .find("successor_reporter_after_fresh_ack")
+            .expect("reconcile before detach");
+        assert!(
+            first < fresh,
+            "re-read the matching ack after the adopted reply in case Quit already rewrote reporter=0"
+        );
+        assert!(
+            accept.matches("read_handoff_ack").count() >= 2,
+            "the donor must not detach from a single ack snapshot"
+        );
+
+        let flush = include_str!("gui.rs")
+            .split("fn flush_cloud_on_quit")
+            .nth(1)
+            .expect("flush_cloud_on_quit")
+            .split("fn handle_menu_event")
+            .next()
+            .unwrap();
+        assert!(
+            flush.contains("should_flush_offline_after_abandoning_successor_reporter")
+                && flush.contains("had_live_reporter"),
+            "menu must flush after abandoning reporter=1 while the donor may still hold reporter.lock"
+        );
     }
 
     #[test]

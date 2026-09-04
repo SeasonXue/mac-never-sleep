@@ -159,6 +159,18 @@ pub fn run_foreground(
                                 )
                             }),
                         );
+                        let successor_reporter =
+                            crate::protocol::successor_reporter_after_fresh_ack(
+                                successor_reporter,
+                                resp.reporter,
+                                crate::protocol::read_handoff_ack().and_then(|ack| {
+                                    crate::protocol::matching_handoff_ack_reporter(
+                                        handoff_id.as_deref(),
+                                        Some(ack.id.as_str()),
+                                        ack.reporter,
+                                    )
+                                }),
+                            );
                         if crate::protocol::donor_should_flush_offline_after_ack(successor_reporter)
                         {
                             crate::cloud::publish_and_flush(
@@ -439,6 +451,7 @@ mod tests {
         );
         assert!(
             handoff.contains("successor_reporter_after_adopt")
+                && handoff.contains("successor_reporter_after_fresh_ack")
                 && handoff.contains("matching_handoff_ack_reporter")
                 && handoff.contains("resp.reporter")
                 && handoff.contains("detach(")

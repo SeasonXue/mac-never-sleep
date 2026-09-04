@@ -881,6 +881,7 @@ fn flush_cloud_on_quit(
     platform: &mut dyn Platform,
     cloud: &mut Option<CloudHandle>,
 ) {
+    let had_live_reporter = crate::protocol::read_handoff_ack().is_some_and(|ack| ack.reporter);
     let clear_ok = crate::protocol::mark_handoff_ack_reporter_gone();
     if let Some(handle) = cloud.take() {
         let would_detach = crate::session_lock::should_detach_cloud_on_quit(
@@ -891,6 +892,10 @@ fn flush_cloud_on_quit(
             && !crate::protocol::should_flush_offline_if_ack_reporter_clear_failed(
                 clear_ok,
                 would_detach,
+            )
+            && !crate::protocol::should_flush_offline_after_abandoning_successor_reporter(
+                had_live_reporter,
+                clear_ok,
             )
         {
             handle.detach();
