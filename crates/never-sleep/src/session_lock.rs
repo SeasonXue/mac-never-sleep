@@ -115,6 +115,13 @@ pub fn should_hold_cloud_commands(engine_active: bool, our_pid: u32) -> bool {
     )
 }
 
+/// Do not start a local session while a live donor still owns standby.
+/// ⌥⌘P / Toggle during that overlap would otherwise race the handoff.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_defer_local_controls(engine_active: bool, our_pid: u32) -> bool {
+    should_hold_cloud_commands(engine_active, our_pid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +135,19 @@ mod tests {
         assert!(should_release_clamshell_lock(11, Some(11), true));
         assert!(should_release_clamshell_lock(11, Some(22), false));
         assert!(should_release_clamshell_lock(11, None, false));
+        assert!(
+            should_defer_local_controls(false, 11) == should_hold_cloud_commands(false, 11),
+            "⌥⌘P before adopt must follow the same live-donor lock as held phone commands"
+        );
+        let gui = include_str!("gui.rs");
+        assert!(
+            gui.contains("should_defer_local_controls") && gui.contains("ok_adopted"),
+            "handoff IPC must confirm this process adopted, and Toggle must not start over a live donor"
+        );
+        assert!(
+            gui.contains("ipc_owned") && gui.contains("spawn_reporter"),
+            "menu reporter starts only after this process owns the IPC socket"
+        );
     }
 
     #[test]
@@ -144,6 +164,15 @@ mod tests {
         assert!(
             src.contains("pid_alive"),
             "ownership follows the pid recorded in session.lock"
+        );
+        let panic_hook = src
+            .split("fn install_panic_cleanup")
+            .nth(1)
+            .expect("panic cleanup");
+        assert!(
+            panic_hook.contains("should_restore_clamshell")
+                && panic_hook.contains("should_release_clamshell_lock"),
+            "panic while OWNS_POWER must not wipe a successor's session.lock"
         );
     }
 

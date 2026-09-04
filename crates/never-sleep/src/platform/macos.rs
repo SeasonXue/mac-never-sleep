@@ -545,11 +545,28 @@ fn install_panic_cleanup() {
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             if OWNS_POWER.load(Ordering::SeqCst) {
+                let parsed = parse_lock();
+                let our_pid = std::process::id();
+                let holder_alive = parsed
+                    .map(|(pid, _)| crate::session_lock::pid_is_alive(pid))
+                    .unwrap_or(false);
+                let drop_lock = crate::session_lock::should_release_clamshell_lock(
+                    our_pid,
+                    parsed.map(|(pid, _)| pid),
+                    holder_alive,
+                );
+                let restore_clamshell =
+                    crate::session_lock::should_restore_clamshell(our_pid, parsed, holder_alive);
                 OWNS_POWER.store(false, Ordering::SeqCst);
                 SESSION_ACTIVE.store(false, Ordering::SeqCst);
-                CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
-                set_clamshell_sleep_disabled(false);
-                let _ = fs::remove_file(session_lock_path());
+                if restore_clamshell {
+                    set_clamshell_sleep_disabled(false);
+                    CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+                }
+                if drop_lock {
+                    CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+                    let _ = fs::remove_file(session_lock_path());
+                }
             }
             prev(info);
         }));

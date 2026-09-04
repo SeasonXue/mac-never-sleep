@@ -44,6 +44,9 @@ pub struct IpcResponse {
     pub pairing_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
+    /// Set only when this process dispatched a handoff onto an idle engine.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adopted: bool,
 }
 
 impl IpcRequest {
@@ -117,6 +120,15 @@ impl IpcResponse {
             pairing_code: None,
             pairing_url: None,
             device_id: None,
+            adopted: false,
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn ok_adopted(status: JsonStatus) -> Self {
+        Self {
+            adopted: true,
+            ..Self::ok_status(status)
         }
     }
 
@@ -130,6 +142,7 @@ impl IpcResponse {
             pairing_code: None,
             pairing_url: None,
             device_id: None,
+            adopted: false,
         }
     }
 
@@ -143,6 +156,7 @@ impl IpcResponse {
             pairing_code: None,
             pairing_url: None,
             device_id: None,
+            adopted: false,
         }
     }
 
@@ -156,6 +170,7 @@ impl IpcResponse {
             pairing_code: Some(code),
             pairing_url: Some(url),
             device_id,
+            adopted: false,
         }
     }
 }
@@ -180,7 +195,7 @@ pub fn duration_pref_to_ipc(pref: DurationPref) -> String {
 }
 
 pub fn menu_accepted_handoff(resp: &IpcResponse) -> bool {
-    resp.ok && resp.status.as_ref().is_some_and(|status| status.active)
+    resp.ok && resp.adopted && resp.status.as_ref().is_some_and(|status| status.active)
 }
 
 /// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
@@ -280,11 +295,24 @@ mod tests {
         );
         let mut accepted = sample_status();
         accepted.active = true;
-        assert!(menu_accepted_handoff(&IpcResponse::ok_status(
+        assert!(
+            !menu_accepted_handoff(&IpcResponse::ok_status(accepted.clone())),
+            "an already-active menu (⌥⌘P before adopt) must not count as this handoff"
+        );
+        assert!(menu_accepted_handoff(&IpcResponse::ok_adopted(
             accepted.clone()
         )));
+        let adopted_json = serde_json::to_value(IpcResponse::ok_adopted(accepted.clone())).unwrap();
+        assert_eq!(adopted_json["adopted"], true);
+        assert!(
+            serde_json::to_value(IpcResponse::ok_status(accepted.clone()))
+                .unwrap()
+                .get("adopted")
+                .is_none(),
+            "CLI status must omit the internal handoff-adopted flag"
+        );
         accepted.active = false;
-        assert!(!menu_accepted_handoff(&IpcResponse::ok_status(accepted)));
+        assert!(!menu_accepted_handoff(&IpcResponse::ok_adopted(accepted)));
         assert!(!menu_accepted_handoff(&IpcResponse::err("denied")));
         let ping = IpcResponse::pong();
         assert!(!menu_accepted_handoff(&ping));

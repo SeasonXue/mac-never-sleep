@@ -246,14 +246,17 @@ pub fn run() {
     let mut engine = Engine::new(load_config());
 
     let (ipc_tx, ipc_rx) = mpsc::channel::<IpcIncoming>();
-    match ipc::spawn_server(ipc_tx) {
+    let ipc_owned = match ipc::spawn_server(ipc_tx) {
         Err(e) if e == "already_running" => {
             eprintln!("{}", load_config().tr().already_running());
             return;
         }
-        Err(e) => eprintln!("{}", load_config().tr().ipc_not_started(&e)),
-        Ok(()) => {}
-    }
+        Err(e) => {
+            eprintln!("{}", load_config().tr().ipc_not_started(&e));
+            false
+        }
+        Ok(()) => true,
+    };
 
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
@@ -320,13 +323,17 @@ pub fn run() {
     } else {
         None
     };
-    let mut cloud = cloud_identity.as_ref().map(|identity| {
-        spawn_reporter(
-            identity.clone(),
-            default_display_name(),
-            engine.config.lang(),
-        )
-    });
+    let mut cloud = if ipc_owned {
+        cloud_identity.as_ref().map(|identity| {
+            spawn_reporter(
+                identity.clone(),
+                default_display_name(),
+                engine.config.lang(),
+            )
+        })
+    } else {
+        None
+    };
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(next_wake);
@@ -476,7 +483,7 @@ pub fn run() {
                         &mut pairing,
                     );
                 }
-                dispatch(&mut engine, platform.as_mut(), Input::Toggle);
+                dispatch_local_toggle(&mut engine, platform.as_mut());
                 refresh_ui(
                     &handles,
                     &mut tray,
@@ -834,7 +841,7 @@ fn handle_menu_event(
     popover: Option<&mut Popover>,
 ) {
     if id == handles.toggle.id() {
-        dispatch(engine, platform, Input::Toggle);
+        dispatch_local_toggle(engine, platform);
     } else if id == handles.quit.id() {
         stop_for_quit(engine, platform);
         *control_flow = ControlFlow::Exit;
@@ -917,7 +924,7 @@ fn handle_ui_command(
             if !toggle_gate.take_click() {
                 return;
             }
-            dispatch(engine, platform, Input::Toggle);
+            dispatch_local_toggle(engine, platform);
         }
         UiCommand::SleepDisplayNow => {
             dispatch(engine, platform, Input::SleepDisplayNow);
@@ -1061,9 +1068,17 @@ fn handle_ipc(
                     Some(d) => Input::StartWith(d),
                 }
             };
-            if engine.is_active() && matches!(input, Input::Start) {
+            let mut adopted = false;
+            if handoff {
+                if !engine.is_active() {
+                    dispatch(engine, platform, input);
+                    adopted = engine.is_active();
+                }
+            } else if local_controls_deferred(engine) {
+                // live donor still owns standby; do not start a second session
+            } else if engine.is_active() && matches!(input, Input::Start) {
                 // already on
-            } else if engine.is_active() && !handoff {
+            } else if engine.is_active() {
                 dispatch(
                     engine,
                     platform,
@@ -1072,10 +1087,14 @@ fn handle_ipc(
                     },
                 );
                 dispatch(engine, platform, input);
-            } else if !engine.is_active() {
+            } else {
                 dispatch(engine, platform, input);
             }
-            IpcResponse::ok_status(host_status(engine, platform))
+            if adopted {
+                IpcResponse::ok_adopted(host_status(engine, platform))
+            } else {
+                IpcResponse::ok_status(host_status(engine, platform))
+            }
         }
         IpcRequest::Off => {
             if engine.is_active() {
@@ -1090,7 +1109,7 @@ fn handle_ipc(
             IpcResponse::ok_status(host_status(engine, platform))
         }
         IpcRequest::Toggle => {
-            dispatch(engine, platform, Input::Toggle);
+            dispatch_local_toggle(engine, platform);
             IpcResponse::ok_status(host_status(engine, platform))
         }
         IpcRequest::Quit => {
@@ -1101,6 +1120,17 @@ fn handle_ipc(
     };
     let _ = reply.send(resp);
     quitting
+}
+
+fn local_controls_deferred(engine: &Engine) -> bool {
+    crate::session_lock::should_defer_local_controls(engine.is_active(), std::process::id())
+}
+
+fn dispatch_local_toggle(engine: &mut Engine, platform: &mut dyn Platform) {
+    if local_controls_deferred(engine) {
+        return;
+    }
+    dispatch(engine, platform, Input::Toggle);
 }
 
 fn show_menu_help(engine: &Engine, popover: Option<&mut Popover>) {
