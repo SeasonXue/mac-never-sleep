@@ -105,6 +105,15 @@ pub fn identity_from_bytes(id_bytes: &[u8; 16], token_bytes: &[u8; 32]) -> Cloud
     }
 }
 
+/// Same 32/64-hex contract the Worker uses before `idFromName`.
+pub fn device_credentials_are_valid(device_id: &str, device_token: &str) -> bool {
+    is_hex_len(device_id, DEVICE_ID_HEX_LEN) && is_hex_len(device_token, DEVICE_TOKEN_HEX_LEN)
+}
+
+fn is_hex_len(value: &str, len: usize) -> bool {
+    value.len() == len && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 pub fn pairing_code_from_bytes(bytes: &[u8; 5]) -> String {
     let mut bits: u64 = 0;
     for b in bytes {
@@ -284,6 +293,30 @@ mod tests {
         assert_ne!(a.device_token, b.device_token);
         assert_ne!(a.device_id, "1");
         assert_ne!(a.device_id, "device-1");
+    }
+
+    #[test]
+    fn device_credentials_match_the_worker_hex_contract() {
+        assert!(device_credentials_are_valid(
+            &"ab".repeat(16),
+            &"cd".repeat(32)
+        ));
+        assert!(device_credentials_are_valid(
+            &"AB".repeat(16),
+            &"CD".repeat(32)
+        ));
+        for (id, token) in [
+            ("aa".repeat(8), "cd".repeat(32)),
+            ("ab".repeat(16), "cd".repeat(8)),
+            ("ab".repeat(16), "not-hex-but-long-enough-xxxx".into()),
+            ("gg".repeat(16), "cd".repeat(32)),
+            ("f".repeat(64), "f".repeat(128)),
+        ] {
+            assert!(
+                !device_credentials_are_valid(&id, &token),
+                "id={id:?} token={token:?} must not register"
+            );
+        }
     }
 
     #[test]

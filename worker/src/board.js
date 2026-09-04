@@ -97,15 +97,8 @@ export function shardName(path, body) {
     return code ? `pair:${code}` : null;
   }
   if (p === "/api/list") return null;
-  if (p === "/api/pair/start") {
-    if (!deviceCredentialsAreValid(body?.device_id, body?.device_token)) return null;
-    return `device:${body.device_id}`;
-  }
-  const id = body?.device_id;
-  if (isHexLen(id, DEVICE_ID_LEN)) {
-    return `device:${id}`;
-  }
-  return null;
+  if (!deviceCredentialsAreValid(body?.device_id, body?.device_token)) return null;
+  return `device:${body.device_id}`;
 }
 
 export const LIST_MAX_DEVICES = 32;

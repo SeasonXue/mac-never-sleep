@@ -711,6 +711,7 @@ impl Platform for MacPlatform {
                         true,
                         cleared_unclaimed,
                         donor_clamshell,
+                        holder_alive,
                     ) {
                         set_clamshell_sleep_disabled(true);
                     }

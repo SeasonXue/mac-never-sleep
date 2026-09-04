@@ -13,9 +13,9 @@ mod i18n;
 mod status;
 
 pub use cloud::{
-    apply_remote_command, device_is_online, format_pairing_code, hex_from_bytes,
-    identity_from_bytes, normalize_pairing_code, pairing_code_from_bytes, pairing_url,
-    tokens_match, CloudDeviceStatus, CloudIdentity, RemoteCommand, DEVICE_ID_HEX_LEN,
+    apply_remote_command, device_credentials_are_valid, device_is_online, format_pairing_code,
+    hex_from_bytes, identity_from_bytes, normalize_pairing_code, pairing_code_from_bytes,
+    pairing_url, tokens_match, CloudDeviceStatus, CloudIdentity, RemoteCommand, DEVICE_ID_HEX_LEN,
     DEVICE_TOKEN_HEX_LEN, HEARTBEAT_TTL_SECS, PAIRING_CODE_LEN, PAIRING_TTL_SECS,
     PUBLIC_SITE_ORIGIN,
 };

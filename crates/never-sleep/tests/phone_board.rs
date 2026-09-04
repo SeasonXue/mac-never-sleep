@@ -154,6 +154,18 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("LIST_MAX_DEVICES = 32"));
     assert!(board.contains("DEVICE_ID_LEN"));
     assert!(board.contains("deviceCredentialsAreValid"));
+    let shard_fn = board
+        .split("export function shardName")
+        .nth(1)
+        .expect("shardName")
+        .split("export const LIST_MAX_DEVICES")
+        .next()
+        .unwrap();
+    assert!(
+        shard_fn.contains("deviceCredentialsAreValid")
+            && !shard_fn.contains("isHexLen(id, DEVICE_ID_LEN)"),
+        "heartbeat/command must reject non 32/64-hex credentials before idFromName"
+    );
     let cap_fn = board
         .split("export function capListEntries")
         .nth(1)

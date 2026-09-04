@@ -381,13 +381,15 @@ pub fn should_fail_apply_if_lock_write_failed(
 
 /// Clearing the global flag before a failed successor lock write must not
 /// leave clamshell sleep disabled under a donor that still owns `clamshell=1`.
+/// A dead owner's leftover file must not re-enable the override with no owner.
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_reassert_donor_clamshell_after_lock_write_failure(
     write_failed: bool,
     cleared_unclaimed: bool,
     donor_clamshell: bool,
+    donor_alive: bool,
 ) -> bool {
-    write_failed && cleared_unclaimed && donor_clamshell
+    write_failed && cleared_unclaimed && donor_clamshell && donor_alive
 }
 
 #[cfg(any(test, target_os = "macos"))]
@@ -631,17 +633,21 @@ mod tests {
     #[test]
     fn lock_write_failure_reasserts_donor_clamshell() {
         assert!(
-            should_reassert_donor_clamshell_after_lock_write_failure(true, true, true),
+            should_reassert_donor_clamshell_after_lock_write_failure(true, true, true, true),
             "clearing the flag then failing to take session.lock must put clamshell disable back"
         );
+        assert!(
+            !should_reassert_donor_clamshell_after_lock_write_failure(true, true, true, false),
+            "a dead leftover clamshell=1 lock must not re-enable the override with no owner"
+        );
         assert!(!should_reassert_donor_clamshell_after_lock_write_failure(
-            false, true, true
+            false, true, true, true
         ));
         assert!(!should_reassert_donor_clamshell_after_lock_write_failure(
-            true, false, true
+            true, false, true, true
         ));
         assert!(!should_reassert_donor_clamshell_after_lock_write_failure(
-            true, true, false
+            true, true, false, true
         ));
         let macos = include_str!("platform/macos.rs");
         let apply = macos.split("fn apply_power").nth(1).expect("apply_power");
@@ -649,6 +655,15 @@ mod tests {
             apply.contains("should_reassert_donor_clamshell_after_lock_write_failure")
                 && apply.contains("set_clamshell_sleep_disabled(true)"),
             "ApplyPower must restore the donor's clamshell disable after a failed lock write"
+        );
+        let reassert = apply
+            .split("should_reassert_donor_clamshell_after_lock_write_failure")
+            .nth(1)
+            .expect("reassert call");
+        let args = reassert.split(')').next().expect("reassert args");
+        assert!(
+            args.contains("holder_alive"),
+            "reassert only while the donor that recorded clamshell=1 is still live"
         );
         let clear_at = apply
             .find("should_clear_unclaimed_clamshell")

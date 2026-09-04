@@ -18,8 +18,8 @@ fn unix_now_secs() -> u64 {
 }
 
 use never_sleep_core::{
-    apply_remote_command, identity_from_bytes, CloudIdentity, Engine, JsonStatus, Lang,
-    RemoteCommand, PAIRING_TTL_SECS, PUBLIC_SITE_ORIGIN,
+    apply_remote_command, device_credentials_are_valid, identity_from_bytes, CloudIdentity, Engine,
+    JsonStatus, Lang, RemoteCommand, PAIRING_TTL_SECS, PUBLIC_SITE_ORIGIN,
 };
 use serde::{Deserialize, Serialize};
 
@@ -438,7 +438,7 @@ fn read_complete_identity(path: &Path) -> io::Result<Option<CloudIdentity>> {
         Err(err) => return Err(err),
     };
     if let Ok(id) = toml::from_str::<CloudIdentity>(&text) {
-        if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
+        if device_credentials_are_valid(&id.device_id, &id.device_token) {
             restrict_owner_only(path)?;
             return Ok(Some(id));
         }
@@ -484,7 +484,7 @@ fn recover_stranded_identity(path: &Path, identity: CloudIdentity) -> io::Result
     let mut text = String::new();
     file.read_to_string(&mut text)?;
     if let Ok(id) = toml::from_str::<CloudIdentity>(&text) {
-        if id.device_id.len() >= 16 && id.device_token.len() >= 16 {
+        if device_credentials_are_valid(&id.device_id, &id.device_token) {
             restrict_owner_only(path)?;
             return Ok(id);
         }
@@ -1392,6 +1392,39 @@ mod tests {
         assert_eq!(id.device_id.len(), 32);
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("device_token"));
+    }
+
+    #[test]
+    fn load_or_create_identity_recovers_malformed_persisted_credentials() {
+        let _dir = TestDataDir::install();
+        let path = cloud_identity_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let stale = CloudIdentity {
+            device_id: "aa".repeat(8),
+            device_token: "not-hex-but-long-enough".into(),
+        };
+        fs::write(&path, toml::to_string_pretty(&stale).unwrap()).unwrap();
+        let id =
+            load_or_create_identity().expect("legacy or corrupted cloud.toml must be regenerated");
+        assert!(device_credentials_are_valid(
+            &id.device_id,
+            &id.device_token
+        ));
+        assert_ne!(id, stale, "do not keep credentials the Worker will reject");
+        let disk: CloudIdentity = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(disk, id);
+        let src = include_str!("cloud.rs");
+        let load = src
+            .split("fn read_complete_identity")
+            .nth(1)
+            .expect("read_complete_identity")
+            .split("fn wait_for_complete_identity")
+            .next()
+            .unwrap();
+        assert!(
+            load.contains("device_credentials_are_valid"),
+            "persisted identities must match the Worker 32/64-hex contract"
+        );
     }
 
     #[test]

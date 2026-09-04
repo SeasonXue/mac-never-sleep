@@ -585,6 +585,30 @@ test("API traffic is sharded per device and pairing code, never a global board",
   assert.notEqual(shardName("/api/heartbeat", id), "board");
 });
 
+test("heartbeat and command reject invalid tokens before allocating a shard", () => {
+  const id = identity();
+  assert.equal(
+    shardName("/api/heartbeat", { device_id: id.device_id, device_token: "t" }),
+    null,
+  );
+  assert.equal(
+    shardName("/api/command", {
+      device_id: id.device_id,
+      device_token: "f".repeat(128),
+    }),
+    null,
+  );
+  assert.equal(
+    shardName("/api/heartbeat", {
+      device_id: "f".repeat(64),
+      device_token: id.device_token,
+    }),
+    null,
+  );
+  assert.equal(shardName("/api/heartbeat", id), `device:${id.device_id}`);
+  assert.equal(shardName("/api/command", id), `device:${id.device_id}`);
+});
+
 test("pair/start rejects oversized credentials before allocating a shard", async () => {
   const id = identity();
   assert.equal(id.device_id.length, DEVICE_ID_LEN);
