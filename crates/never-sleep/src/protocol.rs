@@ -47,6 +47,10 @@ pub struct IpcResponse {
     /// Set only when this process dispatched a handoff onto an idle engine.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub adopted: bool,
+    /// Ask the foreground donor to stop after a deferred Off that this process
+    /// could not adopt.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stop_donor: bool,
 }
 
 impl IpcRequest {
@@ -121,6 +125,7 @@ impl IpcResponse {
             pairing_url: None,
             device_id: None,
             adopted: false,
+            stop_donor: false,
         }
     }
 
@@ -143,6 +148,7 @@ impl IpcResponse {
             pairing_url: None,
             device_id: None,
             adopted: false,
+            stop_donor: false,
         }
     }
 
@@ -157,6 +163,7 @@ impl IpcResponse {
             pairing_url: None,
             device_id: None,
             adopted: false,
+            stop_donor: false,
         }
     }
 
@@ -171,6 +178,7 @@ impl IpcResponse {
             pairing_url: Some(url),
             device_id,
             adopted: false,
+            stop_donor: false,
         }
     }
 }
@@ -196,6 +204,10 @@ pub fn duration_pref_to_ipc(pref: DurationPref) -> String {
 
 pub fn menu_accepted_handoff(resp: &IpcResponse) -> bool {
     resp.ok && resp.adopted && resp.status.as_ref().is_some_and(|status| status.active)
+}
+
+pub fn donor_should_stop(resp: &IpcResponse) -> bool {
+    resp.stop_donor
 }
 
 /// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
@@ -312,7 +324,9 @@ mod tests {
             "CLI status must omit the internal handoff-adopted flag"
         );
         accepted.active = false;
-        assert!(!menu_accepted_handoff(&IpcResponse::ok_adopted(accepted)));
+        assert!(!menu_accepted_handoff(&IpcResponse::ok_adopted(
+            accepted.clone()
+        )));
         assert!(!menu_accepted_handoff(&IpcResponse::err("denied")));
         let ping = IpcResponse::pong();
         assert!(!menu_accepted_handoff(&ping));
@@ -333,6 +347,21 @@ mod tests {
                 .contains("applied_command_ids"),
             "CLI On must keep omitting the internal-only field"
         );
+        let mut stop = IpcResponse::ok_status(accepted.clone());
+        stop.stop_donor = true;
+        let stop_json = serde_json::to_value(&stop).unwrap();
+        assert_eq!(stop_json["stop_donor"], true);
+        assert!(donor_should_stop(&stop));
+        assert!(
+            serde_json::to_value(IpcResponse::ok_status(accepted))
+                .unwrap()
+                .get("stop_donor")
+                .is_none(),
+            "CLI status must omit the internal stop-donor flag"
+        );
+        let mut live = sample_status();
+        live.active = true;
+        assert!(!donor_should_stop(&IpcResponse::ok_adopted(live)));
     }
 
     #[test]

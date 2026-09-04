@@ -84,6 +84,27 @@ pub fn run_foreground(
                     println!("{}", engine.config.tr().foreground_ended());
                     return Ok(());
                 }
+                if crate::protocol::donor_should_stop(&resp) {
+                    if engine.is_active() {
+                        dispatch(
+                            &mut engine,
+                            platform,
+                            Input::Stop {
+                                reason: StopReason::User,
+                            },
+                        );
+                    }
+                    stop_for_quit(&mut engine, platform);
+                    if let Some(handle) = cloud.take() {
+                        crate::cloud::publish_and_flush(
+                            handle,
+                            engine.json_status(&platform.snapshot()),
+                            engine.config.lang(),
+                        );
+                    }
+                    println!("{}", engine.config.tr().foreground_ended());
+                    return Ok(());
+                }
             }
             if let Some(handle) = cloud.as_ref() {
                 handle.resume();
@@ -279,6 +300,11 @@ mod tests {
         assert!(
             after_accept.contains("resume("),
             "Ping-then-gone or a rejected On must resume heartbeats; paused has no other exit"
+        );
+        let between = &loop_body[accept_at..resume_at];
+        assert!(
+            between.contains("donor_should_stop") && between.contains("StopReason::User"),
+            "failed adopt with a deferred Off must stop this donor before resume"
         );
     }
 

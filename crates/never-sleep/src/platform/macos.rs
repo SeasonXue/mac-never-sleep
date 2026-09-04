@@ -429,10 +429,11 @@ fn escape_as(s: &str) -> String {
 
 fn write_lock(clamshell: bool) {
     let _ = ensure_data_dir();
-    let body = format!(
-        "pid={}\nclamshell={}\n",
-        std::process::id(),
-        u8::from(clamshell)
+    let pid = std::process::id();
+    let body = crate::session_lock::format_lock_text(
+        pid,
+        clamshell,
+        crate::session_lock::process_starttime(pid),
     );
     let _ = fs::write(session_lock_path(), body);
 }
@@ -444,13 +445,25 @@ fn pid_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-fn parse_lock() -> Option<(u32, bool)> {
+fn parse_lock() -> Option<crate::session_lock::SessionLockRecord> {
     let mut s = String::new();
     fs::File::open(session_lock_path())
         .ok()?
         .read_to_string(&mut s)
         .ok()?;
-    Some(crate::session_lock::parse_lock_text(&s))
+    Some(crate::session_lock::parse_lock_record(&s))
+}
+
+fn lock_holder_alive(parsed: Option<crate::session_lock::SessionLockRecord>) -> bool {
+    parsed
+        .map(|rec| {
+            crate::session_lock::lock_holder_is_live(
+                pid_alive(rec.pid),
+                rec.starttime,
+                crate::session_lock::process_starttime(rec.pid),
+            )
+        })
+        .unwrap_or(false)
 }
 
 pub struct MacPlatform {
@@ -547,16 +560,17 @@ fn install_panic_cleanup() {
             if OWNS_POWER.load(Ordering::SeqCst) {
                 let parsed = parse_lock();
                 let our_pid = std::process::id();
-                let holder_alive = parsed
-                    .map(|(pid, _)| crate::session_lock::pid_is_alive(pid))
-                    .unwrap_or(false);
+                let holder_alive = lock_holder_alive(parsed);
                 let drop_lock = crate::session_lock::should_release_clamshell_lock(
                     our_pid,
-                    parsed.map(|(pid, _)| pid),
+                    parsed.map(|rec| rec.pid),
                     holder_alive,
                 );
-                let restore_clamshell =
-                    crate::session_lock::should_restore_clamshell(our_pid, parsed, holder_alive);
+                let restore_clamshell = crate::session_lock::should_restore_clamshell(
+                    our_pid,
+                    parsed.map(|rec| (rec.pid, rec.clamshell)),
+                    holder_alive,
+                );
                 OWNS_POWER.store(false, Ordering::SeqCst);
                 SESSION_ACTIVE.store(false, Ordering::SeqCst);
                 if restore_clamshell {
@@ -634,12 +648,10 @@ impl Platform for MacPlatform {
         if crate::session_lock::should_clear_unclaimed_clamshell(plan.disable_clamshell_sleep) {
             if !set_clamshell_sleep_disabled(false) {
                 let parsed = parse_lock();
-                let holder_alive = parsed
-                    .map(|(pid, _)| crate::session_lock::pid_is_alive(pid))
-                    .unwrap_or(false);
+                let holder_alive = lock_holder_alive(parsed);
                 if crate::session_lock::should_fail_unclaimed_clamshell_restore(
                     plan.disable_clamshell_sleep,
-                    parsed,
+                    parsed.map(|rec| (rec.pid, rec.clamshell)),
                     holder_alive,
                     std::process::id(),
                 ) {
@@ -679,15 +691,20 @@ impl Platform for MacPlatform {
         }
         let parsed = parse_lock();
         let our_pid = std::process::id();
-        let holder_alive = parsed.map(|(pid, _)| pid_alive(pid)).unwrap_or(false);
+        let holder_alive = lock_holder_alive(parsed);
         let drop_lock = match parsed {
             None => true,
-            Some((pid, _)) => {
-                crate::session_lock::should_release_clamshell_lock(our_pid, Some(pid), holder_alive)
-            }
+            Some(rec) => crate::session_lock::should_release_clamshell_lock(
+                our_pid,
+                Some(rec.pid),
+                holder_alive,
+            ),
         };
-        let restore_clamshell =
-            crate::session_lock::should_restore_clamshell(our_pid, parsed, holder_alive);
+        let restore_clamshell = crate::session_lock::should_restore_clamshell(
+            our_pid,
+            parsed.map(|rec| (rec.pid, rec.clamshell)),
+            holder_alive,
+        );
         if self.owns_power {
             OWNS_POWER.store(false, Ordering::SeqCst);
             SESSION_ACTIVE.store(false, Ordering::SeqCst);
@@ -819,9 +836,9 @@ impl Platform for MacPlatform {
 
     fn cleanup_orphans(&self) {
         self.ensure_clamshell_conn();
-        if let Some((pid, clamshell)) = parse_lock() {
-            if pid != std::process::id() && !pid_alive(pid) {
-                if clamshell {
+        if let Some(rec) = parse_lock() {
+            if rec.pid != std::process::id() && !lock_holder_alive(Some(rec)) {
+                if rec.clamshell {
                     set_clamshell_sleep_disabled(false);
                 }
                 let _ = fs::remove_file(session_lock_path());

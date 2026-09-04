@@ -67,6 +67,8 @@ pub struct CloudHandle {
     detached: Arc<AtomicBool>,
     /// Stop POSTing so handoff can drain the last commands without a racing ack.
     paused: Arc<AtomicBool>,
+    /// Keep applied ids for the successor even after the Worker drops them.
+    retain_applied: Arc<AtomicBool>,
     idle: Arc<(Mutex<bool>, Condvar)>,
 }
 
@@ -106,6 +108,7 @@ impl CloudHandle {
     /// Wait until the reporter has finished its in-flight POST (or there is no
     /// live thread). Further heartbeats stay parked until `detach` / shutdown.
     pub fn quiesce(&self) {
+        self.retain_applied.store(true, Ordering::SeqCst);
         if self.join.is_none() {
             return;
         }
@@ -653,6 +656,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
     let latest = Arc::new(Mutex::new(None));
     let detached = Arc::new(AtomicBool::new(false));
     let paused = Arc::new(AtomicBool::new(false));
+    let retain_applied = Arc::new(AtomicBool::new(false));
     let idle = Arc::new((Mutex::new(false), Condvar::new()));
     let applied_ids = Arc::new(Mutex::new(Vec::new()));
     let applied_history = Arc::new(Mutex::new(Vec::new()));
@@ -661,6 +665,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
     let latest_for_thread = Arc::clone(&latest);
     let detached_for_thread = Arc::clone(&detached);
     let paused_for_thread = Arc::clone(&paused);
+    let retain_for_thread = Arc::clone(&retain_applied);
     let idle_for_thread = Arc::clone(&idle);
     let applied_for_thread = Arc::clone(&applied_ids);
     let history_for_thread = Arc::clone(&applied_history);
@@ -678,6 +683,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
                 event_tx,
                 detached_for_thread,
                 paused_for_thread,
+                retain_for_thread,
                 idle_for_thread,
                 applied_for_thread,
                 history_for_thread,
@@ -694,6 +700,7 @@ pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang
         applied_history,
         detached,
         paused,
+        retain_applied,
         idle,
     }
 }
@@ -707,8 +714,8 @@ fn take_latest(latest: &Mutex<Option<(JsonStatus, Lang)>>) -> Option<(JsonStatus
     latest.lock().ok().and_then(|mut slot| slot.take())
 }
 
-fn should_reporter_tick(fresh: bool, shutting_down: bool) -> bool {
-    fresh || shutting_down
+fn should_reporter_tick(has_snapshot: bool, shutting_down: bool) -> bool {
+    has_snapshot || shutting_down
 }
 
 fn shutting_down_from_wake(
@@ -820,11 +827,19 @@ fn prune_applied_history_after_heartbeat(
     hist: &Mutex<Vec<String>>,
     pending: Option<&[RemoteCommand]>,
     queued: &Mutex<Vec<String>>,
+    retain_for_successor: bool,
 ) {
+    if !should_prune_applied_history(pending.is_some(), retain_for_successor) {
+        return;
+    }
     let Some(pending) = pending else {
         return;
     };
     prune_applied_history(hist, pending, queued);
+}
+
+fn should_prune_applied_history(parsed_pending: bool, retain_for_successor: bool) -> bool {
+    parsed_pending && !retain_for_successor
 }
 
 fn should_pair_start_on_tick(needs_pair: bool, offline: bool) -> bool {
@@ -857,6 +872,7 @@ fn reporter_loop(
     event_tx: mpsc::Sender<CloudEvent>,
     detached: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    retain_applied: Arc<AtomicBool>,
     idle: Arc<(Mutex<bool>, Condvar)>,
     applied_ids: Arc<Mutex<Vec<String>>>,
     applied_history: Arc<Mutex<Vec<String>>>,
@@ -893,12 +909,10 @@ fn reporter_loop(
             }
             offline
         };
-        let mut fresh = false;
         if let Some(pair) = take_latest(&latest) {
             last = Some(pair);
-            fresh = true;
         }
-        if !should_reporter_tick(fresh, shutting_down) {
+        if !should_reporter_tick(last.is_some(), shutting_down) {
             continue;
         }
         let Some((status, lang)) = last.as_ref() else {
@@ -919,7 +933,12 @@ fn reporter_loop(
             &event_tx,
             shutting_down,
         );
-        prune_applied_history_after_heartbeat(&applied_history, pending.as_deref(), &applied_ids);
+        prune_applied_history_after_heartbeat(
+            &applied_history,
+            pending.as_deref(),
+            &applied_ids,
+            retain_applied.load(Ordering::SeqCst),
+        );
         if shutting_down {
             break;
         }
@@ -944,6 +963,7 @@ fn reporter_loop(
                         &applied_history,
                         pending.as_deref(),
                         &applied_ids,
+                        retain_applied.load(Ordering::SeqCst),
                     );
                     break;
                 }
@@ -1158,6 +1178,7 @@ mod tests {
             applied_history: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
+            retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
         }
     }
@@ -1790,7 +1811,12 @@ mod tests {
         let handle = test_cloud_handle(wake, event_rx);
         handle.skip_applied(vec!["phone-on".into()]);
         let _ = handle.take_applied();
-        prune_applied_history_after_heartbeat(&handle.applied_history, None, &handle.applied_ids);
+        prune_applied_history_after_heartbeat(
+            &handle.applied_history,
+            None,
+            &handle.applied_ids,
+            false,
+        );
         assert_eq!(
             handle.applied_command_ids(),
             vec!["phone-on".to_string()],
@@ -1800,6 +1826,7 @@ mod tests {
             &handle.applied_history,
             Some(&[]),
             &handle.applied_ids,
+            false,
         );
         assert!(
             handle.applied_command_ids().is_empty(),
@@ -1809,6 +1836,50 @@ mod tests {
         assert!(
             src.contains("prune_applied_history_after_heartbeat"),
             "reporter_loop must not prune from reporter_tick's failure empty vec"
+        );
+    }
+
+    #[test]
+    fn applied_history_survives_until_successor_reconciles() {
+        let (wake, _wake_rx) = mpsc::sync_channel(2);
+        let (_event_tx, event_rx) = mpsc::channel();
+        let handle = test_cloud_handle(wake, event_rx);
+        handle.skip_applied(vec!["phone-on".into()]);
+        let _ = handle.take_applied();
+        assert!(
+            should_prune_applied_history(true, false),
+            "a standalone reporter may drop Worker-acked ids"
+        );
+        assert!(
+            !should_prune_applied_history(true, true),
+            "keep ids the successor may still hold after the Worker dropped them"
+        );
+        assert!(!should_prune_applied_history(false, false));
+        prune_applied_history_after_heartbeat(
+            &handle.applied_history,
+            Some(&[]),
+            &handle.applied_ids,
+            true,
+        );
+        assert_eq!(
+            handle.applied_command_ids(),
+            vec!["phone-on".to_string()],
+            "quiesce/handoff must not drop ids before skip_applied on the menu"
+        );
+        let src = include_str!("cloud.rs");
+        assert!(
+            src.contains("should_prune_applied_history") && src.contains("retain_applied"),
+            "reporter_loop must not prune while the successor still holds copies"
+        );
+        handle.quiesce();
+        assert!(
+            handle.retain_applied.load(Ordering::SeqCst),
+            "quiesce keeps applied history for the handoff payload"
+        );
+        handle.resume();
+        assert!(
+            handle.retain_applied.load(Ordering::SeqCst),
+            "a rejected handoff must not resume pruning while the menu still holds copies"
         );
     }
 
@@ -1898,6 +1969,7 @@ mod tests {
             applied_history: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
+            retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
         };
         let mut inactive = sample_status();
@@ -1981,6 +2053,7 @@ mod tests {
             applied_history: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::clone(&detached),
             paused: Arc::new(AtomicBool::new(false)),
+            retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
         };
         handle.detach();
@@ -2012,6 +2085,7 @@ mod tests {
             applied_history: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::clone(&paused),
+            retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::clone(&idle),
         };
         handle.resume();
@@ -2051,6 +2125,7 @@ mod tests {
             applied_history: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
+            retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
         };
         handle.detach();
@@ -2082,6 +2157,7 @@ mod tests {
             applied_history: Arc::new(Mutex::new(Vec::new())),
             detached: Arc::new(AtomicBool::new(false)),
             paused: Arc::new(AtomicBool::new(false)),
+            retain_applied: Arc::new(AtomicBool::new(false)),
             idle: Arc::new((Mutex::new(false), Condvar::new())),
         };
         let mut inactive = sample_status();
@@ -2335,14 +2411,14 @@ mod tests {
     }
 
     #[test]
-    fn stale_snapshot_is_not_heartbeated_until_main_loop_refreshes() {
+    fn timeout_reuses_last_snapshot_for_heartbeat() {
         assert!(
             !should_reporter_tick(false, false),
-            "a blocked osascript dialog must not keep the Mac online or ack commands"
+            "do not POST until the main loop has pushed a snapshot"
         );
         assert!(
             should_reporter_tick(true, false),
-            "a freshly pushed main-loop snapshot may heartbeat"
+            "a 3s recv timeout must reuse last so a blocked onboarding dialog cannot look offline"
         );
         assert!(
             should_reporter_tick(false, true),
@@ -2350,7 +2426,10 @@ mod tests {
         );
         let src = include_str!("cloud.rs");
         assert!(src.contains("take_latest"));
-        assert!(src.contains("should_reporter_tick(fresh, shutting_down)"));
+        assert!(
+            src.contains("should_reporter_tick(last.is_some(), shutting_down)"),
+            "periodic ticks must not require a fresh GUI snapshot"
+        );
     }
 
     #[test]

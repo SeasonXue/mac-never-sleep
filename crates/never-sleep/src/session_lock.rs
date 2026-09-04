@@ -67,9 +67,23 @@ pub fn should_fail_unclaimed_clamshell_restore(
     matches!(lock, Some((pid, true)) if pid != our_pid)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionLockRecord {
+    pub pid: u32,
+    pub clamshell: bool,
+    pub starttime: Option<u64>,
+}
+
+#[cfg(any(test, target_os = "macos"))]
 pub fn parse_lock_text(s: &str) -> (u32, bool) {
+    let rec = parse_lock_record(s);
+    (rec.pid, rec.clamshell)
+}
+
+pub fn parse_lock_record(s: &str) -> SessionLockRecord {
     let mut pid = 0u32;
     let mut clamshell = false;
+    let mut starttime = None;
     for line in s.lines() {
         if let Some(v) = line.strip_prefix("pid=") {
             pid = v.trim().parse().unwrap_or(0);
@@ -77,17 +91,33 @@ pub fn parse_lock_text(s: &str) -> (u32, bool) {
         if let Some(v) = line.strip_prefix("clamshell=") {
             clamshell = v.trim() == "1";
         }
+        if let Some(v) = line.strip_prefix("starttime=") {
+            starttime = v.trim().parse().ok();
+        }
     }
-    (pid, clamshell)
+    SessionLockRecord {
+        pid,
+        clamshell,
+        starttime,
+    }
 }
 
-pub fn read_lock() -> Option<(u32, bool)> {
+#[cfg(any(test, target_os = "macos"))]
+pub fn format_lock_text(pid: u32, clamshell: bool, starttime: Option<u64>) -> String {
+    let mut body = format!("pid={pid}\nclamshell={}\n", u8::from(clamshell));
+    if let Some(start) = starttime {
+        body.push_str(&format!("starttime={start}\n"));
+    }
+    body
+}
+
+pub fn read_lock_record() -> Option<SessionLockRecord> {
     let mut s = String::new();
     std::fs::File::open(crate::paths::session_lock_path())
         .ok()?
         .read_to_string(&mut s)
         .ok()?;
-    Some(parse_lock_text(&s))
+    Some(parse_lock_record(&s))
 }
 
 pub fn pid_is_alive(pid: u32) -> bool {
@@ -101,16 +131,85 @@ pub fn pid_is_alive(pid: u32) -> bool {
     std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// A live pid is not enough: SIGKILL can leave `session.lock` for a reused pid.
+pub fn lock_holder_is_live(
+    pid_alive: bool,
+    recorded_start: Option<u64>,
+    observed_start: Option<u64>,
+) -> bool {
+    if !pid_alive {
+        return false;
+    }
+    match recorded_start {
+        None => true,
+        Some(want) => observed_start == Some(want),
+    }
+}
+
+pub fn parse_proc_stat_starttime(stat: &str) -> Option<u64> {
+    let rest = stat.rsplit_once(')')?.1;
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+pub fn process_starttime(pid: u32) -> Option<u64> {
+    if pid == 0 {
+        return None;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        parse_proc_stat_starttime(&raw)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_proc_starttime(pid)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_proc_starttime(pid: u32) -> Option<u64> {
+    unsafe {
+        let mut mib = [
+            libc::CTL_KERN,
+            libc::KERN_PROC,
+            libc::KERN_PROC_PID,
+            pid as libc::c_int,
+        ];
+        let mut info: libc::kinfo_proc = std::mem::zeroed();
+        let mut size = std::mem::size_of::<libc::kinfo_proc>();
+        let rc = libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as u32,
+            &mut info as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        );
+        if rc != 0 || size == 0 {
+            return None;
+        }
+        Some(info.kp_proc.p_starttime.tv_sec as u64)
+    }
+}
+
 /// Hold phone On/Off while another live process still owns `session.lock`.
 /// Applying Off against an idle menu is a no-op and would drop the command.
 pub fn should_hold_cloud_commands(engine_active: bool, our_pid: u32) -> bool {
     if engine_active {
         return false;
     }
-    matches!(
-        read_lock(),
-        Some((pid, _)) if pid != our_pid && pid_is_alive(pid)
-    )
+    match read_lock_record() {
+        Some(rec) if rec.pid != our_pid => lock_holder_is_live(
+            pid_is_alive(rec.pid),
+            rec.starttime,
+            process_starttime(rec.pid),
+        ),
+        _ => false,
+    }
 }
 
 /// Do not start a local session while a live donor still owns standby.
@@ -148,6 +247,16 @@ pub fn should_record_deferred_off(engine_active: bool, deferred: bool) -> bool {
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_detach_cloud_on_quit(engine_active: bool, our_pid: u32) -> bool {
     should_defer_local_controls(engine_active, our_pid)
+}
+
+/// A remembered Off / ⌥⌘P must still stop the donor if this process cannot adopt.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_stop_donor_on_failed_handoff(
+    handoff: bool,
+    adopted: bool,
+    pending_stop: bool,
+) -> bool {
+    handoff && !adopted && pending_stop
 }
 
 #[cfg(test)]
@@ -435,6 +544,73 @@ mod tests {
         assert!(
             should_detach_cloud_on_quit(false, 11) == should_defer_local_controls(false, 11),
             "pre-adopt quit follows the same live-donor lock as deferred Toggle"
+        );
+        assert!(
+            should_stop_donor_on_failed_handoff(true, false, true),
+            "failed adopt must still deliver a deferred Off to the live donor"
+        );
+        assert!(!should_stop_donor_on_failed_handoff(true, true, true));
+        assert!(!should_stop_donor_on_failed_handoff(true, false, false));
+        assert!(!should_stop_donor_on_failed_handoff(false, false, true));
+        assert!(
+            handle.contains("should_stop_donor_on_failed_handoff")
+                && (handle.contains("stop_donor") || gui.contains("stop_donor")),
+            "handoff IPC must tell the donor to stop when adopt cannot apply the deferred Off"
+        );
+        let fg = include_str!("foreground.rs");
+        assert!(
+            fg.contains("donor_should_stop"),
+            "foreground must honor stop_donor instead of resuming standby after a failed adopt"
+        );
+    }
+
+    #[test]
+    fn reused_pid_is_not_a_live_lock_holder() {
+        assert!(
+            lock_holder_is_live(true, None, Some(99)),
+            "locks written before starttime still treat a live pid as the owner"
+        );
+        assert!(lock_holder_is_live(true, Some(10), Some(10)));
+        assert!(
+            !lock_holder_is_live(true, Some(10), Some(99)),
+            "SIGKILL leftover must not follow a later process that reused the pid"
+        );
+        assert!(!lock_holder_is_live(true, Some(10), None));
+        assert!(!lock_holder_is_live(false, Some(10), Some(10)));
+        let rec = parse_lock_record("pid=22\nclamshell=1\nstarttime=4242\n");
+        assert_eq!(rec.pid, 22);
+        assert!(rec.clamshell);
+        assert_eq!(rec.starttime, Some(4242));
+        let body = format_lock_text(22, true, Some(4242));
+        assert_eq!(parse_lock_text(&body), (22, true));
+        assert!(
+            body.contains("starttime=4242"),
+            "session.lock must record a start token, not only pid"
+        );
+        let macos = include_str!("platform/macos.rs");
+        assert!(
+            macos.contains("format_lock_text") && macos.contains("process_starttime"),
+            "apply_power must write pid+starttime so orphan cleanup can reject pid reuse"
+        );
+        assert!(
+            macos.contains("lock_holder_is_live"),
+            "cleanup / release_power must validate starttime, not only kill(pid, 0)"
+        );
+        let own = process_starttime(std::process::id());
+        assert!(
+            own.is_some(),
+            "this process must be able to read its own start token"
+        );
+        assert!(lock_holder_is_live(
+            pid_is_alive(std::process::id()),
+            own,
+            own
+        ));
+        assert_eq!(
+            parse_proc_stat_starttime(
+                "1 (init) S 0 1 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 42 0 0 0 0 0 0 0 0 0 0 0"
+            ),
+            Some(42)
         );
     }
 }

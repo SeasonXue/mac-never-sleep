@@ -1051,7 +1051,8 @@ fn handle_ipc(
     };
     let mut quitting = false;
     let mut adopted = false;
-    let resp = match req {
+    let mut handoff_attempt = false;
+    let mut resp = match req {
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
         IpcRequest::Pair => match pairing.as_ref() {
@@ -1091,6 +1092,7 @@ fn handle_ipc(
                     Some(d) => Input::StartWith(d),
                 }
             };
+            handoff_attempt = handoff;
             if handoff {
                 if !engine.is_active() {
                     dispatch(engine, platform, input);
@@ -1145,6 +1147,13 @@ fn handle_ipc(
             IpcResponse::ok_status(host_status(engine, platform))
         }
     };
+    if crate::session_lock::should_stop_donor_on_failed_handoff(
+        handoff_attempt,
+        adopted,
+        *pending_stop,
+    ) {
+        resp.stop_donor = true;
+    }
     let _ = reply.send(resp);
     (quitting, adopted)
 }
