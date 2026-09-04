@@ -284,6 +284,7 @@ pub fn format_handoff_id(pid: u32, starttime: Option<u64>, seq: u64) -> String {
     }
 }
 
+#[cfg(any(test, target_os = "macos"))]
 pub fn parse_handoff_owner(id: &str) -> Option<(u32, u64)> {
     let mut parts = id.split('-');
     let pid = parts.next()?.parse().ok()?;

@@ -359,10 +359,12 @@ pub fn should_claim_reporter_lock(
 }
 
 /// Write the donor's pid back into `session.lock` before rolling back an adopt.
+#[cfg(any(test, target_os = "macos"))]
 pub fn should_restore_donor_lock_on_adopt_rollback(reject_adopt: bool) -> bool {
     reject_adopt
 }
 
+#[cfg(any(test, target_os = "macos"))]
 pub fn restore_donor_session_lock(pid: u32, starttime: u64) -> bool {
     if pid == 0 {
         return false;
