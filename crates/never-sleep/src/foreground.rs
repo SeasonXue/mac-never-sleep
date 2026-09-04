@@ -20,15 +20,19 @@ pub fn run_foreground(
         return Err(engine.config.tr().menu_ipc_timed_out().into());
     }
     let cloud_ok = crate::cloud::cloud_enabled();
-    let needs_reporter =
-        crate::session_lock::should_claim_foreground_reporter_lock(cloud_ok, menu_socket_absent());
-    let reporter_claimed =
-        needs_reporter && crate::session_lock::try_claim_reporter_lock(std::process::id());
+    // Claim before the second socket probe so a menu bind cannot skip the lock.
+    // `true` is the first probe's conclusion; do not snapshot the socket again.
+    let needs_reporter = crate::session_lock::should_claim_foreground_reporter_lock(cloud_ok, true);
+    let reporter_claimed = crate::session_lock::try_claim_reporter_lock(std::process::id());
     if crate::session_lock::should_abort_foreground_without_reporter_lock(
         needs_reporter,
         reporter_claimed,
     ) {
         return Err(engine.config.tr().foreground_already_running().into());
+    }
+    if crate::ipc::should_refuse_foreground_while_menu_live(menu_socket_absent()) {
+        crate::session_lock::release_reporter_lock(std::process::id());
+        return Err(engine.config.tr().menu_ipc_timed_out().into());
     }
     let input = match duration {
         Some(d) => Input::StartWith(d),
@@ -48,7 +52,7 @@ pub fn run_foreground(
         r.store(false, Ordering::SeqCst);
     });
 
-    let mut cloud = if reporter_claimed {
+    let mut cloud = if reporter_claimed && cloud_ok {
         spawn_foreground_reporter(engine.config.lang(), true)
     } else {
         None
@@ -107,11 +111,16 @@ pub fn run_foreground(
             if !engine.is_active() {
                 break;
             }
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
             if handoff_id.is_none() {
                 handoff_seq += 1;
                 handoff_id = Some(crate::protocol::format_handoff_id(
                     std::process::id(),
-                    crate::session_lock::process_starttime(std::process::id()),
+                    Some(crate::session_lock::process_instance_token(
+                        std::process::id(),
+                    )),
                     handoff_seq,
                 ));
             }
@@ -125,6 +134,18 @@ pub fn run_foreground(
                 handoff_id.clone(),
             );
             if let Some(resp) = try_send(&req) {
+                if crate::protocol::should_stop_successor_on_cancel(
+                    !running.load(Ordering::SeqCst),
+                    true,
+                    true,
+                ) {
+                    if crate::protocol::menu_accepted_handoff(&resp)
+                        || crate::protocol::donor_should_stop(&resp)
+                    {
+                        let _ = try_send(&IpcRequest::Off);
+                    }
+                    break;
+                }
                 if crate::protocol::menu_accepted_handoff(&resp) {
                     if let Some(handle) = take_foreground_reporter(&mut cloud) {
                         handle.detach();
@@ -183,6 +204,14 @@ pub fn run_foreground(
             break;
         }
         thread::sleep(Duration::from_millis(HEARTBEAT_MS));
+    }
+
+    if crate::protocol::should_stop_successor_on_cancel(
+        !running.load(Ordering::SeqCst),
+        handoff_id.is_some(),
+        !menu_socket_absent(),
+    ) {
+        let _ = try_send(&IpcRequest::Off);
     }
 
     if engine.is_active() {
@@ -248,7 +277,6 @@ fn spawn_foreground_reporter(
             lang,
         )),
         Err(err) => {
-            crate::session_lock::release_reporter_lock(std::process::id());
             eprintln!("never-sleep cloud identity: {err}");
             None
         }
@@ -296,6 +324,18 @@ mod tests {
         assert!(
             body.contains("publish_and_flush") && body.contains("take()"),
             "a later menu launch must stop the foreground reporter so only one process heartbeats"
+        );
+        let spawn = body
+            .split("fn spawn_foreground_reporter")
+            .nth(1)
+            .expect("spawn_foreground_reporter")
+            .split("pub fn parse_optional_duration")
+            .next()
+            .unwrap();
+        let err_arm = spawn.split("Err(err)").nth(1).expect("identity Err arm");
+        assert!(
+            !err_arm.contains("release_reporter_lock"),
+            "identity load failure must keep reporter.lock so a second on cannot Start"
         );
     }
 
@@ -415,8 +455,13 @@ mod tests {
             loop_body.contains("handoff_id")
                 && loop_body.contains("handoff_seq")
                 && loop_body.contains("format_handoff_id")
-                && loop_body.contains("process_starttime"),
+                && loop_body.contains("process_instance_token"),
             "handoff ids must include a process-start token so PID reuse cannot collide"
+        );
+        assert!(
+            loop_body.contains("should_stop_successor_on_cancel")
+                && loop_body.contains("IpcRequest::Off"),
+            "Ctrl-C during handoff must Off a successor that may already have adopted"
         );
         assert!(
             loop_body.contains("release_applied_retention")

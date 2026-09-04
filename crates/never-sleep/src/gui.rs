@@ -1212,6 +1212,14 @@ fn handle_ipc(
         if crate::protocol::should_skip_handoff_drain_after_ack_failure(reject_adopt || reject_stop)
         {
             if reject_adopt {
+                if crate::session_lock::should_restore_donor_lock_on_adopt_rollback(true) {
+                    if let Some((pid, start)) = ack_id
+                        .as_deref()
+                        .and_then(crate::protocol::parse_handoff_owner)
+                    {
+                        let _ = crate::session_lock::restore_donor_session_lock(pid, start);
+                    }
+                }
                 dispatch(
                     engine,
                     platform,

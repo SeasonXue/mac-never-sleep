@@ -3,6 +3,8 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Whether this process should restore clamshell sleep and delete `session.lock`.
 ///
@@ -194,6 +196,39 @@ pub fn process_starttime(pid: u32) -> Option<u64> {
     }
 }
 
+/// Token written into every new `session.lock`. Kernel starttime when readable,
+/// otherwise a per-process fallback so PID reuse cannot look like the writer.
+pub fn process_instance_token(pid: u32) -> u64 {
+    process_starttime(pid).unwrap_or_else(|| {
+        if pid == std::process::id() {
+            local_instance_token()
+        } else {
+            0
+        }
+    })
+}
+
+/// Token to compare against a recorded lock. Our pid uses the same fallback as
+/// `write_lock`, so a sysctl miss cannot make this process look dead.
+pub fn observed_instance_token(pid: u32) -> Option<u64> {
+    if pid == std::process::id() {
+        Some(process_instance_token(pid))
+    } else {
+        process_starttime(pid)
+    }
+}
+
+fn local_instance_token() -> u64 {
+    static TOKEN: OnceLock<u64> = OnceLock::new();
+    *TOKEN.get_or_init(|| {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        nanos ^ ((std::process::id() as u64) << 32)
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn macos_proc_starttime(pid: u32) -> Option<u64> {
     unsafe {
@@ -220,17 +255,32 @@ fn macos_proc_starttime(pid: u32) -> Option<u64> {
     }
 }
 
-/// Hold phone On/Off while another live process still owns `session.lock`.
+/// Hold phone On/Off while another live process still owns standby.
 /// Applying Off against an idle menu is a no-op and would drop the command.
 pub fn should_hold_cloud_commands(engine_active: bool, our_pid: u32) -> bool {
     if engine_active {
         return false;
     }
+    foreign_session_lock_is_live(our_pid) || foreign_reporter_lock_is_live(our_pid)
+}
+
+fn foreign_session_lock_is_live(our_pid: u32) -> bool {
     match read_lock_record() {
         Some(rec) if rec.pid != our_pid => lock_holder_is_live(
             pid_is_alive(rec.pid),
             rec.starttime,
-            process_starttime(rec.pid),
+            observed_instance_token(rec.pid),
+        ),
+        _ => false,
+    }
+}
+
+fn foreign_reporter_lock_is_live(our_pid: u32) -> bool {
+    match read_reporter_lock() {
+        Some(rec) if rec.pid != our_pid => lock_holder_is_live(
+            pid_is_alive(rec.pid),
+            rec.starttime,
+            observed_instance_token(rec.pid),
         ),
         _ => false,
     }
@@ -308,9 +358,29 @@ pub fn should_claim_reporter_lock(
     }
 }
 
-/// Cloud polling for `never-sleep on` when no menu owns IPC.
-pub fn should_claim_foreground_reporter_lock(cloud_ok: bool, menu_socket_absent: bool) -> bool {
-    cloud_ok && menu_socket_absent
+/// Write the donor's pid back into `session.lock` before rolling back an adopt.
+pub fn should_restore_donor_lock_on_adopt_rollback(reject_adopt: bool) -> bool {
+    reject_adopt
+}
+
+pub fn restore_donor_session_lock(pid: u32, starttime: u64) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let clamshell = read_lock_record().map(|rec| rec.clamshell).unwrap_or(true);
+    let Ok(_) = crate::paths::ensure_data_dir() else {
+        return false;
+    };
+    std::fs::write(
+        crate::paths::session_lock_path(),
+        format_lock_text(pid, clamshell, Some(starttime)),
+    )
+    .is_ok()
+}
+
+/// Foreground admission is `reporter.lock`, including when cloud is disabled.
+pub fn should_claim_foreground_reporter_lock(_cloud_ok: bool, menu_socket_absent: bool) -> bool {
+    menu_socket_absent
 }
 
 /// Do not Start a second local session if this process cannot own the reporter.
@@ -318,7 +388,6 @@ pub fn should_abort_foreground_without_reporter_lock(needs_reporter: bool, claim
     needs_reporter && !claimed
 }
 
-#[cfg(test)]
 fn read_reporter_lock() -> Option<SessionLockRecord> {
     let text = std::fs::read_to_string(crate::paths::reporter_lock_path()).ok()?;
     Some(parse_lock_record(&text))
@@ -394,7 +463,7 @@ pub fn try_claim_reporter_lock(our_pid: u32) -> bool {
     if !lock_reporter_file(&file) {
         return false;
     }
-    let body = format_lock_text(our_pid, false, process_starttime(our_pid));
+    let body = format_lock_text(our_pid, false, Some(process_instance_token(our_pid)));
     if file.set_len(0).is_err()
         || file.seek(SeekFrom::Start(0)).is_err()
         || file.write_all(body.as_bytes()).is_err()
@@ -505,6 +574,22 @@ mod tests {
             gui.contains("ipc_owned") && gui.contains("spawn_reporter"),
             "menu reporter starts only after this process owns the IPC socket"
         );
+        let _dir = crate::paths::TestDataDir::install();
+        if let Some(st) = process_starttime(1) {
+            std::fs::write(
+                crate::paths::reporter_lock_path(),
+                format_lock_text(1, false, Some(st)),
+            )
+            .unwrap();
+            assert!(
+                should_hold_cloud_commands(false, std::process::id()),
+                "an idle menu must hold phone On while another process owns reporter.lock"
+            );
+            assert!(
+                !should_hold_cloud_commands(true, std::process::id()),
+                "an active menu still applies commands locally"
+            );
+        }
     }
 
     #[test]
@@ -863,6 +948,34 @@ mod tests {
             "Stop acks must record a surviving menu reporter, not only Adopted"
         );
         assert!(
+            should_restore_donor_lock_on_adopt_rollback(true)
+                && !should_restore_donor_lock_on_adopt_rollback(false)
+                && handle.contains("restore_donor_session_lock")
+                && handle.contains("parse_handoff_owner"),
+            "adopt rollback must return session.lock to the donor before ReleasePower"
+        );
+        let restore_at = handle
+            .find("restore_donor_session_lock")
+            .expect("restore donor lock");
+        let rollback_stop = handle[restore_at..]
+            .find("StopReason::AppQuit")
+            .expect("rollback Stop");
+        assert!(
+            rollback_stop > 0,
+            "restore the donor lock before the adopted-session Stop"
+        );
+        let _dir = crate::paths::TestDataDir::install();
+        std::fs::write(
+            crate::paths::session_lock_path(),
+            format_lock_text(99, true, Some(1)),
+        )
+        .unwrap();
+        assert!(restore_donor_session_lock(11, 100));
+        let rec = read_lock_record().expect("donor lock");
+        assert_eq!(rec.pid, 11);
+        assert_eq!(rec.starttime, Some(100));
+        assert!(rec.clamshell);
+        assert!(
             loop_src.contains("stop_donor"),
             "apply the remembered escape after drain when the response stops the donor"
         );
@@ -893,22 +1006,23 @@ mod tests {
         );
         let macos = include_str!("platform/macos.rs");
         assert!(
-            macos.contains("format_lock_text") && macos.contains("process_starttime"),
-            "apply_power must write pid+starttime so orphan cleanup can reject pid reuse"
+            macos.contains("format_lock_text") && macos.contains("process_instance_token"),
+            "apply_power must write pid+instance token so orphan cleanup can reject pid reuse"
         );
         assert!(
-            macos.contains("lock_holder_is_live"),
+            macos.contains("lock_holder_is_live") && macos.contains("observed_instance_token"),
             "cleanup / release_power must validate starttime, not only kill(pid, 0)"
         );
-        let own = process_starttime(std::process::id());
-        assert!(
-            own.is_some(),
-            "this process must be able to read its own start token"
+        let own = process_instance_token(std::process::id());
+        assert_ne!(
+            own, 0,
+            "new locks must always record a process instance token"
         );
+        assert_eq!(observed_instance_token(std::process::id()), Some(own));
         assert!(lock_holder_is_live(
             pid_is_alive(std::process::id()),
-            own,
-            own
+            Some(own),
+            observed_instance_token(std::process::id())
         ));
         assert_eq!(
             parse_proc_stat_starttime(
@@ -938,7 +1052,10 @@ mod tests {
         );
         assert!(should_claim_foreground_reporter_lock(true, true));
         assert!(!should_claim_foreground_reporter_lock(true, false));
-        assert!(!should_claim_foreground_reporter_lock(false, true));
+        assert!(
+            should_claim_foreground_reporter_lock(false, true),
+            "foreground admission is reporter.lock even when cloud is disabled"
+        );
         let claim_src = include_str!("session_lock.rs")
             .split("pub fn try_claim_reporter_lock")
             .nth(1)
@@ -1016,11 +1133,23 @@ mod tests {
         let dispatch_at = before_loop
             .find("dispatch(")
             .expect("Start dispatch after the reporter claim");
+        let second_refuse_at = claim_at
+            + before_loop[claim_at..]
+                .find("should_refuse_foreground_while_menu_live")
+                .expect("re-check ipc.sock after claiming reporter.lock");
         assert!(
-            refuse_at < dispatch_at
-                && claim_at < dispatch_at
-                && before_loop.contains("should_abort_foreground_without_reporter_lock"),
-            "a live menu or denied reporter.lock must abort before dispatching Start"
+            refuse_at < claim_at
+                && claim_at < second_refuse_at
+                && second_refuse_at < dispatch_at
+                && before_loop.contains("should_abort_foreground_without_reporter_lock")
+                && before_loop.contains("should_claim_foreground_reporter_lock"),
+            "foreground admission must claim reporter.lock then re-check the menu before Start"
+        );
+        let after_second_refuse = &before_loop[second_refuse_at..dispatch_at];
+        assert!(
+            after_second_refuse.contains("release_reporter_lock")
+                && after_second_refuse.contains("menu_ipc_timed_out"),
+            "a menu that binds after the claim must drop the lock and not dispatch Start"
         );
         let take = fg
             .split("fn take_foreground_reporter")

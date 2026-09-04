@@ -433,7 +433,7 @@ fn write_lock(clamshell: bool) {
     let body = crate::session_lock::format_lock_text(
         pid,
         clamshell,
-        crate::session_lock::process_starttime(pid),
+        Some(crate::session_lock::process_instance_token(pid)),
     );
     let _ = fs::write(session_lock_path(), body);
 }
@@ -460,7 +460,7 @@ fn lock_holder_alive(parsed: Option<crate::session_lock::SessionLockRecord>) -> 
             crate::session_lock::lock_holder_is_live(
                 pid_alive(rec.pid),
                 rec.starttime,
-                crate::session_lock::process_starttime(rec.pid),
+                crate::session_lock::observed_instance_token(rec.pid),
             )
         })
         .unwrap_or(false)

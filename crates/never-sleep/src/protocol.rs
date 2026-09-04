@@ -284,6 +284,26 @@ pub fn format_handoff_id(pid: u32, starttime: Option<u64>, seq: u64) -> String {
     }
 }
 
+pub fn parse_handoff_owner(id: &str) -> Option<(u32, u64)> {
+    let mut parts = id.split('-');
+    let pid = parts.next()?.parse().ok()?;
+    let start = parts.next()?.parse().ok()?;
+    let _seq: u64 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() || pid == 0 {
+        return None;
+    }
+    Some((pid, start))
+}
+
+/// Ctrl-C during handoff must stop a successor that may already have adopted.
+pub fn should_stop_successor_on_cancel(
+    cancelled: bool,
+    handoff_attempted: bool,
+    menu_reachable: bool,
+) -> bool {
+    cancelled && handoff_attempted && menu_reachable
+}
+
 /// Persisted so a timed-out donor can still stop after the menu adopts and quits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandoffAckOutcome {
@@ -630,6 +650,15 @@ mod tests {
             "CLI On must keep omitting the internal-only field"
         );
         assert_eq!(format_handoff_id(11, Some(100), 1), "11-100-1");
+        assert_eq!(parse_handoff_owner("11-100-1"), Some((11, 100)));
+        assert!(parse_handoff_owner("h1").is_none());
+        assert!(
+            should_stop_successor_on_cancel(true, true, true),
+            "Ctrl-C during an in-flight handoff must stop a successor that already adopted"
+        );
+        assert!(!should_stop_successor_on_cancel(false, true, true));
+        assert!(!should_stop_successor_on_cancel(true, false, true));
+        assert!(!should_stop_successor_on_cancel(true, true, false));
         assert_ne!(
             format_handoff_id(11, Some(100), 1),
             format_handoff_id(11, Some(200), 1),
