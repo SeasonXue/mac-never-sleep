@@ -312,6 +312,7 @@ pub fn run() {
     let mut shown_onboarding = engine.config.onboarding_done;
     let mut toggle_gate = ToggleGate::default();
     let mut pending_stop = false;
+    let mut last_handoff_id: Option<String> = None;
     let mut pairing: Option<(String, String, u64)> = None;
     let cloud_identity = if cloud_enabled() {
         match load_or_create_identity() {
@@ -360,13 +361,14 @@ pub fn run() {
                     );
                 }
             }
-            let (quitting, adopted) = handle_ipc(
+            let (quitting, adopted, stop_donor) = handle_ipc(
                 &mut engine,
                 platform.as_mut(),
                 incoming,
                 &mut pairing,
                 cloud_identity.as_ref(),
                 &mut pending_stop,
+                &mut last_handoff_id,
             );
             if quitting {
                 flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
@@ -383,7 +385,11 @@ pub fn run() {
                         );
                     }
                 }
-                if crate::session_lock::take_pending_stop_on_adopt(adopted, &mut pending_stop) {
+                if crate::session_lock::take_pending_stop_after_handoff(
+                    adopted,
+                    stop_donor,
+                    &mut pending_stop,
+                ) {
                     dispatch(
                         &mut engine,
                         platform.as_mut(),
@@ -1042,7 +1048,8 @@ fn handle_ipc(
     pairing: &mut Option<(String, String, u64)>,
     identity: Option<&never_sleep_core::CloudIdentity>,
     pending_stop: &mut bool,
-) -> (bool, bool) {
+    last_handoff_id: &mut Option<String>,
+) -> (bool, bool, bool) {
     crate::cloud::expire_stale_pairing(pairing);
     let IpcIncoming::Request { req, reply } = incoming;
     let host_status = |engine: &Engine, platform: &mut dyn Platform| {
@@ -1068,6 +1075,7 @@ fn handle_ipc(
             remaining_secs,
             elapsed_secs,
             handoff,
+            handoff_id,
             ..
         } => {
             let parsed = match crate::protocol::parse_on_duration_in(
@@ -1077,7 +1085,7 @@ fn handle_ipc(
                 Ok(d) => d,
                 Err(e) => {
                     let _ = reply.send(IpcResponse::err(e));
-                    return (false, false);
+                    return (false, false, false);
                 }
             };
             let input = if handoff {
@@ -1094,9 +1102,19 @@ fn handle_ipc(
             };
             handoff_attempt = handoff;
             if handoff {
-                if !engine.is_active() {
+                if crate::protocol::menu_confirms_prior_handoff(
+                    handoff,
+                    engine.is_active(),
+                    handoff_id.as_deref(),
+                    last_handoff_id.as_deref(),
+                ) {
+                    adopted = true;
+                } else if !engine.is_active() {
                     dispatch(engine, platform, input);
                     adopted = engine.is_active();
+                    if adopted {
+                        *last_handoff_id = handoff_id.clone();
+                    }
                 }
             } else if local_controls_deferred(engine) {
                 // live donor still owns standby; do not start a second session
@@ -1154,8 +1172,9 @@ fn handle_ipc(
     ) {
         resp.stop_donor = true;
     }
+    let stop_donor = resp.stop_donor;
     let _ = reply.send(resp);
-    (quitting, adopted)
+    (quitting, adopted, stop_donor)
 }
 
 fn local_controls_deferred(engine: &Engine) -> bool {

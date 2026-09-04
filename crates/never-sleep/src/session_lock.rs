@@ -227,10 +227,21 @@ pub fn note_deferred_escape(deferred: bool, pending_stop: &mut bool) {
     }
 }
 
-/// After a successful adopt, apply the remembered escape instead of keeping standby.
+/// After a successful adopt or a stop_donor reply, apply the remembered escape.
 #[cfg(any(test, target_os = "macos"))]
 pub fn take_pending_stop_on_adopt(adopted: bool, pending_stop: &mut bool) -> bool {
-    let apply = adopted && *pending_stop;
+    take_pending_stop_after_handoff(adopted, false, pending_stop)
+}
+
+/// Consume the escape after the held-command drain when adopt succeeded or the
+/// donor was told to stop (remaining_secs already zero, etc.).
+#[cfg(any(test, target_os = "macos"))]
+pub fn take_pending_stop_after_handoff(
+    adopted: bool,
+    stop_donor: bool,
+    pending_stop: &mut bool,
+) -> bool {
+    let apply = *pending_stop && (adopted || stop_donor);
     if apply {
         *pending_stop = false;
     }
@@ -257,6 +268,17 @@ pub fn should_stop_donor_on_failed_handoff(
     pending_stop: bool,
 ) -> bool {
     handoff && !adopted && pending_stop
+}
+
+/// Keep a foreign clamshell=1 lock when inherited restore failed, even if the
+/// donor is already dead. Next launch still has something to recover from.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_keep_inherited_clamshell_lock(
+    failed_restore: bool,
+    lock: Option<(u32, bool)>,
+    our_pid: u32,
+) -> bool {
+    failed_restore && matches!(lock, Some((pid, true)) if pid != our_pid)
 }
 
 #[cfg(test)]
@@ -411,6 +433,38 @@ mod tests {
             fail_arm.contains("should_fail_unclaimed_clamshell_restore"),
             "restore failure is fatal when a foreign lock recorded clamshell=1"
         );
+        assert!(
+            fail_arm.contains("should_keep_inherited_clamshell_lock")
+                || fail_arm.contains("keep_inherited_lock"),
+            "failed restore must mark the inherited lock so release_power does not delete it"
+        );
+        assert!(
+            should_keep_inherited_clamshell_lock(true, Some((20, true)), 10),
+            "a dead donor clamshell=1 lock must survive a failed restore"
+        );
+        assert!(!should_keep_inherited_clamshell_lock(
+            false,
+            Some((20, true)),
+            10
+        ));
+        assert!(!should_keep_inherited_clamshell_lock(
+            true,
+            Some((10, true)),
+            10
+        ));
+        assert!(!should_keep_inherited_clamshell_lock(
+            true,
+            Some((20, false)),
+            10
+        ));
+        let release = macos
+            .split("fn release_power")
+            .nth(1)
+            .expect("release_power");
+        assert!(
+            release.contains("should_keep_inherited_clamshell_lock"),
+            "release_power must not delete the recovery lock after a failed inherited restore"
+        );
     }
 
     #[test]
@@ -467,6 +521,12 @@ mod tests {
             "failed adopt must keep the escape for a later handoff"
         );
         assert!(pending);
+        assert!(
+            take_pending_stop_after_handoff(false, true, &mut pending),
+            "stop_donor after a zero-remaining handoff must still apply the remembered Off"
+        );
+        assert!(!pending);
+        note_deferred_escape(true, &mut pending);
         assert!(take_pending_stop_on_adopt(true, &mut pending));
         assert!(!pending);
         assert!(
@@ -475,8 +535,8 @@ mod tests {
         );
         let gui = include_str!("gui.rs");
         assert!(
-            gui.contains("note_deferred_escape") && gui.contains("take_pending_stop_on_adopt"),
-            "menu Toggle / ⌥⌘P must record a pending stop and apply it after adopt"
+            gui.contains("note_deferred_escape") && gui.contains("take_pending_stop_after_handoff"),
+            "menu Toggle / ⌥⌘P must record a pending stop and apply it after adopt or stop_donor"
         );
         let loop_src = gui
             .split("while let Ok(incoming) = ipc_rx.try_recv()")
@@ -489,7 +549,7 @@ mod tests {
             .rfind("apply_polled_commands")
             .expect("post-handoff drain");
         let stop_at = loop_src
-            .find("take_pending_stop_on_adopt")
+            .find("take_pending_stop_after_handoff")
             .expect("escape after held commands");
         assert!(
             drain_at < stop_at,
@@ -504,7 +564,8 @@ mod tests {
             .unwrap();
         let send_at = handle.find("reply.send").expect("IPC reply");
         assert!(
-            !handle.contains("take_pending_stop_on_adopt"),
+            !handle.contains("take_pending_stop_after_handoff")
+                && !handle.contains("take_pending_stop_on_adopt"),
             "do not Stop inside handle_ipc before the handoff_first drain"
         );
         assert!(
@@ -561,6 +622,14 @@ mod tests {
         assert!(
             fg.contains("donor_should_stop"),
             "foreground must honor stop_donor instead of resuming standby after a failed adopt"
+        );
+        assert!(
+            gui.contains("menu_confirms_prior_handoff"),
+            "a lost handoff reply must still confirm this donor's already-adopted session"
+        );
+        assert!(
+            loop_src.contains("stop_donor"),
+            "apply the remembered escape after drain when the response stops the donor"
         );
     }
 

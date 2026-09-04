@@ -20,6 +20,9 @@ pub enum IpcRequest {
         /// Command ids the donor already applied. Only set on an internal handoff.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         applied_command_ids: Vec<String>,
+        /// Stable id so a timed-out donor can confirm a handoff that already adopted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handoff_id: Option<String>,
     },
     Off,
     Toggle,
@@ -61,6 +64,7 @@ impl IpcRequest {
             elapsed_secs: None,
             handoff: false,
             applied_command_ids: Vec::new(),
+            handoff_id: None,
         }
     }
 
@@ -75,6 +79,7 @@ impl IpcRequest {
             elapsed_secs,
             handoff: true,
             applied_command_ids: Vec::new(),
+            handoff_id: None,
         }
     }
 
@@ -85,6 +90,7 @@ impl IpcRequest {
                 remaining_secs,
                 elapsed_secs,
                 handoff,
+                handoff_id,
                 ..
             } => Self::On {
                 duration,
@@ -92,6 +98,28 @@ impl IpcRequest {
                 elapsed_secs,
                 handoff,
                 applied_command_ids: ids,
+                handoff_id,
+            },
+            other => other,
+        }
+    }
+
+    pub fn with_handoff_id(self, id: impl Into<String>) -> Self {
+        match self {
+            Self::On {
+                duration,
+                remaining_secs,
+                elapsed_secs,
+                handoff,
+                applied_command_ids,
+                ..
+            } => Self::On {
+                duration,
+                remaining_secs,
+                elapsed_secs,
+                handoff,
+                applied_command_ids,
+                handoff_id: Some(id.into()),
             },
             other => other,
         }
@@ -105,6 +133,14 @@ impl IpcRequest {
                 ..
             } => applied_command_ids,
             _ => &[],
+        }
+    }
+
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn handoff_id(&self) -> Option<&str> {
+        match self {
+            Self::On { handoff_id, .. } => handoff_id.as_deref(),
+            _ => None,
         }
     }
 
@@ -210,6 +246,20 @@ pub fn donor_should_stop(resp: &IpcResponse) -> bool {
     resp.stop_donor
 }
 
+/// A lost handoff reply must still count as this donor's adopt on retry.
+#[cfg(any(test, target_os = "macos"))]
+pub fn menu_confirms_prior_handoff(
+    handoff: bool,
+    engine_active: bool,
+    request_id: Option<&str>,
+    last_id: Option<&str>,
+) -> bool {
+    handoff
+        && engine_active
+        && request_id.filter(|id| !id.is_empty()).is_some()
+        && request_id == last_id
+}
+
 /// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
 pub fn human_ipc_error(code: &str, lang: Lang) -> String {
     match code {
@@ -251,6 +301,7 @@ mod tests {
                     elapsed_secs: None,
                     handoff: false,
                     applied_command_ids: Vec::new(),
+                    handoff_id: None,
                 },
                 r#"{"cmd":"on","duration":"8h"}"#,
             ),
@@ -362,6 +413,37 @@ mod tests {
         let mut live = sample_status();
         live.active = true;
         assert!(!donor_should_stop(&IpcResponse::ok_adopted(live)));
+        assert!(
+            menu_confirms_prior_handoff(true, true, Some("h1"), Some("h1")),
+            "retry after a lost reply must confirm the already-adopted handoff"
+        );
+        assert!(!menu_confirms_prior_handoff(
+            true,
+            true,
+            Some("h1"),
+            Some("h2")
+        ));
+        assert!(!menu_confirms_prior_handoff(
+            true,
+            false,
+            Some("h1"),
+            Some("h1")
+        ));
+        assert!(!menu_confirms_prior_handoff(true, true, None, Some("h1")));
+        let with_id = IpcRequest::handoff(Some("8h".into()), Some(3600), Some(7 * 3600))
+            .with_handoff_id("h1");
+        assert_eq!(with_id.handoff_id(), Some("h1"));
+        let id_json = serde_json::to_string(&with_id).unwrap();
+        assert!(
+            id_json.contains("handoff_id") && id_json.contains("h1"),
+            "internal handoff must name the adopt attempt, got {id_json}"
+        );
+        assert!(
+            !serde_json::to_string(&IpcRequest::on(Some("8h".into())))
+                .unwrap()
+                .contains("handoff_id"),
+            "CLI On must keep omitting the internal-only field"
+        );
     }
 
     #[test]

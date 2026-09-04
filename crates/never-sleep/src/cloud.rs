@@ -147,6 +147,11 @@ impl CloudHandle {
         }
     }
 
+    /// Allow history prune after the successor is gone (or never existed).
+    pub fn release_applied_retention(&self) {
+        self.retain_applied.store(false, Ordering::SeqCst);
+    }
+
     fn notify_idle(&self) {
         signal_reporter_idle(&self.idle);
     }
@@ -840,6 +845,10 @@ fn prune_applied_history_after_heartbeat(
 
 fn should_prune_applied_history(parsed_pending: bool, retain_for_successor: bool) -> bool {
     parsed_pending && !retain_for_successor
+}
+
+pub(crate) fn should_release_applied_retention(successor_live: bool) -> bool {
+    !successor_live
 }
 
 fn should_pair_start_on_tick(needs_pair: bool, offline: bool) -> bool {
@@ -1880,6 +1889,21 @@ mod tests {
         assert!(
             handle.retain_applied.load(Ordering::SeqCst),
             "a rejected handoff must not resume pruning while the menu still holds copies"
+        );
+        assert!(
+            !should_release_applied_retention(true),
+            "keep ids while a live successor may still hold copies"
+        );
+        assert!(should_release_applied_retention(false));
+        handle.release_applied_retention();
+        assert!(
+            !handle.retain_applied.load(Ordering::SeqCst),
+            "prune again after the successor socket is gone"
+        );
+        let fg = include_str!("foreground.rs");
+        assert!(
+            fg.contains("release_applied_retention") && fg.contains("menu_socket_absent"),
+            "do not clear retention on Ping timeout while the menu still owns the socket"
         );
     }
 

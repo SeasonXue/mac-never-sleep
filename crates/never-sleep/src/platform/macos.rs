@@ -474,6 +474,7 @@ pub struct MacPlatform {
     clamshell_on: bool,
     owns_power: bool,
     power_thread_started: bool,
+    keep_inherited_lock: bool,
 }
 
 impl MacPlatform {
@@ -486,6 +487,7 @@ impl MacPlatform {
             clamshell_on: false,
             owns_power: false,
             power_thread_started: false,
+            keep_inherited_lock: false,
         };
         me.ensure_clamshell_conn();
         me.cleanup_orphans();
@@ -656,6 +658,12 @@ impl Platform for MacPlatform {
                     std::process::id(),
                 ) {
                     self.owns_power = true;
+                    self.keep_inherited_lock =
+                        crate::session_lock::should_keep_inherited_clamshell_lock(
+                            true,
+                            parsed.map(|rec| (rec.pid, rec.clamshell)),
+                            std::process::id(),
+                        );
                     let _ = self.release_power();
                     return Err(t.clamshell_restore_failed().into());
                 }
@@ -708,7 +716,13 @@ impl Platform for MacPlatform {
         if self.owns_power {
             OWNS_POWER.store(false, Ordering::SeqCst);
             SESSION_ACTIVE.store(false, Ordering::SeqCst);
-            if drop_lock {
+            let keep_inherited = crate::session_lock::should_keep_inherited_clamshell_lock(
+                self.keep_inherited_lock,
+                parsed.map(|rec| (rec.pid, rec.clamshell)),
+                our_pid,
+            );
+            self.keep_inherited_lock = false;
+            if drop_lock && !keep_inherited {
                 CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
                 let _ = fs::remove_file(session_lock_path());
             }

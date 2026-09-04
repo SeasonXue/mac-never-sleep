@@ -38,6 +38,8 @@ pub fn run_foreground(
         None
     };
     let mut pairing = None;
+    let mut handoff_id: Option<String> = None;
+    let mut handoff_seq = 0u64;
 
     let t = engine.config.tr();
     println!("{}", t.foreground_started());
@@ -58,6 +60,10 @@ pub fn run_foreground(
             if !engine.is_active() {
                 break;
             }
+            if handoff_id.is_none() {
+                handoff_seq += 1;
+                handoff_id = Some(format!("{}-{handoff_seq}", std::process::id()));
+            }
             let req = handoff_request(
                 &engine,
                 &platform.snapshot(),
@@ -65,6 +71,7 @@ pub fn run_foreground(
                     .as_ref()
                     .map(crate::cloud::CloudHandle::applied_command_ids)
                     .unwrap_or_default(),
+                handoff_id.clone(),
             );
             if let Some(resp) = try_send(&req) {
                 if crate::protocol::menu_accepted_handoff(&resp) {
@@ -109,8 +116,15 @@ pub fn run_foreground(
             if let Some(handle) = cloud.as_ref() {
                 handle.resume();
             }
-        } else if cloud.is_none() && cloud_ok && menu_socket_absent() {
-            cloud = spawn_foreground_reporter(engine.config.lang());
+        } else {
+            if crate::cloud::should_release_applied_retention(!menu_socket_absent()) {
+                if let Some(handle) = cloud.as_ref() {
+                    handle.release_applied_retention();
+                }
+            }
+            if cloud.is_none() && cloud_ok && menu_socket_absent() {
+                cloud = spawn_foreground_reporter(engine.config.lang());
+            }
         }
         dispatch(&mut engine, platform, Input::Tick);
         if let Some(handle) = cloud.as_ref() {
@@ -147,16 +161,21 @@ fn handoff_request(
     engine: &Engine,
     host: &never_sleep_core::HostSnapshot,
     applied_command_ids: Vec<String>,
+    handoff_id: Option<String>,
 ) -> IpcRequest {
     let status = engine.json_status(host);
-    IpcRequest::handoff(
+    let req = IpcRequest::handoff(
         Some(crate::protocol::duration_pref_to_ipc(
             engine.config.duration,
         )),
         status.remaining_secs,
         status.elapsed_secs,
     )
-    .with_applied_command_ids(applied_command_ids)
+    .with_applied_command_ids(applied_command_ids);
+    match handoff_id {
+        Some(id) => req.with_handoff_id(id),
+        None => req,
+    }
 }
 
 fn spawn_foreground_reporter(lang: Lang) -> Option<crate::cloud::CloudHandle> {
@@ -306,6 +325,16 @@ mod tests {
             between.contains("donor_should_stop") && between.contains("StopReason::User"),
             "failed adopt with a deferred Off must stop this donor before resume"
         );
+        assert!(
+            loop_body.contains("handoff_id") && loop_body.contains("handoff_seq"),
+            "reuse the same handoff id until the menu confirms adopt after a lost reply"
+        );
+        assert!(
+            loop_body.contains("release_applied_retention")
+                && loop_body.contains("should_release_applied_retention")
+                && loop_body.contains("menu_socket_absent"),
+            "clear retained command ids only after the successor socket is gone"
+        );
     }
 
     #[test]
@@ -362,7 +391,7 @@ mod tests {
         later.monotonic_ms = 7 * 3_600_000;
         later.continuous_ms = 7 * 3_600_000;
         later.unix_secs = host.unix_secs;
-        let req = handoff_request(&engine, &later, vec!["phone-on".into()]);
+        let req = handoff_request(&engine, &later, vec!["phone-on".into()], None);
         match req {
             IpcRequest::On {
                 duration,
@@ -370,12 +399,14 @@ mod tests {
                 elapsed_secs,
                 handoff,
                 applied_command_ids,
+                handoff_id,
             } => {
                 assert_eq!(duration.as_deref(), Some("8h"));
                 assert_eq!(remaining_secs, Some(3600));
                 assert_eq!(elapsed_secs, Some(7 * 3600));
                 assert!(handoff);
                 assert_eq!(applied_command_ids, vec!["phone-on"]);
+                assert!(handoff_id.is_none());
             }
             other => panic!("expected On handoff, got {other:?}"),
         }
