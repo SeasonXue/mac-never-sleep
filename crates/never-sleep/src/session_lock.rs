@@ -156,7 +156,8 @@ pub fn pid_is_alive(pid: u32) -> bool {
 }
 
 /// Written when kernel starttime is unreadable. Peers treat a live pid as the
-/// owner instead of comparing a process-local random value they cannot observe.
+/// owner only while starttime stays unreadable; a later readable starttime is
+/// a different process that reused the pid.
 pub const UNVERIFIED_INSTANCE_TOKEN: u64 = u64::MAX;
 
 /// A live pid is not enough: SIGKILL can leave `session.lock` for a reused pid.
@@ -170,7 +171,7 @@ pub fn lock_holder_is_live(
     }
     match recorded_start {
         None => true,
-        Some(UNVERIFIED_INSTANCE_TOKEN) => true,
+        Some(UNVERIFIED_INSTANCE_TOKEN) => observed_start.is_none(),
         Some(want) => observed_start == Some(want),
     }
 }
@@ -348,6 +349,15 @@ pub fn should_claim_reporter_lock(
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_restore_donor_lock_on_adopt_rollback(reject_adopt: bool) -> bool {
     reject_adopt
+}
+
+/// Only Stop the already-adopted session after the donor lock is actually restored.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_rollback_adopt_after_donor_lock_restore(
+    reject_adopt: bool,
+    restore_ok: bool,
+) -> bool {
+    reject_adopt && restore_ok
 }
 
 /// Rollback must write the donor's original clamshell bit, not the successor's.
@@ -933,14 +943,17 @@ mod tests {
             "held phone On must not restart standby after an unpersisted adopt rollback"
         );
         assert!(
-            flush.contains("mark_handoff_ack_reporter_gone"),
-            "Quit must clear ack reporter ownership before the socket disappears"
+            flush.contains("mark_handoff_ack_reporter_gone")
+                && flush.contains("should_flush_offline_if_ack_reporter_clear_failed")
+                && flush.contains("publish_and_flush"),
+            "Quit must clear ack reporter ownership, and flush offline if that clear fails"
         );
         assert!(
             handle.contains("handoff_ack_reporter")
                 && handle.contains("identity.is_some()")
-                && !handle.contains("identity.is_some() && adopted"),
-            "Stop acks must record a surviving menu reporter, not only Adopted"
+                && !handle.contains("identity.is_some() && adopted")
+                && handle.contains("resp.reporter"),
+            "Stop acks must record a surviving menu reporter, and adopt IPC must tell the donor"
         );
         assert!(
             should_restore_donor_lock_on_adopt_rollback(true)
@@ -948,6 +961,13 @@ mod tests {
                 && handle.contains("restore_donor_session_lock")
                 && handle.contains("parse_handoff_owner"),
             "adopt rollback must return session.lock to the donor before ReleasePower"
+        );
+        assert!(
+            should_rollback_adopt_after_donor_lock_restore(true, true)
+                && !should_rollback_adopt_after_donor_lock_restore(true, false)
+                && !should_rollback_adopt_after_donor_lock_restore(false, true)
+                && handle.contains("should_rollback_adopt_after_donor_lock_restore"),
+            "do not Stop the adopted session unless the donor lock was actually restored"
         );
         let restore_at = handle
             .find("restore_donor_session_lock")
@@ -1000,6 +1020,10 @@ mod tests {
         assert!(
             lock_holder_is_live(true, Some(UNVERIFIED_INSTANCE_TOKEN), None),
             "a peer-visible unverified token keeps a live pid as owner when sysctl is unreadable"
+        );
+        assert!(
+            !lock_holder_is_live(true, Some(UNVERIFIED_INSTANCE_TOKEN), Some(99)),
+            "an unverified lock must not follow a later process whose starttime is readable"
         );
         assert!(!lock_holder_is_live(
             false,

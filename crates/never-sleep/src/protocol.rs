@@ -54,6 +54,10 @@ pub struct IpcResponse {
     /// could not adopt.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stop_donor: bool,
+    /// Whether this process still owns the cloud reporter after a handoff.
+    /// Internal only; CLI JSON omits the field when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reporter: Option<bool>,
 }
 
 impl IpcRequest {
@@ -162,6 +166,7 @@ impl IpcResponse {
             device_id: None,
             adopted: false,
             stop_donor: false,
+            reporter: None,
         }
     }
 
@@ -185,6 +190,7 @@ impl IpcResponse {
             device_id: None,
             adopted: false,
             stop_donor: false,
+            reporter: None,
         }
     }
 
@@ -200,6 +206,7 @@ impl IpcResponse {
             device_id: None,
             adopted: false,
             stop_donor: false,
+            reporter: None,
         }
     }
 
@@ -215,6 +222,7 @@ impl IpcResponse {
             device_id,
             adopted: false,
             stop_donor: false,
+            reporter: None,
         }
     }
 }
@@ -408,6 +416,30 @@ pub fn donor_should_flush_offline_after_ack(successor_reporter: bool) -> bool {
     !successor_reporter
 }
 
+/// IPC adopt: flush only when the successor explicitly reports no cloud reporter.
+/// A missing field (older menus) keeps detach so a live menu reporter is not marked offline.
+#[cfg(test)]
+pub fn donor_should_flush_offline_after_ipc_adopt(successor_reporter: Option<bool>) -> bool {
+    successor_reporter == Some(false)
+}
+
+/// Prefer the IPC reporter bit; fall back to the persisted ack; default live for older menus.
+pub fn successor_reporter_after_adopt(
+    ipc_reporter: Option<bool>,
+    ack_reporter: Option<bool>,
+) -> bool {
+    ipc_reporter.or(ack_reporter).unwrap_or(true)
+}
+
+/// A detach Quit that cannot clear `reporter=1` must POST offline instead.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_flush_offline_if_ack_reporter_clear_failed(
+    clear_ok: bool,
+    would_detach: bool,
+) -> bool {
+    would_detach && !clear_ok
+}
+
 /// Persist whether this process still owns the cloud reporter, including Stop
 /// acks after a failed adopt: the menu reporter may still be heartbeating.
 #[cfg(any(test, target_os = "macos"))]
@@ -468,11 +500,14 @@ pub fn write_handoff_ack(
 
 /// Quit teardown: IPC may still accept Ping after this reporter has flushed.
 #[cfg(any(test, target_os = "macos"))]
-pub fn mark_handoff_ack_reporter_gone() {
+pub fn mark_handoff_ack_reporter_gone() -> bool {
     let Some(ack) = read_handoff_ack() else {
-        return;
+        return true;
     };
-    let _ = write_handoff_ack(&ack.id, ack.outcome, false);
+    if !ack.reporter {
+        return true;
+    }
+    write_handoff_ack(&ack.id, ack.outcome, false).is_ok()
 }
 
 pub fn clear_handoff_ack() {
@@ -592,6 +627,38 @@ mod tests {
                 .get("adopted")
                 .is_none(),
             "CLI status must omit the internal handoff-adopted flag"
+        );
+        assert!(
+            serde_json::to_value(IpcResponse::ok_status(accepted.clone()))
+                .unwrap()
+                .get("reporter")
+                .is_none(),
+            "CLI status must omit the internal successor-reporter flag"
+        );
+        let mut adopted_no_reporter = IpcResponse::ok_adopted(accepted.clone());
+        adopted_no_reporter.reporter = Some(false);
+        let adopted_reporter_json = serde_json::to_value(&adopted_no_reporter).unwrap();
+        assert_eq!(adopted_reporter_json["reporter"], false);
+        assert!(
+            donor_should_flush_offline_after_ipc_adopt(adopted_no_reporter.reporter),
+            "adopt with an explicit reporter=false must flush rather than detach"
+        );
+        assert!(
+            !donor_should_flush_offline_after_ipc_adopt(Some(true)),
+            "a live successor reporter must still detach"
+        );
+        assert!(
+            !donor_should_flush_offline_after_ipc_adopt(None),
+            "older menus that omit reporter must keep detach"
+        );
+        assert!(
+            !successor_reporter_after_adopt(Some(false), Some(true)),
+            "the IPC reporter bit wins over a stale ack"
+        );
+        assert!(!successor_reporter_after_adopt(None, Some(false)));
+        assert!(
+            successor_reporter_after_adopt(None, None),
+            "a missing reporter field must not POST offline over an older live menu"
         );
         accepted.active = false;
         assert!(!menu_accepted_handoff(&IpcResponse::ok_adopted(
@@ -747,6 +814,16 @@ mod tests {
             "a live successor reporter must not be marked offline by this donor"
         );
         assert!(
+            should_flush_offline_if_ack_reporter_clear_failed(false, true),
+            "a detach Quit that cannot clear reporter=1 must flush offline instead"
+        );
+        assert!(!should_flush_offline_if_ack_reporter_clear_failed(
+            true, true
+        ));
+        assert!(!should_flush_offline_if_ack_reporter_clear_failed(
+            false, false
+        ));
+        assert!(
             handoff_ack_reporter(true),
             "a Stop ack must record reporter=1 while the menu reporter is still alive"
         );
@@ -799,11 +876,23 @@ mod tests {
                 reporter: true,
             })
         );
-        mark_handoff_ack_reporter_gone();
+        assert!(mark_handoff_ack_reporter_gone());
         assert_eq!(
             read_handoff_ack().map(|ack| ack.reporter),
             Some(false),
             "Quit must clear reporter ownership before the socket goes away"
+        );
+        write_handoff_ack("h1", HandoffAckOutcome::Adopted, true).unwrap();
+        let ack_path = crate::paths::handoff_ack_path();
+        let saved = std::fs::metadata(&ack_path).unwrap().permissions();
+        let mut perms = saved.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o444);
+        std::fs::set_permissions(&ack_path, perms).unwrap();
+        let clear_ok = mark_handoff_ack_reporter_gone();
+        std::fs::set_permissions(&ack_path, saved).unwrap();
+        assert!(
+            !clear_ok,
+            "a read-only ack file must surface reporter clear failure"
         );
         clear_handoff_ack();
         assert!(read_handoff_ack().is_none());

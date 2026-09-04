@@ -845,9 +845,17 @@ fn flush_cloud_on_quit(
     platform: &mut dyn Platform,
     cloud: &mut Option<CloudHandle>,
 ) {
-    crate::protocol::mark_handoff_ack_reporter_gone();
+    let clear_ok = crate::protocol::mark_handoff_ack_reporter_gone();
     if let Some(handle) = cloud.take() {
-        if crate::session_lock::should_detach_cloud_on_quit(engine.is_active(), std::process::id())
+        let would_detach = crate::session_lock::should_detach_cloud_on_quit(
+            engine.is_active(),
+            std::process::id(),
+        );
+        if would_detach
+            && !crate::protocol::should_flush_offline_if_ack_reporter_clear_failed(
+                clear_ok,
+                would_detach,
+            )
         {
             handle.detach();
         } else {
@@ -1146,7 +1154,9 @@ fn handle_ipc(
                 dispatch(engine, platform, input);
             }
             if adopted {
-                IpcResponse::ok_adopted(host_status(engine, platform))
+                let mut resp = IpcResponse::ok_adopted(host_status(engine, platform));
+                resp.reporter = Some(identity.is_some());
+                resp
             } else {
                 IpcResponse::ok_status(host_status(engine, platform))
             }
@@ -1212,27 +1222,35 @@ fn handle_ipc(
         if crate::protocol::should_skip_handoff_drain_after_ack_failure(reject_adopt || reject_stop)
         {
             if reject_adopt {
-                if crate::session_lock::should_restore_donor_lock_on_adopt_rollback(true) {
-                    if let Some(owner) = ack_id
-                        .as_deref()
-                        .and_then(crate::protocol::parse_handoff_owner)
-                    {
-                        let _ = crate::session_lock::restore_donor_session_lock(
-                            owner.pid,
-                            owner.starttime,
-                            owner.clamshell.unwrap_or(false),
-                        );
-                    }
+                let restore_ok =
+                    if crate::session_lock::should_restore_donor_lock_on_adopt_rollback(true) {
+                        ack_id
+                            .as_deref()
+                            .and_then(crate::protocol::parse_handoff_owner)
+                            .map(|owner| {
+                                crate::session_lock::restore_donor_session_lock(
+                                    owner.pid,
+                                    owner.starttime,
+                                    owner.clamshell.unwrap_or(false),
+                                )
+                            })
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+                if crate::session_lock::should_rollback_adopt_after_donor_lock_restore(
+                    true, restore_ok,
+                ) {
+                    dispatch(
+                        engine,
+                        platform,
+                        Input::Stop {
+                            reason: StopReason::AppQuit,
+                        },
+                    );
+                    *last_handoff_id = None;
+                    adopted = false;
                 }
-                dispatch(
-                    engine,
-                    platform,
-                    Input::Stop {
-                        reason: StopReason::AppQuit,
-                    },
-                );
-                *last_handoff_id = None;
-                adopted = false;
             }
             stop_donor = false;
             skip_drain = true;

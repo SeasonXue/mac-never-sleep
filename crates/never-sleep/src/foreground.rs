@@ -149,7 +149,20 @@ pub fn run_foreground(
                 }
                 if crate::protocol::menu_accepted_handoff(&resp) {
                     if let Some(handle) = take_foreground_reporter(&mut cloud) {
-                        handle.detach();
+                        let successor_reporter = crate::protocol::successor_reporter_after_adopt(
+                            resp.reporter,
+                            crate::protocol::read_handoff_ack().map(|ack| ack.reporter),
+                        );
+                        if crate::protocol::donor_should_flush_offline_after_ack(successor_reporter)
+                        {
+                            crate::cloud::publish_and_flush(
+                                handle,
+                                engine.json_status(&platform.snapshot()),
+                                engine.config.lang(),
+                            );
+                        } else {
+                            handle.detach();
+                        }
                     }
                     crate::session_lock::release_reporter_lock(std::process::id());
                     if engine.is_active() {
@@ -406,8 +419,12 @@ mod tests {
             "keep the foreground session unless the menu reports ok && active"
         );
         assert!(
-            handoff.contains("detach(") && !handoff.contains("publish_and_flush"),
-            "a live handoff must not POST offline:true after the menu is already heartbeating"
+            handoff.contains("successor_reporter_after_adopt")
+                && handoff.contains("resp.reporter")
+                && handoff.contains("detach(")
+                && handoff.contains("publish_and_flush")
+                && handoff.contains("donor_should_flush_offline_after_ack"),
+            "adopt must detach only when a successor reporter remains; otherwise flush"
         );
         assert!(
             handoff.contains("StopReason::AppQuit") && handoff.contains("stop_for_quit"),
@@ -442,7 +459,7 @@ mod tests {
             "failed adopt with a deferred Off must stop this donor before resume"
         );
         let stop_arm = loop_body
-            .split("donor_should_stop(&resp)")
+            .split("if crate::protocol::donor_should_stop(&resp)")
             .nth(1)
             .expect("stop_donor arm")
             .split("resume(")
