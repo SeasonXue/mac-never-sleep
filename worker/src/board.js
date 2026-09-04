@@ -425,7 +425,13 @@ export async function publishReservedPairing({
       continue;
     }
     if (!reserved?.ok) continue;
-    const started = await startDevice(code);
+    let started;
+    try {
+      started = await startDevice(code);
+    } catch {
+      if (release) await release(code);
+      continue;
+    }
     if (started?.ok) {
       if (confirmLive && !(await confirmLive(code, started))) {
         if (release) await release(code);

@@ -2,7 +2,11 @@ use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
+#[cfg(any(test, target_os = "macos"))]
+use std::path::Path;
 use std::path::PathBuf;
+#[cfg(any(test, target_os = "macos"))]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Whether this process should restore clamshell sleep and delete `session.lock`.
 ///
@@ -401,13 +405,12 @@ pub fn write_session_lock(pid: u32, clamshell: bool, starttime: Option<u64>) -> 
         return false;
     }
     let path = crate::paths::session_lock_path();
-    let mut tmp = path.clone();
-    tmp.set_extension("lock.tmp");
     let body = format_lock_text(pid, clamshell, starttime);
-    let Ok(mut file) = File::create(&tmp) else {
+    let Some((tmp, mut file)) = create_private_session_lock_tmp(&path) else {
         return false;
     };
     if file.write_all(body.as_bytes()).is_err() || file.sync_all().is_err() {
+        drop(file);
         let _ = std::fs::remove_file(&tmp);
         return false;
     }
@@ -417,6 +420,23 @@ pub fn write_session_lock(pid: u32, clamshell: bool, starttime: Option<u64>) -> 
         return false;
     }
     true
+}
+
+#[cfg(any(test, target_os = "macos"))]
+static SESSION_LOCK_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(any(test, target_os = "macos"))]
+fn create_private_session_lock_tmp(path: &Path) -> Option<(PathBuf, File)> {
+    let pid = std::process::id();
+    for _ in 0..32 {
+        let seq = SESSION_LOCK_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = path.with_file_name(format!("session.lock.tmp.{pid}.{seq}"));
+        match File::create_new(&tmp) {
+            Ok(file) => return Some((tmp, file)),
+            Err(_) => continue,
+        }
+    }
+    None
 }
 
 /// Rollback must write the donor's original clamshell bit, not the successor's.
@@ -688,8 +708,14 @@ mod tests {
         assert!(
             write_fn.contains("lock.tmp")
                 && write_fn.contains("sync_all")
-                && write_fn.contains("rename"),
-            "a crash must not leave a truncated session.lock that cleanup treats as clamshell=0"
+                && write_fn.contains("rename")
+                && write_fn.contains("create_new")
+                && !write_fn.contains("set_extension(\"lock.tmp\")"),
+            "each writer must use a private tmp in the data dir, then sync+rename"
+        );
+        assert!(
+            write_fn.contains("process::id"),
+            "tmp names must include the writer pid so handoff cannot share one inode"
         );
         let restore = src
             .split("pub fn restore_donor_session_lock")

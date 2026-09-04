@@ -1050,16 +1050,20 @@ pub(crate) fn reporter_tick(
         inbox.ack_ids(),
         offline,
     );
-    match transport.post_json("/api/heartbeat", &body) {
-        Ok(CloudPost::Unauthorized) => gate.on_unauthorized(),
-        Ok(CloudPost::Ok(raw)) => {
-            if let Ok(outcome) = parse_heartbeat_response(&raw) {
-                return Some(emit_outcome(gate, inbox, event_tx, last_pending, outcome));
-            }
+    let pending = match transport.post_json("/api/heartbeat", &body) {
+        Ok(CloudPost::Unauthorized) => {
+            gate.on_unauthorized();
+            None
         }
-        Err(_) => {}
+        Ok(CloudPost::Ok(raw)) => parse_heartbeat_response(&raw)
+            .ok()
+            .map(|outcome| emit_outcome(gate, inbox, event_tx, last_pending, outcome)),
+        Err(_) => None,
+    };
+    if pending.is_none() {
+        forget_pending_ids(last_pending);
     }
-    None
+    pending
 }
 
 fn emit_outcome(
@@ -1125,6 +1129,12 @@ impl CloudTransport for UreqTransport {
 fn store_pending_ids(slot: &Mutex<Option<Vec<String>>>, pending: &[RemoteCommand]) {
     if let Ok(mut guard) = slot.lock() {
         *guard = Some(pending.iter().map(|cmd| cmd.id.clone()).collect());
+    }
+}
+
+fn forget_pending_ids(slot: &Mutex<Option<Vec<String>>>) {
+    if let Ok(mut guard) = slot.lock() {
+        *guard = None;
     }
 }
 
@@ -1912,6 +1922,107 @@ mod tests {
                 .try_iter()
                 .any(|ev| matches!(ev, CloudEvent::Commands(ref cmds) if cmds.iter().any(|c| c.id == "phone-on"))),
             "the new On is still published after last_pending is stored"
+        );
+    }
+
+    #[test]
+    fn failed_heartbeat_forgets_stale_pending_ids() {
+        let transport = ScriptedTransport {
+            pair: Mutex::new(vec![]),
+            beat: Mutex::new(vec![
+                Err("timeout".into()),
+                Ok(CloudPost::Unauthorized),
+                Ok(CloudPost::Ok("not-json".into())),
+            ]),
+            pair_calls: Mutex::new(0),
+            beat_calls: Mutex::new(0),
+        };
+        let id = CloudIdentity {
+            device_id: "ab".repeat(16),
+            device_token: "cd".repeat(32),
+        };
+        let mut gate = ReporterGate::default();
+        gate.on_pair_start_ok();
+        let mut inbox = CommandInbox::default();
+        let (event_tx, event_rx) = mpsc::channel();
+        event_tx
+            .send(CloudEvent::Commands(vec![RemoteCommand::on(
+                "phone-on", None,
+            )]))
+            .unwrap();
+        let last_pending = Arc::new(Mutex::new(Some(vec!["phone-on".to_string()])));
+        let handle = CloudHandle {
+            latest: Arc::new(Mutex::new(None)),
+            wake: Some(mpsc::sync_channel(2).0),
+            events: event_rx,
+            join: None,
+            held_commands: Mutex::new(Vec::new()),
+            applied_ids: Arc::new(Mutex::new(Vec::new())),
+            applied_history: Arc::new(Mutex::new(Vec::new())),
+            detached: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+            retain_applied: Arc::new(AtomicBool::new(false)),
+            idle: Arc::new((Mutex::new(false), Condvar::new())),
+            last_pending: Arc::clone(&last_pending),
+        };
+
+        for _ in 0..3 {
+            gate.on_pair_start_ok();
+            *last_pending.lock().unwrap() = Some(vec!["phone-on".to_string()]);
+            let pending = reporter_tick(
+                &mut gate,
+                &mut inbox,
+                &transport,
+                &id,
+                "Studio",
+                "en",
+                &sample_status(),
+                &event_tx,
+                false,
+                &last_pending,
+            );
+            assert!(
+                pending.is_none(),
+                "a failed heartbeat must not look like a parsed pending list"
+            );
+            assert!(
+                last_pending.lock().unwrap().is_none(),
+                "do not keep a successful nonempty snapshot after the next heartbeat fails"
+            );
+        }
+        assert_eq!(
+            held_command_disposition(false, last_pending.lock().unwrap().as_deref(), "phone-on"),
+            HeldCommandDisposition::Keep,
+            "unknown pending after a failed heartbeat must not Apply a held On"
+        );
+
+        let _guard = TestDataDir::install();
+        crate::paths::ensure_data_dir().unwrap();
+        let mut pairing = None;
+        let mut engine = Engine::new(AppConfig::default());
+        let mut platform = StubPlatform;
+        apply_polled_commands(&mut engine, &mut platform, &handle, &mut pairing);
+        assert!(
+            !engine.is_active(),
+            "a stale nonempty last_pending must not restart standby after the donor already escaped"
+        );
+
+        let src = include_str!("cloud.rs");
+        let tick = src
+            .split("pub(crate) fn reporter_tick")
+            .nth(1)
+            .expect("reporter_tick")
+            .split("fn emit_outcome")
+            .next()
+            .unwrap();
+        assert!(
+            tick.contains("forget_pending_ids"),
+            "heartbeat Unauthorized / Err / unparsed Ok must clear last_pending"
+        );
+        assert_eq!(
+            held_command_disposition(false, Some(&[]), "phone-on"),
+            HeldCommandDisposition::Drop,
+            "a later successful empty pending list must still drop the completed held On"
         );
     }
 

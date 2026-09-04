@@ -2311,6 +2311,31 @@ test("alarm failure during pair reservation releases the shard", async () => {
   assert.equal(result.pairing_code, "BBBB2222");
 });
 
+test("startDevice failure during pair reservation releases the shard", async () => {
+  const released = [];
+  const result = await publishReservedPairing({
+    generateCode: () => (released.length ? "BBBB2222" : "AAAA1111"),
+    reserve: async () => ({ ok: true }),
+    startDevice: async (code) => {
+      if (code === "AAAA1111") throw new Error("durable object put failed");
+      return {
+        ok: true,
+        pairing_code: code,
+        status: 200,
+      };
+    },
+    release: async (code) => {
+      released.push(code);
+    },
+  });
+  assert.deepEqual(
+    released,
+    ["AAAA1111"],
+    "a reserved pair shard must be dropped if device startup throws",
+  );
+  assert.equal(result.pairing_code, "BBBB2222");
+});
+
 test("pair start still returns the new code when replaced-shard cleanup fails", () => {
   const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
