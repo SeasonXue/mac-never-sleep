@@ -1059,6 +1059,7 @@ fn handle_ipc(
     let mut quitting = false;
     let mut adopted = false;
     let mut handoff_attempt = false;
+    let mut prior_handoff = false;
     let mut resp = match req {
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
@@ -1102,6 +1103,11 @@ fn handle_ipc(
             };
             handoff_attempt = handoff;
             if handoff {
+                prior_handoff = crate::protocol::menu_already_processed_handoff(
+                    handoff,
+                    handoff_id.as_deref(),
+                    last_handoff_id.as_deref(),
+                );
                 if crate::protocol::menu_confirms_prior_handoff(
                     handoff,
                     engine.is_active(),
@@ -1109,7 +1115,7 @@ fn handle_ipc(
                     last_handoff_id.as_deref(),
                 ) {
                     adopted = true;
-                } else if !engine.is_active() {
+                } else if !prior_handoff && !engine.is_active() {
                     dispatch(engine, platform, input);
                     adopted = engine.is_active();
                     if adopted {
@@ -1169,6 +1175,9 @@ fn handle_ipc(
         handoff_attempt,
         adopted,
         *pending_stop,
+    ) || crate::protocol::should_stop_donor_after_ended_prior_handoff(
+        prior_handoff,
+        engine.is_active(),
     ) {
         resp.stop_donor = true;
     }

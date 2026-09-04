@@ -680,7 +680,15 @@ impl Platform for MacPlatform {
         CLAMSHELL_OWNED.store(self.clamshell_on, Ordering::SeqCst);
 
         if self.owns_power {
-            write_lock(self.clamshell_on);
+            let parsed = parse_lock();
+            let holder_alive = lock_holder_alive(parsed);
+            if crate::session_lock::should_claim_session_lock(
+                std::process::id(),
+                parsed.map(|rec| rec.pid),
+                holder_alive,
+            ) {
+                write_lock(self.clamshell_on);
+            }
         } else {
             let _ = fs::remove_file(session_lock_path());
         }

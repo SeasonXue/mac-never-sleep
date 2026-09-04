@@ -246,6 +246,16 @@ pub fn donor_should_stop(resp: &IpcResponse) -> bool {
     resp.stop_donor
 }
 
+/// This donor already completed (or tried) this handoff id, even if standby ended.
+#[cfg(any(test, target_os = "macos"))]
+pub fn menu_already_processed_handoff(
+    handoff: bool,
+    request_id: Option<&str>,
+    last_id: Option<&str>,
+) -> bool {
+    handoff && request_id.filter(|id| !id.is_empty()).is_some() && request_id == last_id
+}
+
 /// A lost handoff reply must still count as this donor's adopt on retry.
 #[cfg(any(test, target_os = "macos"))]
 pub fn menu_confirms_prior_handoff(
@@ -254,10 +264,16 @@ pub fn menu_confirms_prior_handoff(
     request_id: Option<&str>,
     last_id: Option<&str>,
 ) -> bool {
-    handoff
-        && engine_active
-        && request_id.filter(|id| !id.is_empty()).is_some()
-        && request_id == last_id
+    menu_already_processed_handoff(handoff, request_id, last_id) && engine_active
+}
+
+/// Matching id after the adopted session ended: stop the donor, do not re-dispatch.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_stop_donor_after_ended_prior_handoff(
+    already_processed: bool,
+    engine_active: bool,
+) -> bool {
+    already_processed && !engine_active
 }
 
 /// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
@@ -428,6 +444,21 @@ mod tests {
             false,
             Some("h1"),
             Some("h1")
+        ));
+        assert!(
+            menu_already_processed_handoff(true, Some("h1"), Some("h1")),
+            "a matching id is already processed even after the menu stopped the adopted session"
+        );
+        assert!(
+            should_stop_donor_after_ended_prior_handoff(true, false),
+            "retry after ⌥⌘P must tell the donor to stop instead of dispatching Handoff again"
+        );
+        assert!(!should_stop_donor_after_ended_prior_handoff(true, true));
+        assert!(!should_stop_donor_after_ended_prior_handoff(false, false));
+        assert!(!menu_already_processed_handoff(
+            true,
+            Some("h1"),
+            Some("h2")
         ));
         assert!(!menu_confirms_prior_handoff(true, true, None, Some("h1")));
         let with_id = IpcRequest::handoff(Some("8h".into()), Some(3600), Some(7 * 3600))

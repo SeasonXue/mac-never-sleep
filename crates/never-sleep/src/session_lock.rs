@@ -18,6 +18,20 @@ pub fn should_release_clamshell_lock(
     }
 }
 
+/// Whether ApplyPower may replace `session.lock` with this process's PID.
+///
+/// After a lost handoff reply the donor stays active and may Tick. A live
+/// successor already wrote its lock; overwriting it makes later donor cleanup
+/// restore clamshell sleep and delete the menu's recovery file.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_claim_session_lock(
+    our_pid: u32,
+    lock_pid: Option<u32>,
+    lock_holder_alive: bool,
+) -> bool {
+    should_release_clamshell_lock(our_pid, lock_pid, lock_holder_alive)
+}
+
 /// Whether this process should call `set_clamshell_sleep_disabled(false)`.
 ///
 /// A live peer that recorded `clamshell=1` owns the global flag. A live peer
@@ -284,6 +298,29 @@ pub fn should_keep_inherited_clamshell_lock(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timed_out_donor_does_not_overwrite_live_successor_lock() {
+        assert!(
+            !should_claim_session_lock(11, Some(22), true),
+            "after a lost adopt reply, Tick/ApplyPower must not replace the menu's session.lock"
+        );
+        assert!(should_claim_session_lock(11, Some(11), true));
+        assert!(should_claim_session_lock(11, Some(22), false));
+        assert!(should_claim_session_lock(11, None, false));
+        let macos = include_str!("platform/macos.rs");
+        let apply = macos.split("fn apply_power").nth(1).expect("apply_power");
+        let claim_at = apply
+            .find("should_claim_session_lock")
+            .expect("ApplyPower must consult successor ownership before write_lock");
+        let write_at = apply
+            .rfind("write_lock")
+            .expect("success path still records the lock when this process owns it");
+        assert!(
+            claim_at < write_at,
+            "a live menu lock must survive a timed-out donor's later ApplyPower"
+        );
+    }
 
     #[test]
     fn live_menu_lock_survives_foreground_release() {
@@ -626,6 +663,11 @@ mod tests {
         assert!(
             gui.contains("menu_confirms_prior_handoff"),
             "a lost handoff reply must still confirm this donor's already-adopted session"
+        );
+        assert!(
+            gui.contains("menu_already_processed_handoff")
+                && handle.contains("should_stop_donor_after_ended_prior_handoff"),
+            "matching handoff id after the menu stopped must stop the donor, not dispatch again"
         );
         assert!(
             loop_src.contains("stop_donor"),
