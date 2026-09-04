@@ -81,6 +81,11 @@ impl CloudHandle {
     pub fn reporter_is_running(&self) -> bool {
         self.join.is_some()
     }
+
+    #[cfg(any(test, target_os = "macos"))]
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
     pub fn push_status(&self, status: JsonStatus, lang: Lang) {
         self.queue_latest(status, lang);
         if let Some(wake) = &self.wake {
@@ -674,10 +679,19 @@ pub(crate) trait CloudTransport {
     fn post_json(&self, path: &str, body: &str) -> Result<CloudPost, String>;
 }
 
-pub fn spawn_reporter(identity: CloudIdentity, display_name: String, _lang: Lang) -> CloudHandle {
+pub fn spawn_reporter(identity: CloudIdentity, display_name: String, lang: Lang) -> CloudHandle {
+    spawn_reporter_paused(identity, display_name, lang, false)
+}
+
+pub fn spawn_reporter_paused(
+    identity: CloudIdentity,
+    display_name: String,
+    _lang: Lang,
+    start_paused: bool,
+) -> CloudHandle {
     let latest = Arc::new(Mutex::new(None));
     let detached = Arc::new(AtomicBool::new(false));
-    let paused = Arc::new(AtomicBool::new(false));
+    let paused = Arc::new(AtomicBool::new(start_paused));
     let retain_applied = Arc::new(AtomicBool::new(false));
     let idle = Arc::new((Mutex::new(false), Condvar::new()));
     let applied_ids = Arc::new(Mutex::new(Vec::new()));
@@ -2421,7 +2435,9 @@ mod tests {
             idle: Arc::clone(&idle),
             last_pending: Arc::new(Mutex::new(None)),
         };
+        assert!(handle.is_paused());
         handle.resume();
+        assert!(!handle.is_paused());
         assert!(
             !paused.load(Ordering::SeqCst),
             "a rejected handoff must let the foreground reporter tick again"

@@ -282,13 +282,16 @@ async function routeApi(request, env) {
         return pairingCodeIsLive(json.pairing_code, formatPairingCode(code));
       },
       forgetDevice: async (code) => {
-        await stubFetch(
+        const res = await stubFetch(
           env,
           name,
           "https://do/internal/pair-drop",
           { pairing_code: formatPairingCode(code) },
           origin,
         );
+        if (!res.ok) {
+          throw new Error("pair-drop failed");
+        }
       },
     });
     if (started.ok) {

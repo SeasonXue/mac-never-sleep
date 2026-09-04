@@ -290,9 +290,11 @@ fn worker_shards_per_device_not_one_global_board() {
         .expect("confirmLive");
     assert!(
         confirm.contains("catch")
+            && confirm.contains("forgotten")
+            && confirm.contains("if (forgotten)")
             && confirm.contains("drop(code)")
             && confirm.contains("forget(code)"),
-        "live-pairing confirmation failures must drop the reserved shard"
+        "live-pairing confirmation failures must drop the pair shard only after the device offer is gone"
     );
     assert!(board.contains("rate_limited"));
     assert!(board.contains("commitAlarmUnix"));

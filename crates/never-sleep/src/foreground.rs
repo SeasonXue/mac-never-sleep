@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use never_sleep_core::{DurationPref, Engine, Input, Lang, StopReason, HEARTBEAT_MS};
+use never_sleep_core::{DurationPref, Engine, Input, Lang, PowerPlan, StopReason, HEARTBEAT_MS};
 
 use crate::apply::{dispatch, stop_for_quit};
 use crate::ipc::{menu_socket_absent, try_send};
@@ -217,6 +217,11 @@ pub fn run_foreground(
             }
         }
         dispatch(&mut engine, platform, Input::Tick);
+        if crate::session_lock::take_pending_donor_clamshell_reapply(engine.is_active()) {
+            let host = platform.snapshot();
+            let plan = PowerPlan::for_session(&engine.config, host.on_ac);
+            let _ = platform.apply_power(plan);
+        }
         if let Some(handle) = cloud.as_ref() {
             crate::cloud::sync_cloud(&mut engine, platform, handle, &mut pairing);
         }

@@ -713,7 +713,12 @@ impl Platform for MacPlatform {
                         donor_clamshell,
                         holder_alive,
                     ) {
-                        set_clamshell_sleep_disabled(true);
+                        let iokit_ok = set_clamshell_sleep_disabled(true);
+                        if crate::session_lock::should_request_donor_clamshell_reapply(
+                            true, iokit_ok,
+                        ) {
+                            crate::session_lock::request_donor_clamshell_reapply();
+                        }
                     }
                     return Err("session.lock".into());
                 }

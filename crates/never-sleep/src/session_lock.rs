@@ -587,6 +587,65 @@ pub fn should_keep_inherited_clamshell_lock(
     failed_restore && matches!(lock, Some((pid, true)) if pid != our_pid)
 }
 
+/// Local Start vs Stop is captured before draining phone commands so a queued
+/// remote Off cannot invert ⌥⌘P / Toggle into a fresh Start.
+#[cfg(any(test, target_os = "macos"))]
+pub fn local_toggle_wants_stop(engine_active: bool) -> bool {
+    engine_active
+}
+
+/// `Some(true)` = Stop, `Some(false)` = Start, `None` = already matches intent.
+#[cfg(any(test, target_os = "macos"))]
+pub fn local_toggle_after_cloud_drain(want_stop: bool, now_active: bool) -> Option<bool> {
+    if want_stop == now_active {
+        Some(want_stop)
+    } else {
+        None
+    }
+}
+
+/// Successor IOKit miss after clearing an inherited clamshell flag: the live
+/// donor must ApplyPower again because its plan is unchanged.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_request_donor_clamshell_reapply(need_reassert: bool, iokit_ok: bool) -> bool {
+    need_reassert && !iokit_ok
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn request_donor_clamshell_reapply() {
+    let _ = crate::paths::ensure_data_dir();
+    let _ = std::fs::write(crate::paths::clamshell_reapply_path(), b"1\n");
+}
+
+pub fn take_donor_clamshell_reapply() -> bool {
+    std::fs::remove_file(crate::paths::clamshell_reapply_path()).is_ok()
+}
+
+/// Only the still-active donor may consume the request; an idle menu must not.
+pub fn take_pending_donor_clamshell_reapply(engine_active: bool) -> bool {
+    engine_active && take_donor_clamshell_reapply()
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn peer_reporter_lock_is_live(our_pid: u32) -> bool {
+    foreign_reporter_lock_is_live(our_pid)
+}
+
+/// Idle menu must not POST `active=false` while a foreground donor still reports.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_pause_menu_reporter(foreign_reporter_live: bool) -> bool {
+    foreign_reporter_live
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_resume_paused_menu_reporter(
+    paused: bool,
+    foreign_reporter_live: bool,
+    engine_active: bool,
+) -> bool {
+    paused && (engine_active || !foreign_reporter_live)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,6 +751,163 @@ mod tests {
         assert!(
             clear_at < write_at,
             "do not write session.lock before restoring an inherited clamshell flag"
+        );
+        let reassert = apply
+            .split("should_reassert_donor_clamshell_after_lock_write_failure")
+            .nth(1)
+            .expect("reassert block");
+        assert!(
+            reassert.contains("let iokit_ok = set_clamshell_sleep_disabled(true)")
+                && reassert.contains("should_request_donor_clamshell_reapply")
+                && reassert.contains("request_donor_clamshell_reapply"),
+            "a failed IOKit reassert must ask the still-active donor to ApplyPower again"
+        );
+    }
+
+    #[test]
+    fn local_toggle_keeps_escape_intent_after_cloud_off() {
+        assert!(
+            local_toggle_wants_stop(true),
+            "⌥⌘P during an active session means Stop"
+        );
+        assert!(!local_toggle_wants_stop(false));
+        assert_eq!(local_toggle_after_cloud_drain(true, true), Some(true));
+        assert_eq!(
+            local_toggle_after_cloud_drain(true, false),
+            None,
+            "a queued phone Off must not turn the local escape into Start"
+        );
+        assert_eq!(local_toggle_after_cloud_drain(false, false), Some(false));
+        assert_eq!(
+            local_toggle_after_cloud_drain(false, true),
+            None,
+            "a queued phone On already matches a local Start"
+        );
+        let gui = include_str!("gui.rs");
+        for (marker, before) in [
+            ("UserEvent::Hotkey", "refresh_ui"),
+            ("UserEvent::Menu(id)", "handle_menu_event"),
+            ("UserEvent::Ui(command)", "handle_ui_command"),
+        ] {
+            let block = gui.split(marker).nth(1).expect(marker);
+            let action = block.split(before).next().unwrap();
+            let intent_at = action
+                .find("local_toggle_wants_stop")
+                .unwrap_or_else(|| panic!("{marker} must capture Start/Stop before drain"));
+            let drain_at = action
+                .find("apply_polled_commands")
+                .unwrap_or_else(|| panic!("{marker} must still drain cloud commands"));
+            assert!(
+                intent_at < drain_at,
+                "{marker} must capture the local toggle intent before applying a queued phone Off"
+            );
+        }
+        let ipc = gui
+            .split("while let Ok(incoming) = ipc_rx.try_recv()")
+            .nth(1)
+            .expect("ipc loop")
+            .split("match event")
+            .next()
+            .unwrap();
+        let intent_at = ipc
+            .find("local_toggle_wants_stop")
+            .expect("IPC Toggle must capture intent before drain");
+        let drain_at = ipc
+            .find("apply_polled_commands")
+            .expect("IPC still drains before handle_ipc");
+        assert!(
+            intent_at < drain_at,
+            "IPC Toggle must not invert after a queued phone Off"
+        );
+        assert!(
+            gui.contains("local_toggle_after_cloud_drain"),
+            "dispatch the captured Start/Stop, not a fresh Toggle against the post-drain engine"
+        );
+    }
+
+    #[test]
+    fn failed_iokit_reassert_leaves_a_donor_reapply_request() {
+        assert!(should_request_donor_clamshell_reapply(true, false));
+        assert!(!should_request_donor_clamshell_reapply(true, true));
+        assert!(!should_request_donor_clamshell_reapply(false, false));
+        let _dir = crate::paths::TestDataDir::install();
+        assert!(
+            !take_pending_donor_clamshell_reapply(false),
+            "an idle menu must not consume the donor's reapply request"
+        );
+        request_donor_clamshell_reapply();
+        assert!(
+            !take_pending_donor_clamshell_reapply(false),
+            "idle callers leave the marker for the live donor"
+        );
+        assert!(take_pending_donor_clamshell_reapply(true));
+        assert!(
+            !take_pending_donor_clamshell_reapply(true),
+            "the reapply request is one-shot"
+        );
+        let gui = include_str!("gui.rs");
+        assert!(
+            gui.contains("take_pending_donor_clamshell_reapply")
+                && gui.contains("apply_power(plan)"),
+            "menu Tick must reapply clamshell when the successor's IOKit reassert missed"
+        );
+        let fg = include_str!("foreground.rs");
+        assert!(
+            fg.contains("take_pending_donor_clamshell_reapply") && fg.contains("apply_power(plan)"),
+            "the still-active donor Tick must reapply clamshell after a failed successor reassert"
+        );
+    }
+
+    #[test]
+    fn menu_reporter_stays_paused_while_a_donor_holds_reporter_lock() {
+        assert!(should_pause_menu_reporter(true));
+        assert!(!should_pause_menu_reporter(false));
+        assert_eq!(
+            should_pause_menu_reporter(peer_reporter_lock_is_live(std::process::id())),
+            peer_reporter_lock_is_live(std::process::id()),
+            "pause follows a live foreign reporter.lock"
+        );
+        assert!(
+            should_resume_paused_menu_reporter(true, false, false),
+            "resume once the donor releases reporter.lock"
+        );
+        assert!(
+            should_resume_paused_menu_reporter(true, true, true),
+            "resume as soon as this menu owns the live session"
+        );
+        assert!(
+            !should_resume_paused_menu_reporter(true, true, false),
+            "stay paused while a donor still publishes active=true"
+        );
+        assert!(!should_resume_paused_menu_reporter(false, false, true));
+        let gui = include_str!("gui.rs");
+        let spawn = gui
+            .split("let mut cloud = if ipc_owned")
+            .nth(1)
+            .expect("menu cloud spawn")
+            .split("event_loop.run")
+            .next()
+            .unwrap();
+        assert!(
+            spawn.contains("should_pause_menu_reporter")
+                && spawn.contains("peer_reporter_lock_is_live")
+                && spawn.contains("spawn_reporter_paused"),
+            "the menu reporter must start paused while a foreground donor still holds reporter.lock"
+        );
+        let refresh = gui
+            .split("fn refresh_ui")
+            .nth(1)
+            .expect("refresh_ui")
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        let resume_at = refresh
+            .find("should_resume_paused_menu_reporter")
+            .expect("resume paused menu reporter");
+        let sync_at = refresh.find("sync_cloud").expect("sync_cloud");
+        assert!(
+            resume_at < sync_at,
+            "unpause before queuing a snapshot so the phone sees the successor's state"
         );
     }
 

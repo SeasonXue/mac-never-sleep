@@ -2398,10 +2398,78 @@ test("dropping an unconfirmed device offer keeps heartbeat from advertising it",
     status: sampleStatus(),
   });
   assert.equal(
-    beat.pairing_code,
-    null,
-    "heartbeat must not revive an offer whose pair shard was abandoned",
+    beat.ok,
+    false,
+    "an unverified device whose last offer was dropped must not stay around for heartbeat",
   );
+  assert.equal(beat.error, "unauthorized");
+});
+
+test("dropping the last unconfirmed offer removes an unverified device", () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  const started = board.startPairing({
+    deviceId: id.device_id,
+    deviceToken: id.device_token,
+    displayName: id.display_name,
+  });
+  assert.equal(board.devices.get(id.device_id)?.lastSeen, null);
+  board.dropOffer(started.pairing_code);
+  assert.equal(
+    board.devices.has(id.device_id),
+    false,
+    "transient confirmLive failures must not strand a lastSeen=null device shard",
+  );
+});
+
+test("dropping an offer keeps a device that has already heartbeated", () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  const started = board.startPairing({
+    deviceId: id.device_id,
+    deviceToken: id.device_token,
+    displayName: id.display_name,
+  });
+  const beat = board.heartbeat({
+    deviceId: id.device_id,
+    deviceToken: id.device_token,
+    displayName: id.display_name,
+    status: sampleStatus(),
+  });
+  assert.equal(beat.ok, true);
+  board.dropOffer(started.pairing_code);
+  assert.equal(board.devices.has(id.device_id), true);
+  assert.notEqual(board.devices.get(id.device_id).lastSeen, null);
+});
+
+test("forgetDevice failure keeps the pair shard so a later claim is not 404", async () => {
+  const released = [];
+  const result = await publishReservedPairing({
+    generateCode: () => "AAAA1111",
+    reserve: async () => ({ ok: true }),
+    startDevice: async (code) => ({
+      ok: true,
+      pairing_code: code,
+      status: 200,
+    }),
+    confirmLive: async () => {
+      throw new Error("live-pairing durable object down");
+    },
+    release: async (code) => {
+      released.push(code);
+    },
+    forgetDevice: async () => {
+      throw new Error("device durable object down");
+    },
+  });
+  assert.deepEqual(
+    released,
+    [],
+    "do not drop the pair shard while the device offer may still be advertised",
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "pair_busy");
+  assert.equal(result.status, 503);
 });
 
 test("pair start forgets the device offer when live confirmation fails", () => {

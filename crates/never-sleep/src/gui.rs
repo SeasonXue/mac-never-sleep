@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use never_sleep_core::{
-    AppConfig, DurationPref, Engine, Input, Lang, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
+    AppConfig, DurationPref, Engine, Input, Lang, PowerPlan, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
     DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
 };
 use tao::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
@@ -20,7 +20,8 @@ use tray_icon::{
 
 use crate::apply::{dispatch, stop_for_quit};
 use crate::cloud::{
-    cloud_enabled, default_display_name, load_or_create_identity, spawn_reporter, CloudHandle,
+    cloud_enabled, default_display_name, load_or_create_identity, spawn_reporter_paused,
+    CloudHandle,
 };
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
@@ -327,10 +328,13 @@ pub fn run() {
     };
     let mut cloud = if ipc_owned {
         cloud_identity.as_ref().map(|identity| {
-            spawn_reporter(
+            spawn_reporter_paused(
                 identity.clone(),
                 default_display_name(),
                 engine.config.lang(),
+                crate::session_lock::should_pause_menu_reporter(
+                    crate::session_lock::peer_reporter_lock_is_live(std::process::id()),
+                ),
             )
         })
     } else {
@@ -344,6 +348,7 @@ pub fn run() {
             let handoff_first = match &incoming {
                 IpcIncoming::Request { req, .. } => req.is_handoff() && !engine.is_active(),
             };
+            let toggle_want_stop = crate::session_lock::local_toggle_wants_stop(engine.is_active());
             if let IpcIncoming::Request { req, .. } = &incoming {
                 if req.is_handoff() {
                     if let Some(handle) = cloud.as_ref() {
@@ -370,6 +375,7 @@ pub fn run() {
                 cloud.as_ref().is_some_and(CloudHandle::reporter_is_running),
                 &mut pending_stop,
                 &mut last_handoff_id,
+                toggle_want_stop,
             );
             if quitting {
                 flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
@@ -450,6 +456,11 @@ pub fn run() {
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 dispatch(&mut engine, platform.as_mut(), Input::Tick);
+                if crate::session_lock::take_pending_donor_clamshell_reapply(engine.is_active()) {
+                    let host = platform.snapshot();
+                    let plan = PowerPlan::for_session(&engine.config, host.on_ac);
+                    let _ = platform.apply_power(plan);
+                }
                 refresh_ui(
                     &handles,
                     &mut tray,
@@ -463,6 +474,8 @@ pub fn run() {
                 );
             }
             Event::UserEvent(UserEvent::Menu(id)) => {
+                let toggle_want_stop =
+                    crate::session_lock::local_toggle_wants_stop(engine.is_active());
                 if let Some(handle) = cloud.as_ref() {
                     crate::cloud::apply_polled_commands(
                         &mut engine,
@@ -479,6 +492,7 @@ pub fn run() {
                     id,
                     popover.as_mut(),
                     &mut pending_stop,
+                    toggle_want_stop,
                 );
                 if matches!(*control_flow, ControlFlow::Exit) {
                     flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
@@ -497,6 +511,8 @@ pub fn run() {
                 }
             }
             Event::UserEvent(UserEvent::Hotkey) => {
+                let toggle_want_stop =
+                    crate::session_lock::local_toggle_wants_stop(engine.is_active());
                 if let Some(handle) = cloud.as_ref() {
                     crate::cloud::apply_polled_commands(
                         &mut engine,
@@ -505,7 +521,12 @@ pub fn run() {
                         &mut pairing,
                     );
                 }
-                dispatch_local_toggle(&mut engine, platform.as_mut(), &mut pending_stop);
+                dispatch_local_toggle(
+                    &mut engine,
+                    platform.as_mut(),
+                    &mut pending_stop,
+                    toggle_want_stop,
+                );
                 refresh_ui(
                     &handles,
                     &mut tray,
@@ -540,6 +561,8 @@ pub fn run() {
                 }
             }
             Event::UserEvent(UserEvent::Ui(command)) => {
+                let toggle_want_stop =
+                    crate::session_lock::local_toggle_wants_stop(engine.is_active());
                 if let Some(handle) = cloud.as_ref() {
                     crate::cloud::apply_polled_commands(
                         &mut engine,
@@ -557,6 +580,7 @@ pub fn run() {
                     &mut toggle_gate,
                     control_flow,
                     &mut pending_stop,
+                    toggle_want_stop,
                 );
                 if matches!(*control_flow, ControlFlow::Exit) {
                     flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
@@ -773,6 +797,13 @@ fn refresh_ui(
     pairing: &mut Option<(String, String, u64)>,
 ) {
     if let Some(handle) = cloud {
+        if crate::session_lock::should_resume_paused_menu_reporter(
+            handle.is_paused(),
+            crate::session_lock::peer_reporter_lock_is_live(std::process::id()),
+            engine.is_active(),
+        ) {
+            handle.resume();
+        }
         crate::cloud::sync_cloud(engine, platform, handle, pairing);
     }
     crate::cloud::expire_stale_pairing(pairing);
@@ -878,9 +909,10 @@ fn handle_menu_event(
     id: tray_icon::menu::MenuId,
     popover: Option<&mut Popover>,
     pending_stop: &mut bool,
+    toggle_want_stop: bool,
 ) {
     if id == handles.toggle.id() {
-        dispatch_local_toggle(engine, platform, pending_stop);
+        dispatch_local_toggle(engine, platform, pending_stop, toggle_want_stop);
     } else if id == handles.quit.id() {
         stop_for_quit(engine, platform);
         *control_flow = ControlFlow::Exit;
@@ -958,13 +990,14 @@ fn handle_ui_command(
     toggle_gate: &mut ToggleGate,
     control_flow: &mut ControlFlow,
     pending_stop: &mut bool,
+    toggle_want_stop: bool,
 ) {
     match command {
         UiCommand::Toggle => {
             if !toggle_gate.take_click() {
                 return;
             }
-            dispatch_local_toggle(engine, platform, pending_stop);
+            dispatch_local_toggle(engine, platform, pending_stop, toggle_want_stop);
         }
         UiCommand::SleepDisplayNow => {
             dispatch(engine, platform, Input::SleepDisplayNow);
@@ -1054,6 +1087,7 @@ fn set_duration(engine: &mut Engine, platform: &mut dyn Platform, pref: Duration
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_ipc(
     engine: &mut Engine,
     platform: &mut dyn Platform,
@@ -1063,6 +1097,7 @@ fn handle_ipc(
     reporter_running: bool,
     pending_stop: &mut bool,
     last_handoff_id: &mut Option<String>,
+    toggle_want_stop: bool,
 ) -> (bool, bool, bool, bool) {
     crate::cloud::expire_stale_pairing(pairing);
     let IpcIncoming::Request { req, reply } = incoming;
@@ -1182,7 +1217,7 @@ fn handle_ipc(
             IpcResponse::ok_status(host_status(engine, platform))
         }
         IpcRequest::Toggle => {
-            dispatch_local_toggle(engine, platform, pending_stop);
+            dispatch_local_toggle(engine, platform, pending_stop, toggle_want_stop);
             IpcResponse::ok_status(host_status(engine, platform))
         }
         IpcRequest::Quit => {
@@ -1282,13 +1317,24 @@ fn dispatch_local_toggle(
     engine: &mut Engine,
     platform: &mut dyn Platform,
     pending_stop: &mut bool,
+    want_stop: bool,
 ) {
     let deferred = local_controls_deferred(engine);
     crate::session_lock::note_deferred_escape(deferred, pending_stop);
     if deferred {
         return;
     }
-    dispatch(engine, platform, Input::Toggle);
+    match crate::session_lock::local_toggle_after_cloud_drain(want_stop, engine.is_active()) {
+        Some(true) => dispatch(
+            engine,
+            platform,
+            Input::Stop {
+                reason: StopReason::User,
+            },
+        ),
+        Some(false) => dispatch(engine, platform, Input::Toggle),
+        None => {}
+    }
 }
 
 fn show_menu_help(engine: &Engine, popover: Option<&mut Popover>) {

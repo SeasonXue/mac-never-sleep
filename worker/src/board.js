@@ -418,10 +418,15 @@ export async function publishReservedPairing({
 }) {
   const drop = (code) =>
     release ? bestEffortCleanup(undefined, () => release(code)) : Promise.resolve();
-  const forget = (code) =>
-    forgetDevice
-      ? bestEffortCleanup(undefined, () => forgetDevice(code))
-      : Promise.resolve();
+  const forget = async (code) => {
+    if (!forgetDevice) return true;
+    try {
+      await forgetDevice(code);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   for (let i = 0; i < maxAttempts; i++) {
     const code = generateCode();
     let reserved;
@@ -448,8 +453,10 @@ export async function publishReservedPairing({
           live = false;
         }
         if (!live) {
-          await forget(code);
-          await drop(code);
+          const forgotten = await forget(code);
+          if (forgotten) {
+            await drop(code);
+          }
           return { ok: false, error: "pair_busy", status: 503 };
         }
       }
@@ -798,6 +805,7 @@ export class Board {
   dropOffer(rawCode) {
     const code = normalizePairingCode(rawCode);
     if (code) this.codes.delete(code);
+    this.#dropUnverifiedDevices(this.nowSecs());
     return { ok: true, status: 200 };
   }
 
