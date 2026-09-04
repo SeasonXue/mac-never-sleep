@@ -284,6 +284,84 @@ pub fn format_handoff_id(pid: u32, starttime: Option<u64>, seq: u64) -> String {
     }
 }
 
+/// Persisted so a timed-out donor can still stop after the menu adopts and quits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandoffAckOutcome {
+    Adopted,
+    Stop,
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn format_handoff_ack(id: &str, outcome: HandoffAckOutcome) -> String {
+    let outcome = match outcome {
+        HandoffAckOutcome::Adopted => "adopted",
+        HandoffAckOutcome::Stop => "stop",
+    };
+    format!("handoff_id={id}\noutcome={outcome}\n")
+}
+
+pub fn parse_handoff_ack(s: &str) -> Option<(String, HandoffAckOutcome)> {
+    let mut id = None;
+    let mut outcome = None;
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix("handoff_id=") {
+            let v = v.trim();
+            if !v.is_empty() {
+                id = Some(v.to_string());
+            }
+        }
+        if let Some(v) = line.strip_prefix("outcome=") {
+            outcome = match v.trim() {
+                "adopted" => Some(HandoffAckOutcome::Adopted),
+                "stop" => Some(HandoffAckOutcome::Stop),
+                _ => None,
+            };
+        }
+    }
+    Some((id?, outcome?))
+}
+
+/// Menu Quit after a lost adopt reply leaves no IPC; the matching ack must stop this donor.
+pub fn donor_should_stop_after_successor_gone(
+    our_handoff_id: Option<&str>,
+    successor_live: bool,
+    persisted_id: Option<&str>,
+) -> bool {
+    if successor_live {
+        return false;
+    }
+    let Some(ours) = our_handoff_id.filter(|id| !id.is_empty()) else {
+        return false;
+    };
+    persisted_id == Some(ours)
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_persist_handoff_ack(handoff: bool, adopted: bool, stop_donor: bool) -> bool {
+    handoff && (adopted || stop_donor)
+}
+
+pub fn read_handoff_ack() -> Option<(String, HandoffAckOutcome)> {
+    let text = std::fs::read_to_string(crate::paths::handoff_ack_path()).ok()?;
+    parse_handoff_ack(&text)
+}
+
+#[cfg(any(test, target_os = "macos"))]
+pub fn write_handoff_ack(id: &str, outcome: HandoffAckOutcome) {
+    if id.is_empty() {
+        return;
+    }
+    let _ = crate::paths::ensure_data_dir();
+    let _ = std::fs::write(
+        crate::paths::handoff_ack_path(),
+        format_handoff_ack(id, outcome),
+    );
+}
+
+pub fn clear_handoff_ack() {
+    let _ = std::fs::remove_file(crate::paths::handoff_ack_path());
+}
+
 /// Map stable IPC error codes to bilingual CLI text. JSON still prints the code.
 pub fn human_ipc_error(code: &str, lang: Lang) -> String {
     match code {
@@ -489,6 +567,45 @@ mod tests {
             format_handoff_id(11, Some(200), 1),
             "a reused PID with a new starttime must not collide with a prior handoff id"
         );
+        assert!(
+            !donor_should_stop_after_successor_gone(Some("h1"), true, Some("h1")),
+            "a live menu still owns IPC; wait for adopted / stop_donor on the next retry"
+        );
+        assert!(
+            donor_should_stop_after_successor_gone(Some("h1"), false, Some("h1")),
+            "menu adopted then Quit: the donor must stop from the persisted ack"
+        );
+        assert!(!donor_should_stop_after_successor_gone(
+            Some("h1"),
+            false,
+            Some("h2")
+        ));
+        assert!(!donor_should_stop_after_successor_gone(
+            None,
+            false,
+            Some("h1")
+        ));
+        assert!(should_persist_handoff_ack(true, true, false));
+        assert!(should_persist_handoff_ack(true, false, true));
+        assert!(!should_persist_handoff_ack(true, false, false));
+        assert!(!should_persist_handoff_ack(false, true, false));
+        let ack = format_handoff_ack("11-100-1", HandoffAckOutcome::Adopted);
+        assert_eq!(
+            parse_handoff_ack(&ack),
+            Some(("11-100-1".into(), HandoffAckOutcome::Adopted))
+        );
+        assert_eq!(
+            parse_handoff_ack(&format_handoff_ack("h1", HandoffAckOutcome::Stop)).map(|(_, o)| o),
+            Some(HandoffAckOutcome::Stop)
+        );
+        let _dir = crate::paths::TestDataDir::install();
+        write_handoff_ack("h1", HandoffAckOutcome::Adopted);
+        assert_eq!(
+            read_handoff_ack(),
+            Some(("h1".into(), HandoffAckOutcome::Adopted))
+        );
+        clear_handoff_ack();
+        assert!(read_handoff_ack().is_none());
     }
 
     #[test]

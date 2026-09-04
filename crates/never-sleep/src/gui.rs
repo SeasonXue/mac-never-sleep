@@ -1060,6 +1060,7 @@ fn handle_ipc(
     let mut adopted = false;
     let mut handoff_attempt = false;
     let mut prior_handoff = false;
+    let mut ack_id: Option<String> = None;
     let mut resp = match req {
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
@@ -1102,6 +1103,7 @@ fn handle_ipc(
                 }
             };
             handoff_attempt = handoff;
+            ack_id = handoff_id.clone();
             if handoff {
                 prior_handoff = crate::protocol::menu_already_processed_handoff(
                     handoff,
@@ -1182,6 +1184,16 @@ fn handle_ipc(
         resp.stop_donor = true;
     }
     let stop_donor = resp.stop_donor;
+    if crate::protocol::should_persist_handoff_ack(handoff_attempt, adopted, stop_donor) {
+        if let Some(id) = ack_id.as_deref().filter(|s| !s.is_empty()) {
+            let outcome = if adopted {
+                crate::protocol::HandoffAckOutcome::Adopted
+            } else {
+                crate::protocol::HandoffAckOutcome::Stop
+            };
+            crate::protocol::write_handoff_ack(id, outcome);
+        }
+    }
     let _ = reply.send(resp);
     (quitting, adopted, stop_donor)
 }

@@ -117,9 +117,32 @@ pub fn run_foreground(
                 handle.resume();
             }
         } else {
-            if crate::cloud::should_release_applied_retention(!menu_socket_absent()) {
+            let successor_live = !menu_socket_absent();
+            if crate::cloud::should_release_applied_retention(successor_live) {
                 if let Some(handle) = cloud.as_ref() {
                     handle.release_applied_retention();
+                }
+            }
+            if let Some((persisted, outcome)) = crate::protocol::read_handoff_ack() {
+                if crate::protocol::donor_should_stop_after_successor_gone(
+                    handoff_id.as_deref(),
+                    successor_live,
+                    Some(persisted.as_str()),
+                ) {
+                    let reason = match outcome {
+                        crate::protocol::HandoffAckOutcome::Adopted => StopReason::AppQuit,
+                        crate::protocol::HandoffAckOutcome::Stop => StopReason::User,
+                    };
+                    if engine.is_active() {
+                        dispatch(&mut engine, platform, Input::Stop { reason });
+                    }
+                    stop_for_quit(&mut engine, platform);
+                    if let Some(handle) = cloud.take() {
+                        handle.detach();
+                    }
+                    crate::protocol::clear_handoff_ack();
+                    println!("{}", engine.config.tr().foreground_ended());
+                    return Ok(());
                 }
             }
             if cloud.is_none() && cloud_ok && menu_socket_absent() {
@@ -348,6 +371,25 @@ mod tests {
                 && loop_body.contains("should_release_applied_retention")
                 && loop_body.contains("menu_socket_absent"),
             "clear retained command ids only after the successor socket is gone"
+        );
+        assert!(
+            loop_body.contains("donor_should_stop_after_successor_gone")
+                && loop_body.contains("read_handoff_ack"),
+            "a lost adopt reply then menu Quit must stop this donor from a persisted ack, not Tick"
+        );
+        let absent = loop_body
+            .split("} else {")
+            .nth(1)
+            .expect("Ping-failed / socket-absent arm")
+            .split("Input::Tick")
+            .next()
+            .unwrap();
+        assert!(
+            absent.contains("donor_should_stop_after_successor_gone")
+                && absent.contains("return Ok(())")
+                && absent.contains("detach(")
+                && !absent.contains("publish_and_flush"),
+            "successor-gone after adopt must detach and exit; Tick would keep the donor's assertions"
         );
     }
 

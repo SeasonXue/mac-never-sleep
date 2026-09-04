@@ -33,6 +33,8 @@ import {
   PAIR_START_IP_LIMIT,
   LIST_IP_LIMIT,
   LIST_GLOBAL_LIMIT,
+  LIST_IP_MIN_BOARDS,
+  LIST_GLOBAL_MIN_BOARDS,
   PAIR_CLAIM_IP_LIMIT,
   PAIR_CLAIM_GLOBAL_LIMIT,
   DEVICE_IP_LIMIT,
@@ -2024,8 +2026,16 @@ test("list global rate limit covers aggregate 2.5s board polling", () => {
     "multiple open boards behind one NAT must not hit the per-IP list cap",
   );
   assert.ok(
+    LIST_IP_LIMIT > pollsPerBoardPerMin * LIST_IP_MIN_BOARDS,
+    "leave room for command and claim refreshes above the 2.5s polling baseline",
+  );
+  assert.ok(
     LIST_GLOBAL_LIMIT >= pollsPerBoardPerMin * 100,
     "a handful of open boards must not 429 every Mac offline",
+  );
+  assert.ok(
+    LIST_GLOBAL_LIMIT > pollsPerBoardPerMin * LIST_GLOBAL_MIN_BOARDS,
+    "leave room for extra refreshes above scheduled global polling",
   );
 });
 

@@ -21,6 +21,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test (core + CLI stub)
         run: cargo test --workspace
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test (Worker)
+        run: npm test
 
   build-macos:
     runs-on: macos-latest

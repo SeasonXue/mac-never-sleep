@@ -684,6 +684,14 @@ mod tests {
                 && handle.contains("should_stop_donor_after_ended_prior_handoff"),
             "matching handoff id after the menu stopped must stop the donor, not dispatch again"
         );
+        let persist_at = handle
+            .find("write_handoff_ack")
+            .expect("persist the adopt/stop decision before the IPC reply");
+        let send_at = handle.rfind("reply.send").expect("final IPC reply");
+        assert!(
+            persist_at < send_at,
+            "a timed-out donor must be able to read the ack after the menu has already quit"
+        );
         assert!(
             loop_src.contains("stop_donor"),
             "apply the remembered escape after drain when the response stops the donor"

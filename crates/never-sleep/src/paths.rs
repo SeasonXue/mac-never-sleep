@@ -59,6 +59,10 @@ pub fn session_lock_path() -> PathBuf {
     data_dir().join("session.lock")
 }
 
+pub fn handoff_ack_path() -> PathBuf {
+    data_dir().join("handoff.ack")
+}
+
 #[cfg(any(test, target_os = "macos"))]
 pub fn launch_agent_path() -> PathBuf {
     dirs::home_dir()

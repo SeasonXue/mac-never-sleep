@@ -125,11 +125,11 @@ export const LIST_POLL_INTERVAL_MS = 2500;
 /** Concurrent open boards one household/corporate NAT is sized to survive. */
 export const LIST_IP_MIN_BOARDS = 8;
 export const LIST_IP_LIMIT =
-  Math.ceil(60_000 / LIST_POLL_INTERVAL_MS) * LIST_IP_MIN_BOARDS;
+  Math.ceil(60_000 / LIST_POLL_INTERVAL_MS) * (LIST_IP_MIN_BOARDS + 1);
 /** Concurrent open boards the global list cap is sized to survive. */
 export const LIST_GLOBAL_MIN_BOARDS = 200;
 export const LIST_GLOBAL_LIMIT =
-  Math.ceil(60_000 / LIST_POLL_INTERVAL_MS) * LIST_GLOBAL_MIN_BOARDS;
+  Math.ceil(60_000 / LIST_POLL_INTERVAL_MS) * (LIST_GLOBAL_MIN_BOARDS + 1);
 export const LIST_GLOBAL_WINDOW_SECS = 60;
 export const PAIR_CLAIM_IP_LIMIT = 20;
 export const PAIR_CLAIM_IP_WINDOW_SECS = 60;
