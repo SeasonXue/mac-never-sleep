@@ -510,13 +510,15 @@ pub fn should_keep_unpersisted_stop_donor_after_kept_adopt(
     reject_stop && last_handoff_present && !adopted_now
 }
 
-/// A detach Quit that cannot clear `reporter=1` must POST offline instead.
+/// A detach Quit that cannot clear this session's `reporter=1` must POST offline.
+/// An unmatched stale ack must not force flush while another donor is live.
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_flush_offline_if_ack_reporter_clear_failed(
     clear_ok: bool,
     would_detach: bool,
+    matching_live_reporter: bool,
 ) -> bool {
-    would_detach && !clear_ok
+    would_detach && !clear_ok && matching_live_reporter
 }
 
 /// Persist whether this process still owns the cloud reporter, including Stop
@@ -965,15 +967,19 @@ mod tests {
             "a live successor reporter must not be marked offline by this donor"
         );
         assert!(
-            should_flush_offline_if_ack_reporter_clear_failed(false, true),
-            "a detach Quit that cannot clear reporter=1 must flush offline instead"
+            should_flush_offline_if_ack_reporter_clear_failed(false, true, true),
+            "a detach Quit that cannot clear this session's reporter=1 must flush offline instead"
         );
         assert!(!should_flush_offline_if_ack_reporter_clear_failed(
-            true, true
+            true, true, true
         ));
         assert!(!should_flush_offline_if_ack_reporter_clear_failed(
-            false, false
+            false, false, true
         ));
+        assert!(
+            !should_flush_offline_if_ack_reporter_clear_failed(false, true, false),
+            "a failed rewrite of an unmatched stale reporter=1 ack must not flush over a live donor"
+        );
         assert!(
             handoff_ack_reporter(true),
             "a Stop ack must record reporter=1 while the menu reporter is still alive"
@@ -1114,6 +1120,17 @@ mod tests {
                 && flush.contains("successor_reporter_live_on_matching_ack")
                 && flush.contains("last_handoff_id"),
             "menu must flush after abandoning this session's reporter=1, not a stale prior ack"
+        );
+        let clear_failed = flush
+            .split("should_flush_offline_if_ack_reporter_clear_failed")
+            .nth(1)
+            .expect("clear-failed flush gate")
+            .split(')')
+            .next()
+            .unwrap();
+        assert!(
+            clear_failed.contains("had_live_reporter"),
+            "a failed rewrite of an unmatched stale reporter=1 ack must not POST offline over a live donor"
         );
     }
 
