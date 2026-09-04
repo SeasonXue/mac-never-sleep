@@ -816,6 +816,21 @@ fn take_applied_ids(slot: &Mutex<Vec<String>>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn prune_applied_history_after_heartbeat(
+    hist: &Mutex<Vec<String>>,
+    pending: Option<&[RemoteCommand]>,
+    queued: &Mutex<Vec<String>>,
+) {
+    let Some(pending) = pending else {
+        return;
+    };
+    prune_applied_history(hist, pending, queued);
+}
+
+fn should_pair_start_on_tick(needs_pair: bool, offline: bool) -> bool {
+    needs_pair && !offline
+}
+
 fn prune_applied_history(
     hist: &Mutex<Vec<String>>,
     pending: &[RemoteCommand],
@@ -904,7 +919,7 @@ fn reporter_loop(
             &event_tx,
             shutting_down,
         );
-        prune_applied_history(&applied_history, &pending, &applied_ids);
+        prune_applied_history_after_heartbeat(&applied_history, pending.as_deref(), &applied_ids);
         if shutting_down {
             break;
         }
@@ -925,7 +940,11 @@ fn reporter_loop(
                         &event_tx,
                         true,
                     );
-                    prune_applied_history(&applied_history, &pending, &applied_ids);
+                    prune_applied_history_after_heartbeat(
+                        &applied_history,
+                        pending.as_deref(),
+                        &applied_ids,
+                    );
                     break;
                 }
             }
@@ -944,8 +963,8 @@ pub(crate) fn reporter_tick(
     status: &JsonStatus,
     event_tx: &mpsc::Sender<CloudEvent>,
     offline: bool,
-) -> Vec<RemoteCommand> {
-    if gate.needs_pair_start() {
+) -> Option<Vec<RemoteCommand>> {
+    if should_pair_start_on_tick(gate.needs_pair_start(), offline) {
         let body = serde_json::to_string(&PairStartBody {
             device_id: &identity.device_id,
             device_token: &identity.device_token,
@@ -981,12 +1000,12 @@ pub(crate) fn reporter_tick(
         Ok(CloudPost::Unauthorized) => gate.on_unauthorized(),
         Ok(CloudPost::Ok(raw)) => {
             if let Ok(outcome) = parse_heartbeat_response(&raw) {
-                return emit_outcome(gate, inbox, event_tx, outcome);
+                return Some(emit_outcome(gate, inbox, event_tx, outcome));
             }
         }
         Err(_) => {}
     }
-    Vec::new()
+    None
 }
 
 fn emit_outcome(
@@ -1765,6 +1784,35 @@ mod tests {
     }
 
     #[test]
+    fn applied_history_survives_a_failed_heartbeat() {
+        let (wake, _wake_rx) = mpsc::sync_channel(2);
+        let (_event_tx, event_rx) = mpsc::channel();
+        let handle = test_cloud_handle(wake, event_rx);
+        handle.skip_applied(vec!["phone-on".into()]);
+        let _ = handle.take_applied();
+        prune_applied_history_after_heartbeat(&handle.applied_history, None, &handle.applied_ids);
+        assert_eq!(
+            handle.applied_command_ids(),
+            vec!["phone-on".to_string()],
+            "a failed heartbeat must not look like the Worker dropped every command"
+        );
+        prune_applied_history_after_heartbeat(
+            &handle.applied_history,
+            Some(&[]),
+            &handle.applied_ids,
+        );
+        assert!(
+            handle.applied_command_ids().is_empty(),
+            "a successfully parsed empty pending list may prune acked ids"
+        );
+        let src = include_str!("cloud.rs");
+        assert!(
+            src.contains("prune_applied_history_after_heartbeat"),
+            "reporter_loop must not prune from reporter_tick's failure empty vec"
+        );
+    }
+
+    #[test]
     fn apply_polled_commands_marks_ids_so_the_next_heartbeat_can_ack() {
         let (event_tx, event_rx) = mpsc::channel();
         event_tx
@@ -2233,6 +2281,57 @@ mod tests {
         assert!(!gate.needs_pair_start());
         assert_eq!(*transport.pair_calls.lock().unwrap(), 3);
         assert_eq!(*transport.beat_calls.lock().unwrap(), 4);
+    }
+
+    #[test]
+    fn offline_shutdown_does_not_mint_a_pairing_code() {
+        let transport = ScriptedTransport {
+            pair: Mutex::new(vec![Ok(CloudPost::Ok(
+                r#"{"ok":true,"pairing_code":"AB7K-2Q9M","pairing_url":"https://x/board/?code=AB7K-2Q9M","expires_unix":4242}"#
+                    .into(),
+            ))]),
+            beat: Mutex::new(vec![Ok(CloudPost::Ok(
+                r#"{"ok":true,"commands":[]}"#.into(),
+            ))]),
+            pair_calls: Mutex::new(0),
+            beat_calls: Mutex::new(0),
+        };
+        let id = CloudIdentity {
+            device_id: "ab".repeat(16),
+            device_token: "cd".repeat(32),
+        };
+        let mut gate = ReporterGate::default();
+        let mut inbox = CommandInbox::default();
+        let (event_tx, event_rx) = mpsc::channel();
+        reporter_tick(
+            &mut gate,
+            &mut inbox,
+            &transport,
+            &id,
+            "Studio",
+            "en",
+            &sample_status(),
+            &event_tx,
+            true,
+        );
+        assert_eq!(
+            *transport.pair_calls.lock().unwrap(),
+            0,
+            "quit must not create an abandoned pairing offer"
+        );
+        assert_eq!(*transport.beat_calls.lock().unwrap(), 1);
+        while let Ok(ev) = event_rx.try_recv() {
+            assert!(
+                !matches!(ev, CloudEvent::Pairing { .. }),
+                "quit must not mint a pairing code, got {ev:?}"
+            );
+        }
+        assert!(
+            should_pair_start_on_tick(true, false),
+            "an unregistered live reporter still calls pair/start"
+        );
+        assert!(!should_pair_start_on_tick(true, true));
+        assert!(!should_pair_start_on_tick(false, false));
     }
 
     #[test]

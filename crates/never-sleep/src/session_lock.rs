@@ -51,22 +51,20 @@ pub fn should_clear_unclaimed_clamshell(claiming: bool) -> bool {
 ///
 /// Ordinary lid-open / display-off starts also call restore because they are
 /// not claiming the flag. The private selector is often unavailable there; that
-/// must not tear down a successful idle assertion. Abort only when a live
-/// foreign lock actually recorded `clamshell=1`.
+/// must not tear down a successful idle assertion. Abort when a foreign lock
+/// recorded `clamshell=1`, including after the donor has already died — otherwise
+/// this process writes `clamshell=0` and never retries the failed restore.
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_fail_unclaimed_clamshell_restore(
     claiming: bool,
     lock: Option<(u32, bool)>,
-    lock_holder_alive: bool,
+    _lock_holder_alive: bool,
     our_pid: u32,
 ) -> bool {
     if claiming {
         return false;
     }
-    matches!(
-        lock,
-        Some((pid, true)) if pid != our_pid && lock_holder_alive
-    )
+    matches!(lock, Some((pid, true)) if pid != our_pid)
 }
 
 pub fn parse_lock_text(s: &str) -> (u32, bool) {
@@ -120,6 +118,24 @@ pub fn should_hold_cloud_commands(engine_active: bool, our_pid: u32) -> bool {
 #[cfg(any(test, target_os = "macos"))]
 pub fn should_defer_local_controls(engine_active: bool, our_pid: u32) -> bool {
     should_hold_cloud_commands(engine_active, our_pid)
+}
+
+/// Remember ⌥⌘P / Toggle while a live donor still owns standby.
+#[cfg(any(test, target_os = "macos"))]
+pub fn note_deferred_escape(deferred: bool, pending_stop: &mut bool) {
+    if deferred {
+        *pending_stop = true;
+    }
+}
+
+/// After a successful adopt, apply the remembered escape instead of keeping standby.
+#[cfg(any(test, target_os = "macos"))]
+pub fn take_pending_stop_on_adopt(adopted: bool, pending_stop: &mut bool) -> bool {
+    let apply = adopted && *pending_stop;
+    if apply {
+        *pending_stop = false;
+    }
+    apply
 }
 
 #[cfg(test)]
@@ -272,7 +288,7 @@ mod tests {
         );
         assert!(
             fail_arm.contains("should_fail_unclaimed_clamshell_restore"),
-            "restore failure is fatal only when a live donor recorded clamshell=1"
+            "restore failure is fatal when a foreign lock recorded clamshell=1"
         );
     }
 
@@ -304,11 +320,57 @@ mod tests {
             should_fail_unclaimed_clamshell_restore(false, Some((20, true)), true, 10),
             "handoff must not ack if inherited clamshell=1 cannot be restored"
         );
-        assert!(!should_fail_unclaimed_clamshell_restore(
-            false,
-            Some((20, true)),
-            false,
-            10
-        ));
+        assert!(
+            should_fail_unclaimed_clamshell_restore(false, Some((20, true)), false, 10),
+            "a dead donor lock that recorded clamshell=1 still needs a successful restore"
+        );
+    }
+
+    #[test]
+    fn deferred_escape_stops_after_adopt() {
+        let mut pending = false;
+        note_deferred_escape(false, &mut pending);
+        assert!(
+            !pending,
+            "Toggle while this process owns standby is not an overlapping escape"
+        );
+        note_deferred_escape(true, &mut pending);
+        assert!(pending, "⌥⌘P during the donor overlap must not be dropped");
+        note_deferred_escape(false, &mut pending);
+        assert!(
+            pending,
+            "a later non-deferred action must not forget the escape"
+        );
+        assert!(
+            !take_pending_stop_on_adopt(false, &mut pending),
+            "failed adopt must keep the escape for a later handoff"
+        );
+        assert!(pending);
+        assert!(take_pending_stop_on_adopt(true, &mut pending));
+        assert!(!pending);
+        assert!(
+            !take_pending_stop_on_adopt(true, &mut pending),
+            "the remembered escape is one-shot"
+        );
+        let gui = include_str!("gui.rs");
+        assert!(
+            gui.contains("note_deferred_escape") && gui.contains("take_pending_stop_on_adopt"),
+            "menu Toggle / ⌥⌘P must record a pending stop and apply it after adopt"
+        );
+        let handle = gui
+            .split("fn handle_ipc")
+            .nth(1)
+            .expect("handle_ipc")
+            .split("fn local_controls_deferred")
+            .next()
+            .unwrap();
+        let send_at = handle.find("reply.send").expect("IPC reply");
+        let stop_at = handle
+            .find("take_pending_stop_on_adopt")
+            .expect("apply escape after adopt");
+        assert!(
+            send_at < stop_at,
+            "donor must see adopted+active before the menu applies the remembered escape"
+        );
     }
 }

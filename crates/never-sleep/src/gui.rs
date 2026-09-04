@@ -311,6 +311,7 @@ pub fn run() {
     let mut next_wake = Instant::now() + Duration::from_millis(HEARTBEAT_MS);
     let mut shown_onboarding = engine.config.onboarding_done;
     let mut toggle_gate = ToggleGate::default();
+    let mut pending_stop = false;
     let mut pairing: Option<(String, String, u64)> = None;
     let cloud_identity = if cloud_enabled() {
         match load_or_create_identity() {
@@ -365,6 +366,7 @@ pub fn run() {
                 incoming,
                 &mut pairing,
                 cloud_identity.as_ref(),
+                &mut pending_stop,
             ) {
                 flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
                 *control_flow = ControlFlow::Exit;
@@ -457,6 +459,7 @@ pub fn run() {
                     control_flow,
                     id,
                     popover.as_mut(),
+                    &mut pending_stop,
                 );
                 if matches!(*control_flow, ControlFlow::Exit) {
                     flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
@@ -483,7 +486,7 @@ pub fn run() {
                         &mut pairing,
                     );
                 }
-                dispatch_local_toggle(&mut engine, platform.as_mut());
+                dispatch_local_toggle(&mut engine, platform.as_mut(), &mut pending_stop);
                 refresh_ui(
                     &handles,
                     &mut tray,
@@ -534,6 +537,7 @@ pub fn run() {
                     popover.as_mut(),
                     &mut toggle_gate,
                     control_flow,
+                    &mut pending_stop,
                 );
                 if matches!(*control_flow, ControlFlow::Exit) {
                     flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
@@ -839,9 +843,10 @@ fn handle_menu_event(
     control_flow: &mut ControlFlow,
     id: tray_icon::menu::MenuId,
     popover: Option<&mut Popover>,
+    pending_stop: &mut bool,
 ) {
     if id == handles.toggle.id() {
-        dispatch_local_toggle(engine, platform);
+        dispatch_local_toggle(engine, platform, pending_stop);
     } else if id == handles.quit.id() {
         stop_for_quit(engine, platform);
         *control_flow = ControlFlow::Exit;
@@ -918,13 +923,14 @@ fn handle_ui_command(
     popover: Option<&mut Popover>,
     toggle_gate: &mut ToggleGate,
     control_flow: &mut ControlFlow,
+    pending_stop: &mut bool,
 ) {
     match command {
         UiCommand::Toggle => {
             if !toggle_gate.take_click() {
                 return;
             }
-            dispatch_local_toggle(engine, platform);
+            dispatch_local_toggle(engine, platform, pending_stop);
         }
         UiCommand::SleepDisplayNow => {
             dispatch(engine, platform, Input::SleepDisplayNow);
@@ -1020,6 +1026,7 @@ fn handle_ipc(
     incoming: IpcIncoming,
     pairing: &mut Option<(String, String, u64)>,
     identity: Option<&never_sleep_core::CloudIdentity>,
+    pending_stop: &mut bool,
 ) -> bool {
     crate::cloud::expire_stale_pairing(pairing);
     let IpcIncoming::Request { req, reply } = incoming;
@@ -1028,6 +1035,7 @@ fn handle_ipc(
         engine.json_status(&host)
     };
     let mut quitting = false;
+    let mut adopted = false;
     let resp = match req {
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
@@ -1068,7 +1076,6 @@ fn handle_ipc(
                     Some(d) => Input::StartWith(d),
                 }
             };
-            let mut adopted = false;
             if handoff {
                 if !engine.is_active() {
                     dispatch(engine, platform, input);
@@ -1109,7 +1116,7 @@ fn handle_ipc(
             IpcResponse::ok_status(host_status(engine, platform))
         }
         IpcRequest::Toggle => {
-            dispatch_local_toggle(engine, platform);
+            dispatch_local_toggle(engine, platform, pending_stop);
             IpcResponse::ok_status(host_status(engine, platform))
         }
         IpcRequest::Quit => {
@@ -1119,6 +1126,15 @@ fn handle_ipc(
         }
     };
     let _ = reply.send(resp);
+    if crate::session_lock::take_pending_stop_on_adopt(adopted, pending_stop) {
+        dispatch(
+            engine,
+            platform,
+            Input::Stop {
+                reason: StopReason::User,
+            },
+        );
+    }
     quitting
 }
 
@@ -1126,8 +1142,14 @@ fn local_controls_deferred(engine: &Engine) -> bool {
     crate::session_lock::should_defer_local_controls(engine.is_active(), std::process::id())
 }
 
-fn dispatch_local_toggle(engine: &mut Engine, platform: &mut dyn Platform) {
-    if local_controls_deferred(engine) {
+fn dispatch_local_toggle(
+    engine: &mut Engine,
+    platform: &mut dyn Platform,
+    pending_stop: &mut bool,
+) {
+    let deferred = local_controls_deferred(engine);
+    crate::session_lock::note_deferred_escape(deferred, pending_stop);
+    if deferred {
         return;
     }
     dispatch(engine, platform, Input::Toggle);
