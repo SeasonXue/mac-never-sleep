@@ -963,10 +963,8 @@ fn reporter_loop(
             status,
             &event_tx,
             shutting_down,
+            &last_pending,
         );
-        if let Some(ref cmds) = pending {
-            store_pending_ids(&last_pending, cmds);
-        }
         prune_applied_history_after_heartbeat(
             &applied_history,
             pending.as_deref(),
@@ -992,10 +990,8 @@ fn reporter_loop(
                         status,
                         &event_tx,
                         true,
+                        &last_pending,
                     );
-                    if let Some(ref cmds) = pending {
-                        store_pending_ids(&last_pending, cmds);
-                    }
                     prune_applied_history_after_heartbeat(
                         &applied_history,
                         pending.as_deref(),
@@ -1020,6 +1016,7 @@ pub(crate) fn reporter_tick(
     status: &JsonStatus,
     event_tx: &mpsc::Sender<CloudEvent>,
     offline: bool,
+    last_pending: &Mutex<Option<Vec<String>>>,
 ) -> Option<Vec<RemoteCommand>> {
     if should_pair_start_on_tick(gate.needs_pair_start(), offline) {
         let body = serde_json::to_string(&PairStartBody {
@@ -1057,7 +1054,7 @@ pub(crate) fn reporter_tick(
         Ok(CloudPost::Unauthorized) => gate.on_unauthorized(),
         Ok(CloudPost::Ok(raw)) => {
             if let Ok(outcome) = parse_heartbeat_response(&raw) {
-                return Some(emit_outcome(gate, inbox, event_tx, outcome));
+                return Some(emit_outcome(gate, inbox, event_tx, last_pending, outcome));
             }
         }
         Err(_) => {}
@@ -1069,6 +1066,7 @@ fn emit_outcome(
     gate: &mut ReporterGate,
     inbox: &mut CommandInbox,
     event_tx: &mpsc::Sender<CloudEvent>,
+    last_pending: &Mutex<Option<Vec<String>>>,
     outcome: HeartbeatOutcome,
 ) -> Vec<RemoteCommand> {
     if outcome.pairing_cleared() {
@@ -1088,6 +1086,7 @@ fn emit_outcome(
     let pending = outcome.commands;
     let commands = inbox.take_new(pending.clone());
     inbox.retain_pending(&pending);
+    store_pending_ids(last_pending, &pending);
     if !commands.is_empty() {
         let _ = event_tx.send(CloudEvent::Commands(commands));
     }
@@ -1311,6 +1310,7 @@ mod tests {
         let mut gate = ReporterGate { registered: true };
         let mut inbox = CommandInbox::default();
         let (event_tx, event_rx) = mpsc::channel();
+        let pending_slot = Mutex::new(None);
         reporter_tick(
             &mut gate,
             &mut inbox,
@@ -1321,6 +1321,7 @@ mod tests {
             &sample_status(),
             &event_tx,
             false,
+            &pending_slot,
         );
         match event_rx.try_recv().unwrap() {
             CloudEvent::Pairing { expires_unix, .. } => {
@@ -1638,7 +1639,7 @@ mod tests {
         let mut gate = ReporterGate::default();
         gate.on_pair_start_ok();
         let mut inbox = CommandInbox::default();
-        emit_outcome(&mut gate, &mut inbox, &event_tx, outcome);
+        emit_outcome(&mut gate, &mut inbox, &event_tx, &Mutex::new(None), outcome);
         assert!(gate.needs_pair_start(), "expired offer must re-register");
         assert_eq!(event_rx.try_recv().unwrap(), CloudEvent::PairingCleared);
     }
@@ -1842,6 +1843,42 @@ mod tests {
         assert!(
             src.contains("held_command_disposition") && src.contains("store_pending_ids"),
             "reporter heartbeats must drop held commands the Worker no longer lists"
+        );
+        let emit = src
+            .split("fn emit_outcome")
+            .nth(1)
+            .expect("emit_outcome")
+            .split("struct UreqTransport")
+            .next()
+            .unwrap();
+        let store_at = emit
+            .find("store_pending_ids")
+            .expect("pending ids must be stored in emit_outcome");
+        let send_at = emit
+            .find("CloudEvent::Commands")
+            .expect("new commands are published as events");
+        assert!(
+            store_at < send_at,
+            "menu poll must not see Commands while last_pending is still the prior empty set"
+        );
+        let last_pending = Mutex::new(Some(Vec::new()));
+        let (event_tx, event_rx) = mpsc::channel();
+        let mut gate = ReporterGate::default();
+        let mut inbox = CommandInbox::default();
+        let outcome =
+            parse_heartbeat_response(r#"{"ok":true,"commands":[{"id":"phone-on","cmd":"on"}]}"#)
+                .unwrap();
+        emit_outcome(&mut gate, &mut inbox, &event_tx, &last_pending, outcome);
+        assert_eq!(
+            last_pending.lock().unwrap().clone().unwrap(),
+            vec!["phone-on".to_string()],
+            "last_pending must already list the new On before the menu can poll Commands"
+        );
+        assert!(
+            event_rx
+                .try_iter()
+                .any(|ev| matches!(ev, CloudEvent::Commands(ref cmds) if cmds.iter().any(|c| c.id == "phone-on"))),
+            "the new On is still published after last_pending is stored"
         );
     }
 
@@ -2413,9 +2450,19 @@ mod tests {
         let mut inbox = CommandInbox::default();
         let (event_tx, event_rx) = mpsc::channel();
         let status = sample_status();
+        let pending_slot = Mutex::new(None);
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
+            &mut gate,
+            &mut inbox,
+            &transport,
+            &id,
+            "Studio",
+            "en",
+            &status,
+            &event_tx,
+            false,
+            &pending_slot,
         );
         assert!(
             !gate.needs_pair_start(),
@@ -2432,7 +2479,16 @@ mod tests {
         }
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
+            &mut gate,
+            &mut inbox,
+            &transport,
+            &id,
+            "Studio",
+            "en",
+            &status,
+            &event_tx,
+            false,
+            &pending_slot,
         );
         assert_eq!(
             *transport.pair_calls.lock().unwrap(),
@@ -2480,15 +2536,34 @@ mod tests {
         let mut inbox = CommandInbox::default();
         let (event_tx, _event_rx) = mpsc::channel();
         let status = sample_status();
+        let pending_slot = Mutex::new(None);
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
+            &mut gate,
+            &mut inbox,
+            &transport,
+            &id,
+            "Studio",
+            "en",
+            &status,
+            &event_tx,
+            false,
+            &pending_slot,
         );
         assert!(gate.needs_pair_start(), "first pair/start timed out");
         assert_eq!(*transport.pair_calls.lock().unwrap(), 1);
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
+            &mut gate,
+            &mut inbox,
+            &transport,
+            &id,
+            "Studio",
+            "en",
+            &status,
+            &event_tx,
+            false,
+            &pending_slot,
         );
         assert!(
             !gate.needs_pair_start(),
@@ -2497,7 +2572,16 @@ mod tests {
         assert_eq!(*transport.pair_calls.lock().unwrap(), 2);
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
+            &mut gate,
+            &mut inbox,
+            &transport,
+            &id,
+            "Studio",
+            "en",
+            &status,
+            &event_tx,
+            false,
+            &pending_slot,
         );
         assert!(
             gate.needs_pair_start(),
@@ -2506,7 +2590,16 @@ mod tests {
         assert_eq!(*transport.pair_calls.lock().unwrap(), 2);
 
         reporter_tick(
-            &mut gate, &mut inbox, &transport, &id, "Studio", "en", &status, &event_tx, false,
+            &mut gate,
+            &mut inbox,
+            &transport,
+            &id,
+            "Studio",
+            "en",
+            &status,
+            &event_tx,
+            false,
+            &pending_slot,
         );
         assert!(!gate.needs_pair_start());
         assert_eq!(*transport.pair_calls.lock().unwrap(), 3);
@@ -2533,6 +2626,7 @@ mod tests {
         let mut gate = ReporterGate::default();
         let mut inbox = CommandInbox::default();
         let (event_tx, event_rx) = mpsc::channel();
+        let pending_slot = Mutex::new(None);
         reporter_tick(
             &mut gate,
             &mut inbox,
@@ -2543,6 +2637,7 @@ mod tests {
             &sample_status(),
             &event_tx,
             true,
+            &pending_slot,
         );
         assert_eq!(
             *transport.pair_calls.lock().unwrap(),

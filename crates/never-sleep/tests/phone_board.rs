@@ -154,6 +154,17 @@ fn worker_shards_per_device_not_one_global_board() {
     assert!(board.contains("LIST_MAX_DEVICES = 32"));
     assert!(board.contains("DEVICE_ID_LEN"));
     assert!(board.contains("deviceCredentialsAreValid"));
+    let cap_fn = board
+        .split("export function capListEntries")
+        .nth(1)
+        .expect("capListEntries")
+        .split("export function fitStoredDevices")
+        .next()
+        .unwrap();
+    assert!(
+        cap_fn.contains("deviceCredentialsAreValid"),
+        "/api/list must reject non 32/64-hex credentials before idFromName"
+    );
     assert!(board.contains("COMMAND_TTL_SECS"));
     assert!(board.contains("fitStoredDevices"));
     assert!(board.contains("expireOffers"));

@@ -652,6 +652,7 @@ impl Platform for MacPlatform {
 
         let parsed = parse_lock();
         let holder_alive = lock_holder_alive(parsed);
+        let donor_clamshell = parsed.map(|rec| rec.clamshell).unwrap_or(false);
         let may_own = crate::session_lock::should_claim_session_lock(
             std::process::id(),
             parsed.map(|rec| rec.pid),
@@ -659,6 +660,7 @@ impl Platform for MacPlatform {
             already_holding,
         );
 
+        let mut cleared_unclaimed = false;
         if may_own {
             if crate::session_lock::should_clear_unclaimed_clamshell(plan.disable_clamshell_sleep) {
                 if !set_clamshell_sleep_disabled(false) {
@@ -682,6 +684,7 @@ impl Platform for MacPlatform {
                     }
                 }
                 self.clamshell_on = false;
+                cleared_unclaimed = true;
             } else {
                 set_clamshell_sleep_disabled(true);
                 self.clamshell_on = true;
@@ -704,6 +707,13 @@ impl Platform for MacPlatform {
                     self.owns_power,
                     write_ok,
                 ) {
+                    if crate::session_lock::should_reassert_donor_clamshell_after_lock_write_failure(
+                        true,
+                        cleared_unclaimed,
+                        donor_clamshell,
+                    ) {
+                        set_clamshell_sleep_disabled(true);
+                    }
                     return Err("session.lock".into());
                 }
             }

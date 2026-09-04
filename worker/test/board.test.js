@@ -707,15 +707,24 @@ test("stale pair/start must not publish after a newer code is live", () => {
 });
 
 test("list entries are capped and deduplicated before fan-out", () => {
-  const a = { device_id: "aa".repeat(16), device_token: "t" };
-  const b = { device_id: "bb".repeat(16), device_token: "t" };
-  const capped = capListEntries([a, a, b, { device_id: "x" }]);
+  const token = "cd".repeat(32);
+  const a = { device_id: "aa".repeat(16), device_token: token };
+  const b = { device_id: "bb".repeat(16), device_token: token };
+  const capped = capListEntries([
+    a,
+    a,
+    b,
+    { device_id: "x" },
+    { device_id: "ff".repeat(40), device_token: token },
+    { device_id: "cc".repeat(16), device_token: "t" },
+    { device_id: "dd".repeat(16), device_token: "ee".repeat(40) },
+  ]);
   assert.equal(capped.length, 2);
   assert.equal(capped[0].device_id, a.device_id);
   assert.equal(capped[1].device_id, b.device_id);
   const many = Array.from({ length: LIST_MAX_DEVICES + 10 }, (_, i) => ({
     device_id: String(i).padStart(32, "0"),
-    device_token: "t",
+    device_token: token,
   }));
   assert.equal(capListEntries(many).length, LIST_MAX_DEVICES);
 });

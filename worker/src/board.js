@@ -276,8 +276,8 @@ export function capListEntries(entries) {
   const seen = new Set();
   const out = [];
   for (const entry of entries) {
-    const id = entry?.device_id;
-    if (typeof id !== "string" || id.length < 16) continue;
+    if (!deviceCredentialsAreValid(entry?.device_id, entry?.device_token)) continue;
+    const id = entry.device_id;
     if (seen.has(id)) continue;
     seen.add(id);
     out.push(entry);

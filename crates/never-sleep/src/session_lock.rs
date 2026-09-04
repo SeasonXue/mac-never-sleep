@@ -379,6 +379,17 @@ pub fn should_fail_apply_if_lock_write_failed(
     may_own && owns_power && !write_ok
 }
 
+/// Clearing the global flag before a failed successor lock write must not
+/// leave clamshell sleep disabled under a donor that still owns `clamshell=1`.
+#[cfg(any(test, target_os = "macos"))]
+pub fn should_reassert_donor_clamshell_after_lock_write_failure(
+    write_failed: bool,
+    cleared_unclaimed: bool,
+    donor_clamshell: bool,
+) -> bool {
+    write_failed && cleared_unclaimed && donor_clamshell
+}
+
 #[cfg(any(test, target_os = "macos"))]
 pub fn write_session_lock(pid: u32, clamshell: bool, starttime: Option<u64>) -> bool {
     if pid == 0 {
@@ -387,11 +398,23 @@ pub fn write_session_lock(pid: u32, clamshell: bool, starttime: Option<u64>) -> 
     if crate::paths::ensure_data_dir().is_err() {
         return false;
     }
-    std::fs::write(
-        crate::paths::session_lock_path(),
-        format_lock_text(pid, clamshell, starttime),
-    )
-    .is_ok()
+    let path = crate::paths::session_lock_path();
+    let mut tmp = path.clone();
+    tmp.set_extension("lock.tmp");
+    let body = format_lock_text(pid, clamshell, starttime);
+    let Ok(mut file) = File::create(&tmp) else {
+        return false;
+    };
+    if file.write_all(body.as_bytes()).is_err() || file.sync_all().is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return false;
+    }
+    drop(file);
+    if std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return false;
+    }
+    true
 }
 
 /// Rollback must write the donor's original clamshell bit, not the successor's.
@@ -407,14 +430,7 @@ pub fn restore_donor_session_lock(pid: u32, starttime: u64, donor_clamshell: boo
     }
     let successor = read_lock_record().map(|rec| rec.clamshell).unwrap_or(false);
     let clamshell = restored_donor_clamshell_bit(donor_clamshell, successor);
-    let Ok(_) = crate::paths::ensure_data_dir() else {
-        return false;
-    };
-    std::fs::write(
-        crate::paths::session_lock_path(),
-        format_lock_text(pid, clamshell, Some(starttime)),
-    )
-    .is_ok()
+    write_session_lock(pid, clamshell, Some(starttime))
 }
 
 /// Foreground admission is `reporter.lock`, including when cloud is disabled.
@@ -613,6 +629,67 @@ mod tests {
     }
 
     #[test]
+    fn lock_write_failure_reasserts_donor_clamshell() {
+        assert!(
+            should_reassert_donor_clamshell_after_lock_write_failure(true, true, true),
+            "clearing the flag then failing to take session.lock must put clamshell disable back"
+        );
+        assert!(!should_reassert_donor_clamshell_after_lock_write_failure(
+            false, true, true
+        ));
+        assert!(!should_reassert_donor_clamshell_after_lock_write_failure(
+            true, false, true
+        ));
+        assert!(!should_reassert_donor_clamshell_after_lock_write_failure(
+            true, true, false
+        ));
+        let macos = include_str!("platform/macos.rs");
+        let apply = macos.split("fn apply_power").nth(1).expect("apply_power");
+        assert!(
+            apply.contains("should_reassert_donor_clamshell_after_lock_write_failure")
+                && apply.contains("set_clamshell_sleep_disabled(true)"),
+            "ApplyPower must restore the donor's clamshell disable after a failed lock write"
+        );
+        let clear_at = apply
+            .find("should_clear_unclaimed_clamshell")
+            .expect("clear unclaimed");
+        let write_at = apply.rfind("write_lock").expect("write lock");
+        assert!(
+            clear_at < write_at,
+            "do not write session.lock before restoring an inherited clamshell flag"
+        );
+    }
+
+    #[test]
+    fn session_lock_write_is_atomic_rename() {
+        let src = include_str!("session_lock.rs");
+        let write_fn = src
+            .split("pub fn write_session_lock")
+            .nth(1)
+            .expect("write_session_lock")
+            .split("pub fn restored_donor_clamshell_bit")
+            .next()
+            .unwrap();
+        assert!(
+            write_fn.contains("lock.tmp")
+                && write_fn.contains("sync_all")
+                && write_fn.contains("rename"),
+            "a crash must not leave a truncated session.lock that cleanup treats as clamshell=0"
+        );
+        let restore = src
+            .split("pub fn restore_donor_session_lock")
+            .nth(1)
+            .expect("restore")
+            .split("pub fn should_claim_foreground_reporter_lock")
+            .next()
+            .unwrap();
+        assert!(
+            restore.contains("write_session_lock"),
+            "donor rollback must use the same atomic lock write"
+        );
+    }
+
+    #[test]
     fn adopt_fails_when_session_lock_cannot_be_rewritten() {
         let macos = include_str!("platform/macos.rs");
         let write_fn = macos
@@ -631,16 +708,16 @@ mod tests {
         let path = crate::paths::session_lock_path();
         std::fs::write(&path, "pid=1\nclamshell=1\n").unwrap();
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o444);
-        std::fs::set_permissions(&path, perms).unwrap();
+        let dir = crate::paths::data_dir();
+        let orig = std::fs::metadata(&dir).unwrap().permissions();
+        let mut perms = orig.clone();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&dir, perms).unwrap();
         let wrote = write_session_lock(std::process::id(), false, Some(1));
-        let mut restore = std::fs::metadata(&path).unwrap().permissions();
-        restore.set_mode(0o644);
-        std::fs::set_permissions(&path, restore).unwrap();
+        std::fs::set_permissions(&dir, orig).unwrap();
         assert!(
             !wrote,
-            "a read-only session.lock must not be treated as a successful successor claim"
+            "a read-only data dir must not be treated as a successful successor claim"
         );
     }
 
