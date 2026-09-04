@@ -763,6 +763,26 @@ mod tests {
     }
 
     #[test]
+    fn loop_destroyed_flushes_inactive_cloud() {
+        let gui = include_str!("gui.rs");
+        let arm = gui
+            .split("Event::LoopDestroyed")
+            .nth(1)
+            .expect("LoopDestroyed")
+            .split("_ => {}")
+            .next()
+            .unwrap();
+        let stop_at = arm.find("stop_for_quit").expect("stop_for_quit");
+        let flush_at = arm
+            .find("flush_cloud_on_quit")
+            .expect("flush_cloud_on_quit");
+        assert!(
+            stop_at < flush_at,
+            "LoopDestroyed must flush an inactive snapshot after restoring power policy"
+        );
+    }
+
+    #[test]
     fn live_menu_lock_survives_foreground_release() {
         assert!(
             !should_release_clamshell_lock(11, Some(22), true),

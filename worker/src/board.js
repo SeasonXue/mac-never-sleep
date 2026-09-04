@@ -413,10 +413,15 @@ export async function publishReservedPairing({
   startDevice,
   release,
   confirmLive,
+  forgetDevice,
   maxAttempts = PAIR_RESERVE_ATTEMPTS,
 }) {
   const drop = (code) =>
     release ? bestEffortCleanup(undefined, () => release(code)) : Promise.resolve();
+  const forget = (code) =>
+    forgetDevice
+      ? bestEffortCleanup(undefined, () => forgetDevice(code))
+      : Promise.resolve();
   for (let i = 0; i < maxAttempts; i++) {
     const code = generateCode();
     let reserved;
@@ -443,6 +448,7 @@ export async function publishReservedPairing({
           live = false;
         }
         if (!live) {
+          await forget(code);
           await drop(code);
           return { ok: false, error: "pair_busy", status: 503 };
         }

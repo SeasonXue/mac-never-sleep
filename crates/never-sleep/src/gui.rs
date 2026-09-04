@@ -613,6 +613,7 @@ pub fn run() {
             }
             Event::LoopDestroyed => {
                 stop_for_quit(&mut engine, platform.as_mut());
+                flush_cloud_on_quit(&engine, platform.as_mut(), &mut cloud);
             }
             _ => {}
         }

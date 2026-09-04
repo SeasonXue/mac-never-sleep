@@ -281,6 +281,15 @@ async function routeApi(request, env) {
         const json = await live.json().catch(() => ({}));
         return pairingCodeIsLive(json.pairing_code, formatPairingCode(code));
       },
+      forgetDevice: async (code) => {
+        await stubFetch(
+          env,
+          name,
+          "https://do/internal/pair-drop",
+          { pairing_code: formatPairingCode(code) },
+          origin,
+        );
+      },
     });
     if (started.ok) {
       const { status, ...payload } = started;

@@ -289,7 +289,9 @@ fn worker_shards_per_device_not_one_global_board() {
         .nth(1)
         .expect("confirmLive");
     assert!(
-        confirm.contains("catch") && confirm.contains("drop(code)"),
+        confirm.contains("catch")
+            && confirm.contains("drop(code)")
+            && confirm.contains("forget(code)"),
         "live-pairing confirmation failures must drop the reserved shard"
     );
     assert!(board.contains("rate_limited"));

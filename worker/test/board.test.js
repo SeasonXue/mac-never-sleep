@@ -1235,6 +1235,7 @@ test("unchanged alarm deadlines skip Durable Object alarm writes", () => {
 
 test("superseded pair/start is not returned after a newer code is live", async () => {
   let released = [];
+  const forgotten = [];
   const result = await publishReservedPairing({
     generateCode: () => "AAAA1111",
     reserve: async () => ({ ok: true }),
@@ -1247,9 +1248,17 @@ test("superseded pair/start is not returned after a newer code is live", async (
     release: async (code) => {
       released.push(code);
     },
+    forgetDevice: async (code) => {
+      forgotten.push(code);
+    },
   });
   assert.equal(result.ok, false);
   assert.deepEqual(released, ["AAAA1111"]);
+  assert.deepEqual(
+    forgotten,
+    ["AAAA1111"],
+    "an unconfirmed start must drop the device offer so heartbeat cannot advertise it",
+  );
 });
 
 test("partial list polls keep cached statuses for missing Macs", () => {
@@ -2338,6 +2347,7 @@ test("startDevice failure during pair reservation releases the shard", async () 
 
 test("confirmLive failure during pair reservation releases the shard", async () => {
   const released = [];
+  const forgotten = [];
   const result = await publishReservedPairing({
     generateCode: () => "AAAA1111",
     reserve: async () => ({ ok: true }),
@@ -2352,15 +2362,67 @@ test("confirmLive failure during pair reservation releases the shard", async () 
     release: async (code) => {
       released.push(code);
     },
+    forgetDevice: async (code) => {
+      forgotten.push(code);
+    },
   });
   assert.deepEqual(
     released,
     ["AAAA1111"],
     "a reserved pair shard must be dropped if live confirmation throws",
   );
+  assert.deepEqual(
+    forgotten,
+    ["AAAA1111"],
+    "the device offer must be dropped so heartbeat cannot advertise an unclaimable code",
+  );
   assert.equal(result.ok, false);
   assert.equal(result.error, "pair_busy");
   assert.equal(result.status, 503);
+});
+
+test("dropping an unconfirmed device offer keeps heartbeat from advertising it", () => {
+  const board = new Board(() => 1_000);
+  const id = identity();
+  const started = board.startPairing({
+    deviceId: id.device_id,
+    deviceToken: id.device_token,
+    displayName: id.display_name,
+  });
+  assert.equal(started.ok, true);
+  board.dropOffer(started.pairing_code);
+  const beat = board.heartbeat({
+    deviceId: id.device_id,
+    deviceToken: id.device_token,
+    displayName: id.display_name,
+    status: sampleStatus(),
+  });
+  assert.equal(
+    beat.pairing_code,
+    null,
+    "heartbeat must not revive an offer whose pair shard was abandoned",
+  );
+});
+
+test("pair start forgets the device offer when live confirmation fails", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const index = fs.readFileSync(path.join(root, "worker/src/index.js"), "utf8");
+  const startAt = index.indexOf('path === "/api/pair/start"');
+  const nextAt = index.indexOf("path !== \"/api/heartbeat\"", startAt);
+  assert.ok(startAt >= 0 && nextAt > startAt);
+  const block = index.slice(startAt, nextAt);
+  const forgetAt = block.indexOf("forgetDevice");
+  assert.ok(forgetAt >= 0, "unconfirmed pair/start must drop the device offer");
+  const forgetFn = block.slice(forgetAt, forgetAt + 350);
+  assert.ok(
+    forgetFn.includes("internal/pair-drop") && forgetFn.includes("name"),
+    "device-offer drop must target the device shard, not pair:{code}",
+  );
+  assert.equal(
+    forgetFn.includes("`pair:"),
+    false,
+    "do not delete only the pair shard when abandoning an unconfirmed start",
+  );
 });
 
 test("release failure after startDevice throw still retries the next code", async () => {
