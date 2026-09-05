@@ -199,40 +199,16 @@ html[lang="zh-Hans"] .kicker {
 .brand-name { white-space: nowrap; }
 
 .hero-stage { padding: 8px 0 56px; }
-.shots {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 28px;
-  align-items: start;
-  max-width: 760px;
-  margin: 0 auto;
-}
-.shot {
-  margin: 0;
-}
-.shot img {
-  width: 100%;
-  filter: drop-shadow(0 18px 40px rgba(0, 0, 0, .38));
-}
-.shot figcaption {
-  margin-top: 10px;
-  min-height: 2.7em;
-  color: var(--hero-muted);
-  font-size: 13px;
-  line-height: 1.35;
-  text-align: center;
-}
-
 .celestial {
   display: flex;
   justify-content: center;
-  gap: 28px;
-  margin-top: 28px;
+  gap: 36px;
+  margin-top: 36px;
 }
 .coin {
-  width: 88px;
-  height: 88px;
-  padding: 8px;
+  width: 124px;
+  height: 124px;
+  padding: 10px;
   border-radius: 50%;
 }
 .coin.sun {
@@ -317,29 +293,6 @@ html[lang="zh-Hans"] .kicker {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.4;
-}
-
-.gallery {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  align-items: start;
-}
-.gallery figure {
-  margin: 0;
-  padding: 10px 10px 12px;
-  border: 0.5px solid var(--hairline);
-  border-radius: var(--card);
-  background: var(--surface);
-}
-.gallery img { width: 100%; }
-.gallery figcaption {
-  margin-top: 8px;
-  min-height: 2.6em;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.3;
-  text-align: center;
 }
 
 .help-section {
@@ -526,13 +479,10 @@ a:focus-visible {
   .nav-links { display: none; }
   .grid { grid-template-columns: 1fr; }
   #uses .grid { grid-template-columns: 1fr 1fr; }
-  .gallery { grid-template-columns: 1fr 1fr; }
-  .shots { grid-template-columns: 1fr; max-width: 360px; }
 }
 
 @media (max-width: 560px) {
   .wrap { width: min(var(--max), calc(100% - 24px)); }
-  .gallery { grid-template-columns: 1fr; }
   #uses .grid { grid-template-columns: 1fr; }
   .nav { gap: 8px; }
   .brand-name { display: none; }

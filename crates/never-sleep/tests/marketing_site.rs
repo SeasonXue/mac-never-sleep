@@ -526,10 +526,6 @@ fn required_static_assets_exist() {
         "assets/og.png",
         "assets/favicon.png",
         "assets/apple-touch-icon.png",
-        "assets/screenshots/main-idle-en.png",
-        "assets/screenshots/main-active-en.png",
-        "assets/screenshots/main-idle-zh.png",
-        "assets/screenshots/main-active-zh.png",
         "assets/site.js",
         "assets/board.js",
         "board/index.html",
@@ -552,17 +548,6 @@ fn css_rule<'a>(css: &'a str, selector: &str) -> &'a str {
         .unwrap_or_else(|| panic!("expected {selector} rule"))
 }
 
-fn png_ihdr_color_type(path: &Path) -> u8 {
-    let data = fs::read(path).unwrap_or_else(|err| panic!("{}: {err}", path.display()));
-    assert!(
-        data.starts_with(b"\x89PNG\r\n\x1a\n"),
-        "{} is not a PNG",
-        path.display()
-    );
-    assert_eq!(&data[12..16], b"IHDR", "{} missing IHDR", path.display());
-    data[25]
-}
-
 #[test]
 fn how_to_section_labels_share_the_card_column() {
     let css = read("assets/style.css");
@@ -583,50 +568,62 @@ fn how_to_section_labels_share_the_card_column() {
 }
 
 #[test]
-fn marketing_screenshots_keep_transparent_rounded_corners() {
-    let names = [
-        "howto-en.png",
-        "howto-zh.png",
-        "main-active-en.png",
-        "main-active-zh.png",
-        "main-idle-en.png",
-        "main-idle-zh.png",
-        "settings-en.png",
-        "settings-zh.png",
-    ];
+fn obsolete_app_screenshots_are_removed_from_docs_and_site() {
+    let css = read("assets/style.css");
+    assert!(!css.contains(".shots"));
+    assert!(!css.contains(".shot"));
+    assert!(!css.contains(".gallery"));
+
     for dir in [
         site_root().join("assets/screenshots"),
         readme_root().join("docs/screenshots"),
     ] {
-        for name in names {
-            let path = dir.join(name);
-            let color = png_ihdr_color_type(&path);
-            assert_eq!(
-                color, 6,
-                "{} must be RGBA so rounded-corner leftover pixels stay transparent on the gallery cards, got color type {color}",
-                path.display()
-            );
-        }
+        assert!(
+            !dir.exists(),
+            "obsolete app screenshot directory must be removed: {}",
+            dir.display()
+        );
     }
-}
 
-#[test]
-fn hero_shots_top_align_when_captions_wrap() {
-    let css = read("assets/style.css");
-    let shots = css_rule(&css, ".shots");
-    assert!(
-        shots.contains("align-items: start"),
-        "hero shots must top-align the panels; wrapping figcaptions must not lift one card, got {shots:?}"
-    );
-    assert!(
-        !shots.contains("align-items: end"),
-        "align-items: end lines cards to the caption baseline and breaks when copy wraps, got {shots:?}"
-    );
-    let gallery = css_rule(&css, ".gallery");
-    assert!(
-        gallery.contains("align-items: start"),
-        "gallery tiles must top-align so wrapping captions cannot shift the screenshots, got {gallery:?}"
-    );
+    for rel in ["index.html", "zh/index.html"] {
+        let html = read(rel);
+        assert!(
+            !html.contains("screenshots/"),
+            "{rel} references a screenshot"
+        );
+        assert!(
+            !html.contains(r#"id="look""#),
+            "{rel} keeps the old gallery"
+        );
+        assert!(
+            !html.contains(r##"href="#look""##),
+            "{rel} links to the old gallery"
+        );
+        assert!(
+            html.contains(r#"class="celestial""#),
+            "{rel} must retain the sun and moon brand artwork"
+        );
+        assert!(
+            !json_ld(&html).to_string().contains("\"screenshot\""),
+            "{rel} JSON-LD must not advertise a removed screenshot"
+        );
+    }
+
+    for (name, heading) in [
+        ("README.md", "## Menu bar workflow"),
+        ("README.zh-CN.md", "## 菜单栏操作"),
+    ] {
+        let text = fs::read_to_string(readme_root().join(name))
+            .unwrap_or_else(|err| panic!("missing {name}: {err}"));
+        assert!(
+            !text.contains("docs/screenshots/"),
+            "{name} references a screenshot"
+        );
+        assert!(
+            text.contains(heading),
+            "{name} needs a text-only workflow section"
+        );
+    }
 }
 
 #[test]
@@ -647,32 +644,6 @@ fn sun_coin_uses_idle_white_surface() {
             html.contains(r#"class="coin moon""#),
             "{rel} must keep the moon on the dark active surface"
         );
-    }
-}
-
-#[test]
-fn readme_screenshot_tables_keep_images_top_aligned() {
-    for name in ["README.md", "README.zh-CN.md"] {
-        let text = fs::read_to_string(readme_root().join(name))
-            .unwrap_or_else(|err| panic!("missing {name}: {err}"));
-        let table = text
-            .split("<table>")
-            .nth(1)
-            .and_then(|rest| rest.split("</table>").next())
-            .unwrap_or_else(|| panic!("{name} must keep the screenshot table"));
-        let tds = table.matches("<td").count();
-        let top = table.matches("valign=\"top\"").count();
-        assert_eq!(
-            tds, top,
-            "{name}: every screenshot cell must valign=top so wrapping captions cannot shift the images ({tds} td, {top} valign=top)"
-        );
-        for cell in table.split("<td").skip(1) {
-            let cell = cell.split("</td>").next().expect("td must close");
-            assert!(
-                !(cell.contains("<img") && cell.contains("<sub")),
-                "{name}: keep each screenshot and its caption in separate rows so wrapping cannot move the images"
-            );
-        }
     }
 }
 

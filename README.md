@@ -6,44 +6,14 @@ Keep a MacBook **awake with the display off**. Overnight downloads, a Mac mini-s
 
 The UI is **English by default**, with Simplified Chinese when the system language is Chinese (or when you choose it in the menu).
 
-## A look at the app
+## Menu bar workflow
 
-One left-click on the menu-bar sun opens a compact panel (coin, status, Start pill). Press **Start Screen-Off Standby** — the coin flips to a moon, a timer appears (elapsed, or a remaining countdown when a duration is set), and the display goes dark about 1.5 seconds later. **End Standby** stays clickable; **Sleep Display Now** darkens the panel immediately without ending the session. Close the panel or click the icon again to hide it. More Settings holds duration, screen-off, and the other toggles.
+One left-click on the menu-bar sun opens a compact panel (coin, status, Start pill).
 
-<table>
-  <tr>
-    <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-idle-en.png" width="260" alt="Never Sleep idle — press Start Screen-Off Standby">
-    </td>
-    <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-active-en.png" width="260" alt="Never Sleep active — screen off, Mac stays online">
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top">
-      <sub><b>One tap to start</b> — the display sleeps, the Mac stays awake.</sub>
-    </td>
-    <td align="center" valign="top">
-      <sub><b>Standby on</b> — screen off, the Mac keeps working.</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/settings-en.png" width="260" alt="Never Sleep settings with per-feature toggles and language switch">
-    </td>
-    <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/howto-en.png" width="260" alt="Never Sleep built-in How to use guide">
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top">
-      <sub><b>Every safeguard is a toggle</b> — in English or 简体中文.</sub>
-    </td>
-    <td align="center" valign="top">
-      <sub><b>Built-in guide</b> — how it works, one tap away.</sub>
-    </td>
-  </tr>
-</table>
+1. Press **Start Screen-Off Standby**. The coin flips to a moon, a timer appears (elapsed, or a remaining countdown when a duration is set), and the display goes dark about 1.5 seconds later.
+2. **End Standby** stays clickable. **Sleep Display Now** darkens the panel immediately without ending the session.
+3. Close the panel or click the icon again to hide it — that does not end standby.
+4. **More Settings** holds duration, screen-off, language, and the other toggles. A built-in How to use guide is one tap away.
 
 ## What it's for
 

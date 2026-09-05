@@ -6,44 +6,14 @@
 
 界面 **默认英语**；系统语言为中文时（或在菜单里选择「简体中文」）使用中文。
 
-## 界面一览
+## 菜单栏操作
 
-左键点一下菜单栏的太阳即可打开紧凑面板（硬币、状态、开始按钮）。点 **开始关屏待命** —— 硬币翻成月亮，下方显示已过时长（有限时长则为剩余倒计时），约 1.5 秒后屏幕关闭。**结束待命** 始终可点；**立即熄屏** 会马上关屏，不结束待命。关掉面板或再点图标只是隐藏。时长、关屏和其他开关都在更多设置里。
+左键点一下菜单栏的太阳即可打开紧凑面板（硬币、状态、开始按钮）。
 
-<table>
-  <tr>
-    <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-idle-zh.png" width="260" alt="Never Sleep 未开启，点开始关屏待命">
-    </td>
-    <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/main-active-zh.png" width="260" alt="Never Sleep 关屏待命中，屏幕已关、Mac 仍在线">
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top">
-      <sub><b>一点即开</b> —— 屏幕关掉，电脑不睡。</sub>
-    </td>
-    <td align="center" valign="top">
-      <sub><b>待命中</b> —— 屏幕已灭，电脑继续干活。</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/settings-zh.png" width="260" alt="Never Sleep 设置，逐项开关与语言切换">
-    </td>
-    <td align="center" valign="top" width="50%">
-      <img src="docs/screenshots/howto-zh.png" width="260" alt="Never Sleep 内置使用说明">
-    </td>
-  </tr>
-  <tr>
-    <td align="center" valign="top">
-      <sub><b>每项保护都是一个开关</b> —— 中英随心切换。</sub>
-    </td>
-    <td align="center" valign="top">
-      <sub><b>内置使用说明</b> —— 怎么用，一点就懂。</sub>
-    </td>
-  </tr>
-</table>
+1. 点 **开始关屏待命**。硬币翻成月亮，下方显示已过时长（有限时长则为剩余倒计时），约 1.5 秒后屏幕关闭。
+2. **结束待命** 始终可点；**立即熄屏** 会马上关屏，不结束待命。
+3. 关掉面板或再点图标只是隐藏，不会结束待命。
+4. 时长、关屏、语言和其他开关都在更多设置里；内置使用说明一点就懂。
 
 ## 适用场景
 
