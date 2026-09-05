@@ -142,6 +142,16 @@ Priority, English last as the fallback:
 
 JSON output stays English so agents have a stable contract.
 
+## Phone board
+
+Watch every paired Mac from your phone, and start or end Screen-Off Standby remotely. Open **[the phone board](https://xyz-ai.app/never-sleep/board/)**.
+
+1. On the Mac, open **More Settings**. The **Phone board** row shows a short pairing code. (Or run `never-sleep pair`.)
+2. On your phone, enter that code — or open the pairing URL the app prints. One browser can watch several Macs.
+3. The list is live: online/offline (recent heartbeat), standby on/off, display asleep vs awake, lid, AC vs battery %, remaining time, and the machine name.
+4. **Start Screen-Off Standby** and **End Standby** apply to the Mac you tap, not the whole list. The phone authenticates with that machine’s pairing token. The Mac runs the same local `on` / `off` Engine path as the menu bar (no Energy Saver rewrite).
+5. If the Mac is offline, the board reports that the command did not apply. It will not fake a status change. Remote start still will not force-sleep the display while someone is at the keyboard.
+
 ## How it works
 
 Power semantics on macOS are split, which is why “display off + stay awake” is possible:

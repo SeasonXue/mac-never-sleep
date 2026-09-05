@@ -545,3 +545,79 @@ a:focus-visible {
   html { scroll-behavior: auto; }
   .btn { transition: none; }
 }
+
+/* Phone status board — opaque cards, same tokens as the marketing pages. */
+.board-page {
+  min-height: 100dvh;
+  background: var(--bg);
+}
+.board-page .hero { padding-bottom: 20px; }
+.board-page .hero-copy { padding: 20px 0 8px; text-align: left; }
+.board-page .hero-copy h1 { font-size: 28px; }
+.board-page .lede { margin-left: 0; font-size: 15px; }
+.board-main { padding: 16px 0 48px; }
+.pair-form {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 18px;
+}
+.pair-form input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  border: 0.5px solid var(--stroke);
+  border-radius: 10px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.device-list { display: flex; flex-direction: column; gap: 12px; }
+.device-card {
+  background: var(--surface);
+  border-radius: var(--card);
+  box-shadow: inset 0 0 0 0.5px var(--stroke);
+  padding: 14px;
+}
+.device-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.device-name { font-weight: 650; font-size: 17px; letter-spacing: -0.02em; }
+.device-online { font-size: 13px; font-weight: 600; color: var(--switch-on); }
+.device-online.off { color: var(--muted); }
+.device-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.device-meta strong { color: var(--ink); font-weight: 600; }
+.device-actions { display: flex; gap: 8px; }
+.device-actions .btn { flex: 1; height: 40px; }
+.btn-danger { color: #fff; background: #c93400; }
+.board-empty, .board-note, .board-error {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.board-error { color: var(--warning); }
+.device-card.offline .device-actions .btn { opacity: 0.55; }
+.forget {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+

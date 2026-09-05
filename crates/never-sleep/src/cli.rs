@@ -48,6 +48,11 @@ pub enum Command {
     Doctor,
     /// Restore clamshell-sleep flags (safety net after a crash)
     Cleanup,
+    /// Print a phone pairing code and URL
+    Pair {
+        #[arg(long)]
+        json: bool,
+    },
     /// Print usage notes
     Explain,
 }
@@ -81,6 +86,12 @@ mod tests {
         let cli = Cli::try_parse_from(["never-sleep", "--menubar"]).unwrap();
         assert!(cli.menubar);
         assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_pair_json() {
+        let cli = Cli::try_parse_from(["never-sleep", "pair", "--json"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Pair { json: true })));
     }
 
     #[test]

@@ -69,6 +69,15 @@ impl Lang {
     pub fn is_chinese(self) -> bool {
         matches!(self, Self::Zh)
     }
+
+    /// Stable cloud/heartbeat tag (`en` / `zh`). JSON stays English.
+    pub fn cloud_tag(self) -> &'static str {
+        if self.is_chinese() {
+            "zh"
+        } else {
+            "en"
+        }
+    }
 }
 
 /// Translator for a concrete UI language.
@@ -383,6 +392,21 @@ impl Tr {
         self.pick("Launch at login", "登录时启动")
     }
 
+    pub fn phone_board(self) -> &'static str {
+        self.pick("Phone board", "手机看板")
+    }
+
+    pub fn pairing_code(self) -> &'static str {
+        self.pick("Pairing code", "配对码")
+    }
+
+    pub fn pairing_unavailable(self) -> &'static str {
+        self.pick(
+            "Pairing is not ready yet. Open Settings, or retry in a moment.",
+            "配对尚未就绪。请打开设置，或稍后再试。",
+        )
+    }
+
     pub fn language_menu(self) -> &'static str {
         self.pick("Language", "语言")
     }
@@ -496,6 +520,17 @@ impl Tr {
         }
     }
 
+    pub fn notify_started_body_remote_user_present(self, hotkey: &str) -> String {
+        match self.lang {
+            Lang::En => format!(
+                "Standby is on; the display stays under local control until you step away. Press {hotkey} to end."
+            ),
+            Lang::Zh => {
+                format!("待命已开启；有人在用时屏幕仍由本机控制，离开后才会关屏。按 {hotkey} 结束。")
+            }
+        }
+    }
+
     pub fn remaining_clause(self, duration: &str) -> String {
         match self.lang {
             Lang::En => format!(" {duration} left."),
@@ -551,6 +586,13 @@ impl Tr {
         self.pick(
             "Never Sleep is already running in the menu bar.",
             "Never Sleep 已在菜单栏运行。",
+        )
+    }
+
+    pub fn menu_ipc_timed_out(self) -> &'static str {
+        self.pick(
+            "The menu bar did not answer in time. Standby was not started in this process.",
+            "菜单栏未及时响应，本进程未开启待命。",
         )
     }
 
@@ -637,6 +679,13 @@ impl Tr {
         self.pick("Could not enter standby", "未能进入待命")
     }
 
+    pub fn foreground_already_running(self) -> &'static str {
+        self.pick(
+            "Standby is already running in another Never Sleep process.",
+            "另一 Never Sleep 进程已在待命。",
+        )
+    }
+
     pub fn foreground_started(self) -> &'static str {
         self.pick(
             "Standby is on. The display will sleep; the Mac stays awake. Press Ctrl-C to end.",
@@ -680,6 +729,13 @@ impl Tr {
         self.pick(
             "Could not create PreventUserIdleSystemSleep assertion",
             "无法创建 PreventUserIdleSystemSleep 断言",
+        )
+    }
+
+    pub fn clamshell_restore_failed(self) -> &'static str {
+        self.pick(
+            "Could not restore clamshell sleep after adopting without lid-awake",
+            "接管后未能恢复合盖睡眠（本次未占用合盖标志）",
         )
     }
 
@@ -834,6 +890,8 @@ mod tests {
         assert_eq!(Lang::parse_opt("zh_CN"), Some(Lang::Zh));
         assert_eq!(Lang::parse_opt("fr_FR"), None);
         assert_eq!(Lang::parse_opt("C"), None);
+        assert_eq!(Lang::En.cloud_tag(), "en");
+        assert_eq!(Lang::Zh.cloud_tag(), "zh");
     }
 
     #[test]
@@ -920,6 +978,23 @@ mod tests {
         );
         assert_eq!(en.settings_title(), "Settings");
         assert_eq!(zh.settings_title(), "设置");
+        assert_eq!(en.phone_board(), "Phone board");
+        assert_eq!(zh.phone_board(), "手机看板");
+        assert_eq!(en.pairing_code(), "Pairing code");
+        assert_eq!(zh.pairing_code(), "配对码");
+        assert_eq!(
+            en.pairing_unavailable(),
+            "Pairing is not ready yet. Open Settings, or retry in a moment."
+        );
+        assert_eq!(
+            zh.pairing_unavailable(),
+            "配对尚未就绪。请打开设置，或稍后再试。"
+        );
+        assert_ne!(
+            zh.pairing_unavailable(),
+            "pairing_unavailable",
+            "human CLI output must not print the IPC code"
+        );
         assert_eq!(en.back(), "Back");
         assert_eq!(zh.back(), "返回");
         assert_eq!(en.panel_section_session(), "Session");
@@ -1008,5 +1083,56 @@ mod tests {
             Tr::new(Lang::En).notify_ended_user_body(),
             "Normal sleep policy restored."
         );
+    }
+
+    #[test]
+    fn remote_user_present_start_copy_explains_local_display_control() {
+        let en = Tr::new(Lang::En).notify_started_body_remote_user_present("⌥⌘P");
+        let zh = Tr::new(Lang::Zh).notify_started_body_remote_user_present("⌥⌘P");
+        assert!(en.contains("local control"));
+        assert!(en.contains("⌥⌘P"));
+        assert!(!en.contains("will sleep in about"));
+        assert!(zh.contains("本机控制"));
+        assert!(zh.contains("⌥⌘P"));
+        assert!(!zh.contains("秒后关闭屏幕"));
+        assert_ne!(en, zh);
+    }
+
+    #[test]
+    fn clamshell_restore_failed_is_bilingual() {
+        let en = Tr::new(Lang::En).clamshell_restore_failed();
+        let zh = Tr::new(Lang::Zh).clamshell_restore_failed();
+        assert!(en.contains("clamshell"));
+        assert!(zh.contains("合盖"));
+        assert_ne!(en, zh);
+        assert!(!zh.contains("熄屏待命"));
+    }
+
+    #[test]
+    fn foreground_already_running_is_bilingual() {
+        assert_eq!(
+            Tr::new(Lang::En).foreground_already_running(),
+            "Standby is already running in another Never Sleep process."
+        );
+        assert_eq!(
+            Tr::new(Lang::Zh).foreground_already_running(),
+            "另一 Never Sleep 进程已在待命。"
+        );
+        assert!(!Tr::new(Lang::Zh)
+            .foreground_already_running()
+            .contains("熄屏待命"));
+    }
+
+    #[test]
+    fn menu_ipc_timed_out_is_bilingual() {
+        assert_eq!(
+            Tr::new(Lang::En).menu_ipc_timed_out(),
+            "The menu bar did not answer in time. Standby was not started in this process."
+        );
+        assert_eq!(
+            Tr::new(Lang::Zh).menu_ipc_timed_out(),
+            "菜单栏未及时响应，本进程未开启待命。"
+        );
+        assert!(!Tr::new(Lang::Zh).menu_ipc_timed_out().contains("熄屏待命"));
     }
 }

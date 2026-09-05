@@ -427,14 +427,17 @@ fn escape_as(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn write_lock(clamshell: bool) {
-    let _ = ensure_data_dir();
-    let body = format!(
-        "pid={}\nclamshell={}\n",
-        std::process::id(),
-        u8::from(clamshell)
-    );
-    let _ = fs::write(session_lock_path(), body);
+fn write_lock(clamshell: bool) -> Result<(), String> {
+    let pid = std::process::id();
+    if crate::session_lock::write_session_lock(
+        pid,
+        clamshell,
+        Some(crate::session_lock::process_instance_token(pid)),
+    ) {
+        Ok(())
+    } else {
+        Err("session.lock".into())
+    }
 }
 
 fn pid_alive(pid: u32) -> bool {
@@ -444,23 +447,25 @@ fn pid_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-fn parse_lock() -> Option<(u32, bool)> {
+fn parse_lock() -> Option<crate::session_lock::SessionLockRecord> {
     let mut s = String::new();
     fs::File::open(session_lock_path())
         .ok()?
         .read_to_string(&mut s)
         .ok()?;
-    let mut pid = 0u32;
-    let mut clamshell = false;
-    for line in s.lines() {
-        if let Some(v) = line.strip_prefix("pid=") {
-            pid = v.trim().parse().unwrap_or(0);
-        }
-        if let Some(v) = line.strip_prefix("clamshell=") {
-            clamshell = v.trim() == "1";
-        }
-    }
-    Some((pid, clamshell))
+    Some(crate::session_lock::parse_lock_record(&s))
+}
+
+fn lock_holder_alive(parsed: Option<crate::session_lock::SessionLockRecord>) -> bool {
+    parsed
+        .map(|rec| {
+            crate::session_lock::lock_holder_is_live(
+                pid_alive(rec.pid),
+                rec.starttime,
+                crate::session_lock::observed_instance_token(rec.pid),
+            )
+        })
+        .unwrap_or(false)
 }
 
 pub struct MacPlatform {
@@ -471,6 +476,7 @@ pub struct MacPlatform {
     clamshell_on: bool,
     owns_power: bool,
     power_thread_started: bool,
+    keep_inherited_lock: bool,
 }
 
 impl MacPlatform {
@@ -483,6 +489,7 @@ impl MacPlatform {
             clamshell_on: false,
             owns_power: false,
             power_thread_started: false,
+            keep_inherited_lock: false,
         };
         me.ensure_clamshell_conn();
         me.cleanup_orphans();
@@ -555,11 +562,29 @@ fn install_panic_cleanup() {
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             if OWNS_POWER.load(Ordering::SeqCst) {
+                let parsed = parse_lock();
+                let our_pid = std::process::id();
+                let holder_alive = lock_holder_alive(parsed);
+                let drop_lock = crate::session_lock::should_release_clamshell_lock(
+                    our_pid,
+                    parsed.map(|rec| rec.pid),
+                    holder_alive,
+                );
+                let restore_clamshell = crate::session_lock::should_restore_clamshell(
+                    our_pid,
+                    parsed.map(|rec| (rec.pid, rec.clamshell)),
+                    holder_alive,
+                );
                 OWNS_POWER.store(false, Ordering::SeqCst);
                 SESSION_ACTIVE.store(false, Ordering::SeqCst);
-                CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
-                set_clamshell_sleep_disabled(false);
-                let _ = fs::remove_file(session_lock_path());
+                if restore_clamshell {
+                    set_clamshell_sleep_disabled(false);
+                    CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+                }
+                if drop_lock {
+                    CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+                    let _ = fs::remove_file(session_lock_path());
+                }
             }
             prev(info);
         }));
@@ -586,6 +611,7 @@ impl Platform for MacPlatform {
     }
 
     fn apply_power(&mut self, plan: PowerPlan) -> Result<(), String> {
+        let already_holding = self.owns_power;
         self.ensure_clamshell_conn();
         let t = tr();
         let reason = t.assertion_reason();
@@ -618,28 +644,86 @@ impl Platform for MacPlatform {
             release_assertion(&mut self.network_id);
         }
 
-        if plan.disable_clamshell_sleep {
-            set_clamshell_sleep_disabled(true);
-            self.clamshell_on = true;
-        } else if self.clamshell_on {
-            set_clamshell_sleep_disabled(false);
-            self.clamshell_on = false;
-        }
-
         if plan.prevent_idle_sleep && self.idle_id.is_none() {
             self.owns_power = true;
             let _ = self.release_power();
             return Err(t.idle_assertion_failed().into());
         }
 
+        let parsed = parse_lock();
+        let holder_alive = lock_holder_alive(parsed);
+        let donor_clamshell = parsed.map(|rec| rec.clamshell).unwrap_or(false);
+        let may_own = crate::session_lock::should_claim_session_lock(
+            std::process::id(),
+            parsed.map(|rec| rec.pid),
+            holder_alive,
+            already_holding,
+        );
+
+        let mut cleared_unclaimed = false;
+        if may_own {
+            if crate::session_lock::should_clear_unclaimed_clamshell(plan.disable_clamshell_sleep) {
+                if !set_clamshell_sleep_disabled(false) {
+                    let parsed = parse_lock();
+                    let holder_alive = lock_holder_alive(parsed);
+                    if crate::session_lock::should_fail_unclaimed_clamshell_restore(
+                        plan.disable_clamshell_sleep,
+                        parsed.map(|rec| (rec.pid, rec.clamshell)),
+                        holder_alive,
+                        std::process::id(),
+                    ) {
+                        self.owns_power = true;
+                        self.keep_inherited_lock =
+                            crate::session_lock::should_keep_inherited_clamshell_lock(
+                                true,
+                                parsed.map(|rec| (rec.pid, rec.clamshell)),
+                                std::process::id(),
+                            );
+                        let _ = self.release_power();
+                        return Err(t.clamshell_restore_failed().into());
+                    }
+                }
+                self.clamshell_on = false;
+                cleared_unclaimed = true;
+            } else {
+                set_clamshell_sleep_disabled(true);
+                self.clamshell_on = true;
+            }
+        }
+
         self.owns_power = plan.prevent_idle_sleep || plan.disable_clamshell_sleep;
         OWNS_POWER.store(self.owns_power, Ordering::SeqCst);
         SESSION_ACTIVE.store(self.owns_power, Ordering::SeqCst);
-        CLAMSHELL_OWNED.store(self.clamshell_on, Ordering::SeqCst);
+        CLAMSHELL_OWNED.store(
+            crate::session_lock::should_retain_clamshell_power_callback(may_own, self.clamshell_on),
+            Ordering::SeqCst,
+        );
 
         if self.owns_power {
-            write_lock(self.clamshell_on);
-        } else {
+            if may_own {
+                let write_ok = write_lock(self.clamshell_on).is_ok();
+                if crate::session_lock::should_fail_apply_if_lock_write_failed(
+                    may_own,
+                    self.owns_power,
+                    write_ok,
+                ) {
+                    if crate::session_lock::should_reassert_donor_clamshell_after_lock_write_failure(
+                        true,
+                        cleared_unclaimed,
+                        donor_clamshell,
+                        holder_alive,
+                    ) {
+                        let iokit_ok = set_clamshell_sleep_disabled(true);
+                        if crate::session_lock::should_request_donor_clamshell_reapply(
+                            true, iokit_ok,
+                        ) {
+                            crate::session_lock::request_donor_clamshell_reapply();
+                        }
+                    }
+                    return Err("session.lock".into());
+                }
+            }
+        } else if may_own {
             let _ = fs::remove_file(session_lock_path());
         }
         Ok(())
@@ -655,11 +739,35 @@ impl Platform for MacPlatform {
         if !had_holds {
             return Ok(());
         }
+        let parsed = parse_lock();
+        let our_pid = std::process::id();
+        let holder_alive = lock_holder_alive(parsed);
+        let drop_lock = match parsed {
+            None => true,
+            Some(rec) => crate::session_lock::should_release_clamshell_lock(
+                our_pid,
+                Some(rec.pid),
+                holder_alive,
+            ),
+        };
+        let restore_clamshell = crate::session_lock::should_restore_clamshell(
+            our_pid,
+            parsed.map(|rec| (rec.pid, rec.clamshell)),
+            holder_alive,
+        );
         if self.owns_power {
             OWNS_POWER.store(false, Ordering::SeqCst);
             SESSION_ACTIVE.store(false, Ordering::SeqCst);
-            CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
-            let _ = fs::remove_file(session_lock_path());
+            let keep_inherited = crate::session_lock::should_keep_inherited_clamshell_lock(
+                self.keep_inherited_lock,
+                parsed.map(|rec| (rec.pid, rec.clamshell)),
+                our_pid,
+            );
+            self.keep_inherited_lock = false;
+            if drop_lock && !keep_inherited {
+                CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+                let _ = fs::remove_file(session_lock_path());
+            }
         }
         self.owns_power = false;
         release_assertion(&mut self.idle_id);
@@ -667,9 +775,11 @@ impl Platform for MacPlatform {
         release_assertion(&mut self.disk_id);
         release_assertion(&mut self.network_id);
         if self.clamshell_on {
-            set_clamshell_sleep_disabled(false);
+            if restore_clamshell {
+                set_clamshell_sleep_disabled(false);
+                CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
+            }
             self.clamshell_on = false;
-            CLAMSHELL_OWNED.store(false, Ordering::SeqCst);
         }
         Ok(())
     }
@@ -782,9 +892,9 @@ impl Platform for MacPlatform {
 
     fn cleanup_orphans(&self) {
         self.ensure_clamshell_conn();
-        if let Some((pid, clamshell)) = parse_lock() {
-            if pid != std::process::id() && !pid_alive(pid) {
-                if clamshell {
+        if let Some(rec) = parse_lock() {
+            if rec.pid != std::process::id() && !lock_holder_alive(Some(rec)) {
+                if rec.clamshell {
                     set_clamshell_sleep_disabled(false);
                 }
                 let _ = fs::remove_file(session_lock_path());

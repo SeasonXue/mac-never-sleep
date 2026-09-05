@@ -27,14 +27,21 @@ pub fn apply_effects(engine: &Engine, platform: &mut dyn Platform, effects: &[Ef
             Effect::Notify { title, body } => platform.notify(title, body),
         }
     }
-    save_config(&engine.config);
+    if crate::persist::should_persist_config(
+        crate::ipc::this_process_owns_ipc(),
+        crate::ipc::menu_socket_absent(),
+    ) {
+        save_config(&engine.config);
+    }
     power_ok
 }
 
-pub fn dispatch(engine: &mut Engine, platform: &mut dyn Platform, input: Input) -> HostSnapshot {
-    let host = platform.snapshot();
-    let effects = engine.handle(input, &host);
-    if !apply_effects(engine, platform, &effects) && engine.is_active() {
+pub fn apply_effects_or_abort(
+    engine: &mut Engine,
+    platform: &mut dyn Platform,
+    effects: &[Effect],
+) {
+    if !apply_effects(engine, platform, effects) && engine.is_active() {
         let host = platform.snapshot();
         let stop = engine.handle(
             Input::Stop {
@@ -44,6 +51,12 @@ pub fn dispatch(engine: &mut Engine, platform: &mut dyn Platform, input: Input) 
         );
         apply_effects(engine, platform, &stop);
     }
+}
+
+pub fn dispatch(engine: &mut Engine, platform: &mut dyn Platform, input: Input) -> HostSnapshot {
+    let host = platform.snapshot();
+    let effects = engine.handle(input, &host);
+    apply_effects_or_abort(engine, platform, &effects);
     platform.snapshot()
 }
 

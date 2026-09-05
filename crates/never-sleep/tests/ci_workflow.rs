@@ -68,3 +68,19 @@ fn github_actions_are_manual_dispatch_only() {
         }
     }
 }
+
+#[test]
+fn linux_ci_runs_worker_node_tests() {
+    let src = fs::read_to_string(workflows_dir().join("ci.yml")).unwrap();
+    let linux = src
+        .split("test-linux:")
+        .nth(1)
+        .expect("test-linux job")
+        .split("build-macos:")
+        .next()
+        .unwrap();
+    assert!(
+        linux.contains("actions/setup-node") && linux.contains("npm test"),
+        "Worker regressions must fail Linux CI, not only local `node --test`"
+    );
+}

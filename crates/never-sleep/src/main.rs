@@ -1,6 +1,7 @@
 mod apply;
 mod cli;
 mod clock;
+mod cloud;
 mod foreground;
 #[cfg(any(test, target_os = "macos"))]
 mod icon;
@@ -10,6 +11,7 @@ mod paths;
 mod persist;
 mod platform;
 mod protocol;
+mod session_lock;
 mod util;
 
 #[cfg(target_os = "macos")]
@@ -23,7 +25,7 @@ use clap::Parser;
 use never_sleep_core::{Lang, StopReason, Tr, LANG_ENV};
 
 use crate::cli::{Cli, Command};
-use crate::ipc::try_send;
+use crate::ipc::{menu_socket_absent, try_send};
 use crate::persist::load_config;
 use crate::platform::default_platform;
 use crate::protocol::{IpcRequest, IpcResponse};
@@ -70,6 +72,7 @@ fn main() {
         Command::Explain => {
             println!("{}", t.onboarding());
         }
+        Command::Pair { json } => cmd_pair(json),
     }
 }
 
@@ -129,6 +132,38 @@ fn print_resp(resp: &IpcResponse, json: bool) {
     }
 }
 
+fn cmd_pair(json: bool) {
+    match try_send(&IpcRequest::Pair) {
+        Some(resp) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp).unwrap());
+                if !resp.ok {
+                    std::process::exit(1);
+                }
+                return;
+            }
+            if !resp.ok {
+                eprintln!("{}", pair_cli_error(&resp));
+                std::process::exit(1);
+            }
+            if let Some(code) = &resp.pairing_code {
+                println!("{}: {code}", ui_tr().pairing_code());
+            }
+            if let Some(url) = &resp.pairing_url {
+                println!("{url}");
+            }
+        }
+        None => {
+            eprintln!("{}", ui_tr().menubar_not_running());
+            std::process::exit(1);
+        }
+    }
+}
+
+fn pair_cli_error(resp: &IpcResponse) -> String {
+    crate::protocol::human_ipc_error(resp.error.as_deref().unwrap_or(""), load_config().lang())
+}
+
 fn cmd_on(for_raw: Option<String>, json: bool) {
     let t = ui_tr();
     let parse_lang = if json { Lang::En } else { load_config().lang() };
@@ -140,12 +175,18 @@ fn cmd_on(for_raw: Option<String>, json: bool) {
             std::process::exit(2);
         }
     };
-    let req = IpcRequest::On {
-        duration: for_raw.clone(),
-    };
+    let req = IpcRequest::on(for_raw.clone());
     if let Some(resp) = try_send(&req) {
         print_resp(&resp, json);
         return;
+    }
+    if crate::ipc::should_refuse_foreground_while_menu_live(menu_socket_absent()) {
+        if let Some(resp) = try_send(&req) {
+            print_resp(&resp, json);
+            return;
+        }
+        eprintln!("{}", t.menu_ipc_timed_out());
+        std::process::exit(1);
     }
     if json {
         eprintln!("{}", t.menubar_missing_foreground_json());
@@ -195,6 +236,131 @@ mod tests {
         let after = &src[start + needle.len()..];
         let end = after.find("\nfn ").unwrap_or(after.len());
         &src[start..start + needle.len() + end]
+    }
+
+    #[test]
+    fn cmd_on_does_not_start_foreground_while_menu_socket_is_live() {
+        let src = include_str!("main.rs");
+        let cmd = rust_fn_src(src, "cmd_on");
+        let refuse_at = cmd
+            .find("should_refuse_foreground_while_menu_live")
+            .expect("timed-out On must not fall back while ipc.sock is live");
+        let fg_at = cmd
+            .find("run_foreground")
+            .expect("foreground fallback is for a missing menu");
+        assert!(
+            refuse_at < fg_at && cmd.contains("menu_ipc_timed_out"),
+            "retry or time out while the menu socket is live instead of dispatching a second Start"
+        );
+    }
+
+    #[test]
+    fn pair_cli_goes_through_running_menu_ipc() {
+        let src = include_str!("main.rs");
+        let cmd = rust_fn_src(src, "cmd_pair");
+        assert!(
+            cmd.contains("try_send"),
+            "pair must talk to the menu process"
+        );
+        assert!(cmd.contains("IpcRequest::Pair"));
+        assert!(
+            !cmd.contains("request_pairing_code"),
+            "a second process must not mint a different cloud pairing"
+        );
+        assert!(cmd.contains("menubar_not_running"));
+        assert!(
+            cmd.contains("pair_cli_error"),
+            "human pair output must translate IPC codes"
+        );
+        let err = rust_fn_src(src, "pair_cli_error");
+        assert!(err.contains("human_ipc_error"));
+        let gui = include_str!("gui.rs");
+        assert!(gui.contains("IpcRequest::Pair"));
+        assert!(gui.contains("ok_pairing"));
+        let ipc_loop = gui
+            .split("while let Ok(incoming) = ipc_rx.try_recv()")
+            .nth(1)
+            .expect("gui ipc loop");
+        let chunk = ipc_loop.split("match event").next().unwrap();
+        let drain = chunk
+            .find("apply_polled_commands")
+            .expect("pair IPC must drain reporter events first");
+        let handle = chunk.find("handle_ipc").expect("handle_ipc");
+        assert!(
+            drain < handle,
+            "queued CloudEvent::Pairing must be applied before answering pair"
+        );
+        assert!(
+            chunk.contains("is_handoff"),
+            "a foreground Ping+On handoff must not drain phone Off onto an idle engine"
+        );
+        assert!(
+            chunk.matches("apply_polled_commands").count() >= 2,
+            "apply held phone commands after the menu adopts the live session"
+        );
+        let handle_ipc_src = rust_fn_src(gui, "handle_ipc");
+        assert!(
+            handle_ipc_src.contains("expire_stale_pairing"),
+            "IpcRequest::Pair must re-check expires_unix so a disconnected Mac does not keep an expired code"
+        );
+        assert!(
+            handle_ipc_src.contains("handoff") && handle_ipc_src.contains("Input::Handoff"),
+            "menu IPC must adopt a live session with remote display semantics"
+        );
+        let refresh_src = rust_fn_src(gui, "refresh_ui");
+        assert!(
+            refresh_src.contains("expire_stale_pairing"),
+            "panel refresh must drop pairing state after the stored deadline"
+        );
+        let quit = rust_fn_src(gui, "handle_ipc");
+        assert!(
+            !quit.contains("process::exit"),
+            "IPC quit must not skip CloudHandle flush"
+        );
+        assert!(
+            gui.contains("publish_and_flush") || gui.contains("flush_and_join"),
+            "menu process quit must wait for the inactive heartbeat"
+        );
+        assert!(
+            chunk.contains("break"),
+            "queued IPC after quit must not restart standby"
+        );
+        let after_ipc = gui
+            .split("while let Ok(incoming) = ipc_rx.try_recv()")
+            .nth(1)
+            .expect("gui ipc loop");
+        let before_match = after_ipc.split("match event").next().unwrap();
+        assert!(
+            before_match.contains("ControlFlow::Exit") && before_match.contains("return"),
+            "a coincident hotkey must not run after IPC quit is accepted"
+        );
+        let hotkey_block = gui
+            .split("UserEvent::Hotkey")
+            .nth(1)
+            .expect("gui Hotkey handler");
+        let hotkey_action = hotkey_block.split("refresh_ui").next().unwrap();
+        assert!(
+            hotkey_action.contains("apply_polled_commands"),
+            "hotkey toggle must drain cloud commands before dispatching the local toggle"
+        );
+        let menu_block = gui
+            .split("UserEvent::Menu(id)")
+            .nth(1)
+            .expect("gui Menu handler");
+        let menu_action = menu_block.split("handle_menu_event").next().unwrap();
+        assert!(
+            menu_action.contains("apply_polled_commands"),
+            "menu toggle must drain cloud commands before dispatching"
+        );
+        let ui_block = gui
+            .split("UserEvent::Ui(command)")
+            .nth(1)
+            .expect("gui Ui handler");
+        let ui_action = ui_block.split("handle_ui_command").next().unwrap();
+        assert!(
+            ui_action.contains("apply_polled_commands"),
+            "panel Ui commands must drain cloud commands before dispatching"
+        );
     }
 
     #[test]
@@ -289,6 +455,10 @@ mod tests {
         assert!(
             src.contains("sleepNow:"),
             "the moon panel must offer Sleep Display Now"
+        );
+        assert!(
+            src.contains("pairing_value"),
+            "Settings shows a pairing code row for the phone board"
         );
         assert!(
             src.contains("elapsed"),

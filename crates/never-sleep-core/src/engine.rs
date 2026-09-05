@@ -61,6 +61,18 @@ pub enum Input {
     DisplaySlept,
     /// Person asked to darken the panel now. Does not end standby.
     SleepDisplayNow,
+    /// Phone / cloud start. Standby begins, but the first display-sleep still
+    /// respects `user_present` (never fight someone at the keyboard).
+    StartRemote,
+    StartRemoteWith(DurationPref),
+    /// Take over a live session from another process (foreground → menu).
+    /// Uses remote display semantics and the leftover duration, not a fresh
+    /// local one-click start.
+    Handoff {
+        pref: DurationPref,
+        remaining_secs: Option<u64>,
+        elapsed_secs: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,8 +134,65 @@ struct Session {
     started_unix: i64,
     duration: DurationPref,
     deadline_unix: Option<i64>,
+    /// Seconds already elapsed in the donor process. Menu `Instant` cannot
+    /// represent a multi-hour session that started before this process.
+    elapsed_base_secs: u64,
     initial_display_off_sent: bool,
     last_sleep_display_ms: Option<u64>,
+    /// Remote start: skip the first forced sleep while a person is at the Mac.
+    remote: bool,
+}
+
+struct SessionClocks {
+    started_ms: u64,
+    started_continuous_ms: u64,
+    started_unix: i64,
+    deadline: Option<i64>,
+    elapsed_base_secs: u64,
+}
+
+fn session_clocks(pref: DurationPref, host: &HostSnapshot) -> SessionClocks {
+    SessionClocks {
+        started_ms: host.monotonic_ms,
+        started_continuous_ms: host.continuous_ms,
+        started_unix: host.unix_secs,
+        deadline: deadline_unix_secs(host.unix_secs, host.utc_offset_secs, host.unix_secs, pref),
+        elapsed_base_secs: 0,
+    }
+}
+
+fn clocks_from_remaining(host: &HostSnapshot, remaining: u64) -> SessionClocks {
+    SessionClocks {
+        started_ms: host.monotonic_ms,
+        started_continuous_ms: host.continuous_ms,
+        started_unix: host.unix_secs,
+        deadline: Some(host.unix_secs + remaining as i64),
+        elapsed_base_secs: 0,
+    }
+}
+
+fn handoff_clocks(
+    pref: DurationPref,
+    remaining_secs: Option<u64>,
+    elapsed_secs: Option<u64>,
+    host: &HostSnapshot,
+) -> SessionClocks {
+    let mut clocks = match (pref, remaining_secs) {
+        (DurationPref::Indefinite, _) => session_clocks(pref, host),
+        (_, Some(remaining)) => {
+            let rem = match pref {
+                DurationPref::Hours { hours } => {
+                    remaining.min(u64::from(hours).saturating_mul(3600))
+                }
+                DurationPref::UntilLocal { .. } => remaining.min(2 * 86_400),
+                DurationPref::Indefinite => remaining,
+            };
+            clocks_from_remaining(host, rem)
+        }
+        (_, None) => session_clocks(pref, host),
+    };
+    clocks.elapsed_base_secs = elapsed_secs.unwrap_or(0);
+    clocks
 }
 
 #[derive(Debug, Clone)]
@@ -153,13 +222,20 @@ impl Engine {
     pub fn handle(&mut self, input: Input, host: &HostSnapshot) -> Vec<Effect> {
         let mut effects = Vec::new();
         match input {
-            Input::Start => self.start(self.config.duration, host, &mut effects),
-            Input::StartWith(pref) => self.start(pref, host, &mut effects),
+            Input::Start => self.start(self.config.duration, host, false, &mut effects),
+            Input::StartWith(pref) => self.start(pref, host, false, &mut effects),
+            Input::StartRemote => self.start(self.config.duration, host, true, &mut effects),
+            Input::StartRemoteWith(pref) => self.start(pref, host, true, &mut effects),
+            Input::Handoff {
+                pref,
+                remaining_secs,
+                elapsed_secs,
+            } => self.handoff(pref, remaining_secs, elapsed_secs, host, &mut effects),
             Input::Toggle => {
                 if self.session.is_some() {
                     self.stop(StopReason::User, host, &mut effects);
                 } else {
-                    self.start(self.config.duration, host, &mut effects);
+                    self.start(self.config.duration, host, false, &mut effects);
                 }
             }
             Input::Stop { reason } => self.stop(reason, host, &mut effects),
@@ -176,21 +252,61 @@ impl Engine {
         effects
     }
 
-    fn start(&mut self, pref: DurationPref, host: &HostSnapshot, effects: &mut Vec<Effect>) {
+    fn start(
+        &mut self,
+        pref: DurationPref,
+        host: &HostSnapshot,
+        remote: bool,
+        effects: &mut Vec<Effect>,
+    ) {
         if self.session.is_some() {
             return;
         }
+        self.begin_session(pref, session_clocks(pref, host), remote, host, effects);
+    }
+
+    fn handoff(
+        &mut self,
+        pref: DurationPref,
+        remaining_secs: Option<u64>,
+        elapsed_secs: Option<u64>,
+        host: &HostSnapshot,
+        effects: &mut Vec<Effect>,
+    ) {
+        if self.session.is_some() {
+            return;
+        }
+        if remaining_secs == Some(0) {
+            return;
+        }
+        self.begin_session(
+            pref,
+            handoff_clocks(pref, remaining_secs, elapsed_secs, host),
+            true,
+            host,
+            effects,
+        );
+    }
+
+    fn begin_session(
+        &mut self,
+        pref: DurationPref,
+        clocks: SessionClocks,
+        remote: bool,
+        host: &HostSnapshot,
+        effects: &mut Vec<Effect>,
+    ) {
         self.config.duration = pref;
-        let deadline =
-            deadline_unix_secs(host.unix_secs, host.utc_offset_secs, host.unix_secs, pref);
         self.session = Some(Session {
-            started_ms: host.monotonic_ms,
-            started_continuous_ms: host.continuous_ms,
-            started_unix: host.unix_secs,
+            started_ms: clocks.started_ms,
+            started_continuous_ms: clocks.started_continuous_ms,
+            started_unix: clocks.started_unix,
             duration: pref,
-            deadline_unix: deadline,
+            deadline_unix: clocks.deadline,
+            elapsed_base_secs: clocks.elapsed_base_secs,
             initial_display_off_sent: false,
             last_sleep_display_ms: None,
+            remote,
         });
         self.optimistic_display_asleep = host.display_asleep.unwrap_or(false);
         self.last_stop_reason = None;
@@ -199,7 +315,11 @@ impl Engine {
         effects.push(Effect::ApplyPower(plan));
 
         let t = self.config.tr();
-        let mut body = if self.config.screen_off {
+        let deferred_sleep =
+            remote && self.config.screen_off && host.user_present(self.config.user_idle_resleep_ms);
+        let mut body = if deferred_sleep {
+            t.notify_started_body_remote_user_present(crate::DEFAULT_HOTKEY_LABEL)
+        } else if self.config.screen_off {
             t.notify_started_body_screen_off(
                 self.config.display_off_delay_ms.max(1).div_ceil(1000),
                 crate::DEFAULT_HOTKEY_LABEL,
@@ -207,7 +327,7 @@ impl Engine {
         } else {
             t.notify_started_body_keep_awake(crate::DEFAULT_HOTKEY_LABEL)
         };
-        if let Some(d) = deadline {
+        if let Some(d) = clocks.deadline {
             let rem = d.saturating_sub(host.unix_secs).max(0) as u64;
             body.push_str(&t.remaining_clause(&format_duration(self.config.lang(), rem)));
         }
@@ -323,7 +443,10 @@ impl Engine {
             }
         }
         if !session.initial_display_off_sent {
-            // 第一次关屏：无论当前亮不亮都请求一次
+            if session.remote && host.user_present(self.config.user_idle_resleep_ms) {
+                return false;
+            }
+            // Local one-click start: request display sleep even if the panel is already dark.
             return true;
         }
         if !self.config.resleep_display {
@@ -363,8 +486,10 @@ impl Engine {
     /// Elapsed milliseconds and optional remaining milliseconds for the UI clock.
     pub fn session_times(&self, host: &HostSnapshot) -> Option<(u64, Option<u64>)> {
         let session = self.session.as_ref()?;
-        let elapsed = host.monotonic_ms.saturating_sub(session.started_ms);
-        Some((elapsed, self.remaining_ms(session, host)))
+        Some((
+            self.session_elapsed_ms(session, host),
+            self.remaining_ms(session, host),
+        ))
     }
 
     fn remaining_ms(&self, session: &Session, host: &HostSnapshot) -> Option<u64> {
@@ -384,15 +509,23 @@ impl Engine {
         self.remaining_ms(session, host).map(countdown_secs)
     }
 
-    fn elapsed_secs(&self, session: &Session, host: &HostSnapshot) -> u64 {
-        match session.duration {
+    fn session_elapsed_ms(&self, session: &Session, host: &HostSnapshot) -> u64 {
+        let since_adopt = match session.duration {
             DurationPref::Hours { .. } => {
-                hours_elapsed_ms(session.started_continuous_ms, host.continuous_ms) / 1_000
+                hours_elapsed_ms(session.started_continuous_ms, host.continuous_ms)
             }
             DurationPref::UntilLocal { .. } | DurationPref::Indefinite => {
-                crate::elapsed_secs(session.started_ms, host.monotonic_ms)
+                host.monotonic_ms.saturating_sub(session.started_ms)
             }
-        }
+        };
+        session
+            .elapsed_base_secs
+            .saturating_mul(1_000)
+            .saturating_add(since_adopt)
+    }
+
+    fn elapsed_secs(&self, session: &Session, host: &HostSnapshot) -> u64 {
+        self.session_elapsed_ms(session, host) / 1_000
     }
 
     pub fn json_status(&self, host: &HostSnapshot) -> JsonStatus {
@@ -488,6 +621,243 @@ mod tests {
         // host Some(false) wins — but debounce 3s
         let e = eng.handle(Input::Tick, &h);
         assert!(!has_sleep(&e));
+    }
+
+    fn notify_body(effects: &[Effect]) -> String {
+        effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::Notify { body, .. } => Some(body.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn remote_on_while_user_present_does_not_promise_display_sleep() {
+        let mut eng = Engine::new(cfg());
+        let mut h = host(0);
+        h.hid_idle_ms = 500;
+        h.lid_closed = false;
+        let effects = eng.handle(Input::StartRemote, &h);
+        assert!(eng.is_active());
+        let body = notify_body(&effects);
+        assert!(
+            !body.contains("will sleep in about"),
+            "must not tell the person at the keyboard the display is about to sleep, got {body}"
+        );
+        assert!(
+            body.contains("local control"),
+            "remote start while someone is present should keep display under local control, got {body}"
+        );
+        assert!(!has_sleep(&effects));
+    }
+
+    #[test]
+    fn handoff_while_user_present_does_not_sleep_display() {
+        let mut eng = Engine::new(cfg());
+        let mut h = host(0);
+        h.hid_idle_ms = 500;
+        h.lid_closed = false;
+        let effects = eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+                elapsed_secs: None,
+            },
+            &h,
+        );
+        assert!(eng.is_active());
+        assert!(
+            !has_sleep(&effects),
+            "adopting a live session must not fight a person at the keyboard"
+        );
+        let mut later_host = host(1_500);
+        later_host.hid_idle_ms = 500;
+        later_host.lid_closed = false;
+        let later = eng.handle(Input::Tick, &later_host);
+        assert!(
+            !has_sleep(&later),
+            "handoff uses remote first-sleep rules so HID idle still wins after the delay"
+        );
+        let body = notify_body(&effects);
+        assert!(
+            !body.contains("will sleep in about"),
+            "must not promise a display sleep while someone is present, got {body}"
+        );
+    }
+
+    #[test]
+    fn handoff_keeps_remaining_hour_not_full_pref() {
+        let mut eng = Engine::new(cfg());
+        let h0 = host(0);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+                elapsed_secs: None,
+            },
+            &h0,
+        );
+        assert_eq!(eng.json_status(&h0).remaining_secs, Some(3600));
+        assert_eq!(eng.config.duration, DurationPref::Hours { hours: 8 });
+        let mut h = host(10_000);
+        h.unix_secs = h0.unix_secs;
+        assert_eq!(eng.json_status(&h).remaining_secs, Some(3_590));
+        assert!(eng.is_active());
+    }
+
+    #[test]
+    fn handoff_until_local_with_zero_remaining_does_not_roll_to_tomorrow() {
+        let mut eng = Engine::new(cfg());
+        let h = host(0);
+        let effects = eng.handle(
+            Input::Handoff {
+                pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
+                remaining_secs: Some(0),
+                elapsed_secs: None,
+            },
+            &h,
+        );
+        assert!(
+            !eng.is_active(),
+            "an already-elapsed until-local session must not restart as tomorrow"
+        );
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::ApplyPower(_))),
+            "zero remaining is not a fresh start"
+        );
+        assert!(!eng.json_status(&h).active);
+    }
+
+    #[test]
+    fn handoff_until_local_uses_supplied_remaining_not_wall_clock() {
+        let mut eng = Engine::new(cfg());
+        let h0 = host(0);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
+                remaining_secs: Some(90),
+                elapsed_secs: None,
+            },
+            &h0,
+        );
+        assert!(eng.is_active());
+        assert_eq!(eng.json_status(&h0).remaining_secs, Some(90));
+        assert_eq!(
+            eng.config.duration,
+            DurationPref::UntilLocal { hour: 8, minute: 0 }
+        );
+    }
+
+    #[test]
+    fn handoff_until_local_preserves_dst_25h_remaining() {
+        let mut eng = Engine::new(cfg());
+        let h = host(0);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
+                remaining_secs: Some(25 * 3600),
+                elapsed_secs: None,
+            },
+            &h,
+        );
+        assert_eq!(
+            eng.json_status(&h).remaining_secs,
+            Some(25 * 3600),
+            "a fall-back 25-hour UntilLocal leftover must not be capped at 24h"
+        );
+        assert!(eng.is_active());
+    }
+
+    #[test]
+    fn handoff_hours_with_zero_remaining_does_not_start() {
+        let mut eng = Engine::new(cfg());
+        let effects = eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(0),
+                elapsed_secs: None,
+            },
+            &host(0),
+        );
+        assert!(!eng.is_active());
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::ApplyPower(_))),
+            "zero leftover seconds must not re-apply power just to tick-stop"
+        );
+    }
+
+    #[test]
+    fn handoff_preserves_elapsed_with_remaining() {
+        let mut eng = Engine::new(cfg());
+        let h = host(7 * 3_600_000);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+                elapsed_secs: Some(7 * 3600),
+            },
+            &h,
+        );
+        let st = eng.json_status(&h);
+        assert_eq!(st.remaining_secs, Some(3600));
+        assert_eq!(
+            st.elapsed_secs,
+            Some(7 * 3600),
+            "adopting a 7h-old session must not reset the panel and phone elapsed clock"
+        );
+        assert!(eng.is_active());
+    }
+
+    #[test]
+    fn handoff_elapsed_does_not_use_menu_process_clock() {
+        let mut eng = Engine::new(cfg());
+        // Menu bar just launched: process Instant is ~1.5s, not the 7h session.
+        let h = host(1_500);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::Hours { hours: 8 },
+                remaining_secs: Some(3600),
+                elapsed_secs: Some(7 * 3600),
+            },
+            &h,
+        );
+        let st = eng.json_status(&h);
+        assert_eq!(st.remaining_secs, Some(3600));
+        assert_eq!(
+            st.elapsed_secs,
+            Some(7 * 3600),
+            "elapsed must keep the handed-off 7h, not saturate to menu uptime"
+        );
+        let times = eng.session_times(&h).expect("adopted session");
+        assert_eq!(times.0, 7 * 3_600_000);
+        let later = host(11_500);
+        let later_st = eng.json_status(&later);
+        assert_eq!(later_st.elapsed_secs, Some(7 * 3600 + 10));
+        assert_eq!(later_st.remaining_secs, Some(3590));
+        assert!(eng.is_active());
+    }
+
+    #[test]
+    fn handoff_until_local_elapsed_survives_fresh_menu_clock() {
+        let mut eng = Engine::new(cfg());
+        let h = host(2_000);
+        eng.handle(
+            Input::Handoff {
+                pref: DurationPref::UntilLocal { hour: 8, minute: 0 },
+                remaining_secs: Some(90),
+                elapsed_secs: Some(120),
+            },
+            &h,
+        );
+        let st = eng.json_status(&h);
+        assert_eq!(st.elapsed_secs, Some(120));
+        assert_eq!(st.remaining_secs, Some(90));
+        let later = host(12_000);
+        let later_st = eng.json_status(&later);
+        assert_eq!(later_st.elapsed_secs, Some(130));
+        assert_eq!(later_st.remaining_secs, Some(80));
     }
 
     #[test]

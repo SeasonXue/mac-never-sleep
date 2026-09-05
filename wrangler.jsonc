@@ -1,0 +1,26 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4.128.0/config-schema.json",
+  // Worker name must stay mac-never-sleep: xyz-ai-gateway binds NEVER_SLEEP to it
+  // and strips the /never-sleep prefix. Do not attach xyz-ai.app here.
+  "name": "mac-never-sleep",
+  "main": "worker/src/index.js",
+  "compatibility_date": "2026-09-01",
+  // Pair/start is rate-limited in-worker; do not expose workers.dev/preview around the gateway.
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./site",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "BOARD", "class_name": "BoardHub" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_classes": ["BoardHub"] }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "mac-never-sleep",
+  "private": true,
+  "type": "module",
+  "description": "Never Sleep marketing site plus the phone status board Worker",
+  "scripts": {
+    "test": "node --test worker/test/*.test.js",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.128.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

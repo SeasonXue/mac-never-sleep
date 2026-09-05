@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use never_sleep_core::{
-    AppConfig, DurationPref, Engine, Input, Lang, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
+    AppConfig, DurationPref, Engine, Input, Lang, PowerPlan, StopReason, Tr, DEFAULT_BATTERY_FLOOR,
     DEFAULT_HOTKEY_LABEL, HEARTBEAT_MS,
 };
 use tao::dpi::{LogicalPosition, LogicalSize, PhysicalPosition};
@@ -19,6 +19,10 @@ use tray_icon::{
 };
 
 use crate::apply::{dispatch, stop_for_quit};
+use crate::cloud::{
+    cloud_enabled, default_display_name, load_or_create_identity, spawn_reporter_paused,
+    CloudHandle,
+};
 use crate::icon::tray_icon;
 use crate::ipc::{self, IpcIncoming};
 use crate::panel::{
@@ -243,14 +247,20 @@ pub fn run() {
     let mut engine = Engine::new(load_config());
 
     let (ipc_tx, ipc_rx) = mpsc::channel::<IpcIncoming>();
-    match ipc::spawn_server(ipc_tx) {
+    let ipc_owned = match ipc::spawn_server(ipc_tx) {
         Err(e) if e == "already_running" => {
             eprintln!("{}", load_config().tr().already_running());
             return;
         }
-        Err(e) => eprintln!("{}", load_config().tr().ipc_not_started(&e)),
-        Ok(()) => {}
-    }
+        Err(e) => {
+            eprintln!("{}", load_config().tr().ipc_not_started(&e));
+            false
+        }
+        Ok(()) => {
+            crate::ipc::mark_ipc_server_owned(true);
+            true
+        }
+    };
 
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
@@ -305,21 +315,121 @@ pub fn run() {
     let mut next_wake = Instant::now() + Duration::from_millis(HEARTBEAT_MS);
     let mut shown_onboarding = engine.config.onboarding_done;
     let mut toggle_gate = ToggleGate::default();
+    let mut pending_stop = false;
+    let mut last_handoff_id: Option<String> = None;
+    let mut pairing: Option<(String, String, u64)> = None;
+    let cloud_identity = if cloud_enabled() {
+        match load_or_create_identity() {
+            Ok(id) => Some(id),
+            Err(err) => {
+                eprintln!("never-sleep cloud identity: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let mut cloud = if ipc_owned {
+        cloud_identity.as_ref().map(|identity| {
+            spawn_reporter_paused(
+                identity.clone(),
+                default_display_name(),
+                engine.config.lang(),
+                crate::session_lock::should_pause_menu_reporter(
+                    crate::session_lock::peer_reporter_lock_is_live(std::process::id()),
+                ),
+            )
+        })
+    } else {
+        None
+    };
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::WaitUntil(next_wake);
 
         while let Ok(incoming) = ipc_rx.try_recv() {
-            handle_ipc(&mut engine, platform.as_mut(), incoming);
-            refresh_ui(
-                &handles,
-                &mut tray,
-                &mut tray_active,
-                &mut popover,
-                &engine,
+            let handoff_first = match &incoming {
+                IpcIncoming::Request { req, .. } => req.is_handoff() && !engine.is_active(),
+            };
+            let toggle_want_stop = crate::session_lock::local_toggle_wants_stop(engine.is_active());
+            if let IpcIncoming::Request { req, .. } = &incoming {
+                if req.is_handoff() {
+                    if let Some(handle) = cloud.as_ref() {
+                        handle.skip_applied(req.applied_command_ids().to_vec());
+                    }
+                }
+            }
+            if !handoff_first {
+                if let Some(handle) = cloud.as_ref() {
+                    crate::cloud::apply_polled_commands(
+                        &mut engine,
+                        platform.as_mut(),
+                        handle,
+                        &mut pairing,
+                    );
+                }
+            }
+            let (quitting, adopted, stop_donor, skip_drain) = handle_ipc(
+                &mut engine,
                 platform.as_mut(),
-                &mut next_wake,
+                incoming,
+                &mut pairing,
+                cloud_identity.as_ref(),
+                cloud.as_ref().is_some_and(CloudHandle::reporter_is_running),
+                &mut pending_stop,
+                &mut last_handoff_id,
+                toggle_want_stop,
             );
+            if quitting {
+                flush_cloud_on_quit(
+                    &engine,
+                    platform.as_mut(),
+                    &mut cloud,
+                    last_handoff_id.as_deref(),
+                );
+                *control_flow = ControlFlow::Exit;
+                break;
+            } else {
+                if handoff_first
+                    && !crate::protocol::should_skip_handoff_drain_after_ack_failure(skip_drain)
+                {
+                    if let Some(handle) = cloud.as_ref() {
+                        crate::cloud::apply_polled_commands(
+                            &mut engine,
+                            platform.as_mut(),
+                            handle,
+                            &mut pairing,
+                        );
+                    }
+                }
+                if crate::session_lock::take_pending_stop_after_handoff(
+                    adopted,
+                    stop_donor,
+                    &mut pending_stop,
+                ) {
+                    dispatch(
+                        &mut engine,
+                        platform.as_mut(),
+                        Input::Stop {
+                            reason: StopReason::User,
+                        },
+                    );
+                }
+                refresh_ui(
+                    &handles,
+                    &mut tray,
+                    &mut tray_active,
+                    &mut popover,
+                    &mut engine,
+                    platform.as_mut(),
+                    &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
+                );
+            }
+        }
+        if matches!(*control_flow, ControlFlow::Exit) {
+            return;
         }
 
         match event {
@@ -345,24 +455,43 @@ pub fn run() {
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                 dispatch(&mut engine, platform.as_mut(), Input::Tick);
+                if crate::session_lock::take_pending_donor_clamshell_reapply(engine.is_active()) {
+                    let host = platform.snapshot();
+                    let plan = PowerPlan::for_session(&engine.config, host.on_ac);
+                    let _ = platform.apply_power(plan);
+                }
                 refresh_ui(
                     &handles,
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
             }
             Event::UserEvent(UserEvent::Menu(id)) => {
+                let toggle_want_stop =
+                    crate::session_lock::local_toggle_wants_stop(engine.is_active());
+                if let Some(handle) = cloud.as_ref() {
+                    crate::cloud::apply_polled_commands(
+                        &mut engine,
+                        platform.as_mut(),
+                        handle,
+                        &mut pairing,
+                    );
+                }
                 handle_menu_event(
                     &mut engine,
                     platform.as_mut(),
@@ -370,27 +499,57 @@ pub fn run() {
                     control_flow,
                     id,
                     popover.as_mut(),
+                    &mut pending_stop,
+                    toggle_want_stop,
                 );
-                refresh_ui(
-                    &handles,
-                    &mut tray,
-                    &mut tray_active,
-                    &mut popover,
-                    &engine,
-                    platform.as_mut(),
-                    &mut next_wake,
-                );
+                if matches!(*control_flow, ControlFlow::Exit) {
+                    flush_cloud_on_quit(
+                        &engine,
+                        platform.as_mut(),
+                        &mut cloud,
+                        last_handoff_id.as_deref(),
+                    );
+                } else {
+                    refresh_ui(
+                        &handles,
+                        &mut tray,
+                        &mut tray_active,
+                        &mut popover,
+                        &mut engine,
+                        platform.as_mut(),
+                        &mut next_wake,
+                        cloud.as_ref(),
+                        &mut pairing,
+                    );
+                }
             }
             Event::UserEvent(UserEvent::Hotkey) => {
-                dispatch(&mut engine, platform.as_mut(), Input::Toggle);
+                let toggle_want_stop =
+                    crate::session_lock::local_toggle_wants_stop(engine.is_active());
+                if let Some(handle) = cloud.as_ref() {
+                    crate::cloud::apply_polled_commands(
+                        &mut engine,
+                        platform.as_mut(),
+                        handle,
+                        &mut pairing,
+                    );
+                }
+                dispatch_local_toggle(
+                    &mut engine,
+                    platform.as_mut(),
+                    &mut pending_stop,
+                    toggle_want_stop,
+                );
                 refresh_ui(
                     &handles,
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
             }
             Event::UserEvent(UserEvent::Tray(rect)) => {
@@ -399,9 +558,11 @@ pub fn run() {
                     &mut tray,
                     &mut tray_active,
                     &mut popover,
-                    &engine,
+                    &mut engine,
                     platform.as_mut(),
                     &mut next_wake,
+                    cloud.as_ref(),
+                    &mut pairing,
                 );
                 if let Some(panel) = popover.as_mut() {
                     panel.toggle_at(rect);
@@ -413,6 +574,16 @@ pub fn run() {
                 }
             }
             Event::UserEvent(UserEvent::Ui(command)) => {
+                let toggle_want_stop =
+                    crate::session_lock::local_toggle_wants_stop(engine.is_active());
+                if let Some(handle) = cloud.as_ref() {
+                    crate::cloud::apply_polled_commands(
+                        &mut engine,
+                        platform.as_mut(),
+                        handle,
+                        &mut pairing,
+                    );
+                }
                 handle_ui_command(
                     command,
                     &mut engine,
@@ -421,16 +592,29 @@ pub fn run() {
                     popover.as_mut(),
                     &mut toggle_gate,
                     control_flow,
+                    &mut pending_stop,
+                    toggle_want_stop,
                 );
-                refresh_ui(
-                    &handles,
-                    &mut tray,
-                    &mut tray_active,
-                    &mut popover,
-                    &engine,
-                    platform.as_mut(),
-                    &mut next_wake,
-                );
+                if matches!(*control_flow, ControlFlow::Exit) {
+                    flush_cloud_on_quit(
+                        &engine,
+                        platform.as_mut(),
+                        &mut cloud,
+                        last_handoff_id.as_deref(),
+                    );
+                } else {
+                    refresh_ui(
+                        &handles,
+                        &mut tray,
+                        &mut tray_active,
+                        &mut popover,
+                        &mut engine,
+                        platform.as_mut(),
+                        &mut next_wake,
+                        cloud.as_ref(),
+                        &mut pairing,
+                    );
+                }
             }
             Event::WindowEvent {
                 window_id,
@@ -471,6 +655,12 @@ pub fn run() {
             }
             Event::LoopDestroyed => {
                 stop_for_quit(&mut engine, platform.as_mut());
+                flush_cloud_on_quit(
+                    &engine,
+                    platform.as_mut(),
+                    &mut cloud,
+                    last_handoff_id.as_deref(),
+                );
             }
             _ => {}
         }
@@ -623,13 +813,32 @@ fn refresh_ui(
     tray: &mut Option<TrayIcon>,
     tray_active: &mut Option<bool>,
     popover: &mut Option<Popover>,
-    engine: &Engine,
+    engine: &mut Engine,
     platform: &mut dyn Platform,
     next_wake: &mut Instant,
+    cloud: Option<&CloudHandle>,
+    pairing: &mut Option<(String, String, u64)>,
 ) {
+    if let Some(handle) = cloud {
+        crate::cloud::sync_cloud(engine, platform, handle, pairing);
+        if crate::session_lock::should_resume_paused_menu_reporter(
+            handle.is_paused(),
+            crate::session_lock::peer_reporter_lock_is_live(std::process::id()),
+            engine.is_active(),
+        ) {
+            handle.resume();
+        }
+    }
+    crate::cloud::expire_stale_pairing(pairing);
     let host = platform.snapshot();
     let vm = engine.view(&host);
-    let next = popover.as_ref().map(|_| panel_state(&engine.config, &vm));
+    let next = popover.as_ref().map(|_| {
+        let mut state = panel_state(&engine.config, &vm);
+        if let Some((code, url, _)) = pairing.as_ref() {
+            state = state.with_pairing(code, url);
+        }
+        state
+    });
     handles.status.set_text(vm.status_line);
     handles.detail.set_text(vm.detail_line);
     let warn = vm.warnings.first().cloned().unwrap_or_default();
@@ -687,6 +896,46 @@ fn refresh_ui(
     *next_wake = Instant::now() + Duration::from_millis(delay);
 }
 
+fn flush_cloud_on_quit(
+    engine: &Engine,
+    platform: &mut dyn Platform,
+    cloud: &mut Option<CloudHandle>,
+    last_handoff_id: Option<&str>,
+) {
+    let ack = crate::protocol::read_handoff_ack();
+    let had_live_reporter = crate::protocol::successor_reporter_live_on_matching_ack(
+        last_handoff_id,
+        ack.as_ref().map(|ack| ack.id.as_str()),
+        ack.as_ref().is_some_and(|ack| ack.reporter),
+    );
+    let clear_ok = crate::protocol::mark_handoff_ack_reporter_gone();
+    if let Some(handle) = cloud.take() {
+        let would_detach = crate::session_lock::should_detach_cloud_on_quit(
+            engine.is_active(),
+            std::process::id(),
+        );
+        if would_detach
+            && !crate::protocol::should_flush_offline_if_ack_reporter_clear_failed(
+                clear_ok,
+                would_detach,
+                had_live_reporter,
+            )
+            && !crate::protocol::should_flush_offline_after_abandoning_successor_reporter(
+                had_live_reporter,
+                clear_ok,
+            )
+        {
+            handle.detach();
+        } else {
+            crate::cloud::publish_and_flush(
+                handle,
+                engine.json_status(&platform.snapshot()),
+                engine.config.lang(),
+            );
+        }
+    }
+}
+
 fn handle_menu_event(
     engine: &mut Engine,
     platform: &mut dyn Platform,
@@ -694,9 +943,11 @@ fn handle_menu_event(
     control_flow: &mut ControlFlow,
     id: tray_icon::menu::MenuId,
     popover: Option<&mut Popover>,
+    pending_stop: &mut bool,
+    toggle_want_stop: bool,
 ) {
     if id == handles.toggle.id() {
-        dispatch(engine, platform, Input::Toggle);
+        dispatch_local_toggle(engine, platform, pending_stop, toggle_want_stop);
     } else if id == handles.quit.id() {
         stop_for_quit(engine, platform);
         *control_flow = ControlFlow::Exit;
@@ -773,13 +1024,15 @@ fn handle_ui_command(
     popover: Option<&mut Popover>,
     toggle_gate: &mut ToggleGate,
     control_flow: &mut ControlFlow,
+    pending_stop: &mut bool,
+    toggle_want_stop: bool,
 ) {
     match command {
         UiCommand::Toggle => {
             if !toggle_gate.take_click() {
                 return;
             }
-            dispatch(engine, platform, Input::Toggle);
+            dispatch_local_toggle(engine, platform, pending_stop, toggle_want_stop);
         }
         UiCommand::SleepDisplayNow => {
             dispatch(engine, platform, Input::SleepDisplayNow);
@@ -869,28 +1122,97 @@ fn set_duration(engine: &mut Engine, platform: &mut dyn Platform, pref: Duration
     }
 }
 
-fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcIncoming) {
+#[allow(clippy::too_many_arguments)]
+fn handle_ipc(
+    engine: &mut Engine,
+    platform: &mut dyn Platform,
+    incoming: IpcIncoming,
+    pairing: &mut Option<(String, String, u64)>,
+    identity: Option<&never_sleep_core::CloudIdentity>,
+    reporter_running: bool,
+    pending_stop: &mut bool,
+    last_handoff_id: &mut Option<String>,
+    toggle_want_stop: bool,
+) -> (bool, bool, bool, bool) {
+    crate::cloud::expire_stale_pairing(pairing);
     let IpcIncoming::Request { req, reply } = incoming;
     let host_status = |engine: &Engine, platform: &mut dyn Platform| {
         let host = platform.snapshot();
         engine.json_status(&host)
     };
-    let resp = match req {
+    let mut quitting = false;
+    let mut adopted = false;
+    let mut handoff_attempt = false;
+    let mut prior_handoff = false;
+    let mut ack_id: Option<String> = None;
+    let mut dispatched_now = false;
+    let mut resp = match req {
         IpcRequest::Ping => IpcResponse::pong(),
         IpcRequest::Status => IpcResponse::ok_status(host_status(engine, platform)),
-        IpcRequest::On { duration } => {
-            let input = match crate::protocol::parse_on_duration_in(
+        IpcRequest::Pair => match pairing.as_ref() {
+            Some((code, url, _)) => IpcResponse::ok_pairing(
+                code.clone(),
+                url.clone(),
+                identity.map(|id| id.device_id.clone()),
+            ),
+            None => IpcResponse::err("pairing_unavailable"),
+        },
+        IpcRequest::On {
+            duration,
+            remaining_secs,
+            elapsed_secs,
+            handoff,
+            handoff_id,
+            ..
+        } => {
+            let parsed = match crate::protocol::parse_on_duration_in(
                 duration.as_deref(),
                 engine.config.lang(),
             ) {
-                Ok(None) => Input::Start,
-                Ok(Some(d)) => Input::StartWith(d),
+                Ok(d) => d,
                 Err(e) => {
                     let _ = reply.send(IpcResponse::err(e));
-                    return;
+                    return (false, false, false, false);
                 }
             };
-            if engine.is_active() && matches!(input, Input::Start) {
+            let input = if handoff {
+                Input::Handoff {
+                    pref: parsed.unwrap_or(engine.config.duration),
+                    remaining_secs,
+                    elapsed_secs,
+                }
+            } else {
+                match parsed {
+                    None => Input::Start,
+                    Some(d) => Input::StartWith(d),
+                }
+            };
+            handoff_attempt = handoff;
+            ack_id = handoff_id.clone();
+            if handoff {
+                prior_handoff = crate::protocol::menu_already_processed_handoff(
+                    handoff,
+                    handoff_id.as_deref(),
+                    last_handoff_id.as_deref(),
+                );
+                if crate::protocol::menu_confirms_prior_handoff(
+                    handoff,
+                    engine.is_active(),
+                    handoff_id.as_deref(),
+                    last_handoff_id.as_deref(),
+                ) {
+                    adopted = true;
+                } else if !prior_handoff && !engine.is_active() {
+                    dispatch(engine, platform, input);
+                    dispatched_now = true;
+                    adopted = engine.is_active();
+                    if adopted {
+                        *last_handoff_id = handoff_id.clone();
+                    }
+                }
+            } else if local_controls_deferred(engine) {
+                // live donor still owns standby; do not start a second session
+            } else if engine.is_active() && matches!(input, Input::Start) {
                 // already on
             } else if engine.is_active() {
                 dispatch(
@@ -904,7 +1226,13 @@ fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcInc
             } else {
                 dispatch(engine, platform, input);
             }
-            IpcResponse::ok_status(host_status(engine, platform))
+            if adopted {
+                let mut resp = IpcResponse::ok_adopted(host_status(engine, platform));
+                resp.reporter = Some(reporter_running);
+                resp
+            } else {
+                IpcResponse::ok_status(host_status(engine, platform))
+            }
         }
         IpcRequest::Off => {
             if engine.is_active() {
@@ -915,19 +1243,137 @@ fn handle_ipc(engine: &mut Engine, platform: &mut dyn Platform, incoming: IpcInc
                         reason: StopReason::User,
                     },
                 );
+            } else if crate::session_lock::should_record_deferred_off(
+                engine.is_active(),
+                local_controls_deferred(engine),
+            ) {
+                crate::session_lock::note_deferred_escape(true, pending_stop);
             }
             IpcResponse::ok_status(host_status(engine, platform))
         }
         IpcRequest::Toggle => {
-            dispatch(engine, platform, Input::Toggle);
+            dispatch_local_toggle(engine, platform, pending_stop, toggle_want_stop);
             IpcResponse::ok_status(host_status(engine, platform))
         }
         IpcRequest::Quit => {
             stop_for_quit(engine, platform);
-            std::process::exit(0);
+            quitting = true;
+            IpcResponse::ok_status(host_status(engine, platform))
         }
     };
+    if crate::session_lock::should_stop_donor_on_failed_handoff(
+        handoff_attempt,
+        adopted,
+        *pending_stop,
+    ) || crate::protocol::should_stop_donor_after_ended_prior_handoff(
+        prior_handoff,
+        engine.is_active(),
+    ) {
+        resp.stop_donor = true;
+    }
+    let mut stop_donor = resp.stop_donor;
+    let mut skip_drain = false;
+    if crate::protocol::should_persist_handoff_ack(handoff_attempt, adopted, stop_donor) {
+        let outcome = if adopted {
+            crate::protocol::HandoffAckOutcome::Adopted
+        } else {
+            crate::protocol::HandoffAckOutcome::Stop
+        };
+        let reporter = crate::protocol::handoff_ack_reporter(reporter_running);
+        let persist_ok = ack_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .map(|id| crate::protocol::write_handoff_ack(id, outcome, reporter).is_ok())
+            .unwrap_or(false);
+        let reject_adopt = crate::protocol::should_reject_adopt_if_ack_unpersisted(
+            adopted,
+            dispatched_now,
+            persist_ok,
+        );
+        let reject_stop =
+            crate::protocol::should_reject_stop_if_ack_unpersisted(stop_donor, persist_ok);
+        if crate::protocol::should_skip_handoff_drain_after_ack_failure(reject_adopt || reject_stop)
+        {
+            if reject_adopt {
+                let restore_ok =
+                    if crate::session_lock::should_restore_donor_lock_on_adopt_rollback(true) {
+                        ack_id
+                            .as_deref()
+                            .and_then(crate::protocol::parse_handoff_owner)
+                            .map(|owner| {
+                                crate::session_lock::restore_donor_session_lock(
+                                    owner.pid,
+                                    owner.starttime,
+                                    owner.clamshell.unwrap_or(false),
+                                )
+                            })
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+                if crate::session_lock::should_rollback_adopt_after_donor_lock_restore(
+                    true, restore_ok,
+                ) {
+                    dispatch(
+                        engine,
+                        platform,
+                        Input::Stop {
+                            reason: StopReason::AppQuit,
+                        },
+                    );
+                    *last_handoff_id = None;
+                    adopted = false;
+                }
+            }
+            let keep_stop = crate::protocol::should_keep_unpersisted_stop_donor_after_kept_adopt(
+                reject_stop,
+                last_handoff_id.is_some(),
+                adopted,
+            );
+            if !keep_stop {
+                stop_donor = false;
+            }
+            skip_drain = true;
+            resp = IpcResponse::err("handoff_ack_failed");
+            if keep_stop {
+                resp.stop_donor = true;
+            }
+        }
+    }
+    resp.clamshell_reapply = crate::session_lock::should_signal_ipc_donor_clamshell_reapply(
+        handoff_attempt,
+        crate::session_lock::peek_ipc_donor_clamshell_reapply(),
+    );
     let _ = reply.send(resp);
+    (quitting, adopted, stop_donor, skip_drain)
+}
+
+fn local_controls_deferred(engine: &Engine) -> bool {
+    crate::session_lock::should_defer_local_controls(engine.is_active(), std::process::id())
+}
+
+fn dispatch_local_toggle(
+    engine: &mut Engine,
+    platform: &mut dyn Platform,
+    pending_stop: &mut bool,
+    want_stop: bool,
+) {
+    let deferred = local_controls_deferred(engine);
+    crate::session_lock::note_deferred_escape(deferred, pending_stop);
+    if deferred {
+        return;
+    }
+    match crate::session_lock::local_toggle_after_cloud_drain(want_stop, engine.is_active()) {
+        Some(true) => dispatch(
+            engine,
+            platform,
+            Input::Stop {
+                reason: StopReason::User,
+            },
+        ),
+        Some(false) => dispatch(engine, platform, Input::Toggle),
+        None => {}
+    }
 }
 
 fn show_menu_help(engine: &Engine, popover: Option<&mut Popover>) {

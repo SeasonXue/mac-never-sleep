@@ -497,6 +497,9 @@ fn required_static_assets_exist() {
         "assets/screenshots/main-idle-zh.png",
         "assets/screenshots/main-active-zh.png",
         "assets/site.js",
+        "assets/board.js",
+        "board/index.html",
+        "zh/board/index.html",
     ] {
         let path = root.join(rel);
         assert!(path.is_file(), "missing site asset {}", path.display());

@@ -47,13 +47,28 @@ pub fn config_path() -> PathBuf {
     data_dir().join("config.toml")
 }
 
+pub fn cloud_identity_path() -> PathBuf {
+    data_dir().join("cloud.toml")
+}
+
 pub fn ipc_socket_path() -> PathBuf {
     data_dir().join("ipc.sock")
 }
 
-#[cfg(any(test, target_os = "macos"))]
 pub fn session_lock_path() -> PathBuf {
     data_dir().join("session.lock")
+}
+
+pub fn handoff_ack_path() -> PathBuf {
+    data_dir().join("handoff.ack")
+}
+
+pub fn reporter_lock_path() -> PathBuf {
+    data_dir().join("reporter.lock")
+}
+
+pub fn clamshell_reapply_path() -> PathBuf {
+    data_dir().join("clamshell.reapply")
 }
 
 #[cfg(any(test, target_os = "macos"))]
@@ -120,8 +135,11 @@ mod tests {
         let dir = data_dir();
         assert!(dir.ends_with("Never Sleep") || dir.ends_with("never-sleep"));
         assert_eq!(config_path(), dir.join("config.toml"));
+        assert_eq!(cloud_identity_path(), dir.join("cloud.toml"));
         assert_eq!(ipc_socket_path(), dir.join("ipc.sock"));
         assert_eq!(session_lock_path(), dir.join("session.lock"));
+        assert_eq!(reporter_lock_path(), dir.join("reporter.lock"));
+        assert_eq!(clamshell_reapply_path(), dir.join("clamshell.reapply"));
         assert!(launch_agent_path().ends_with("com.seasonxue.never-sleep.plist"));
     }
 
@@ -130,6 +148,7 @@ mod tests {
         let isolated = TestDataDir::install();
         assert_eq!(data_dir(), isolated.path());
         assert_eq!(config_path(), isolated.path().join("config.toml"));
+        assert_eq!(cloud_identity_path(), isolated.path().join("cloud.toml"));
         assert_eq!(ipc_socket_path(), isolated.path().join("ipc.sock"));
         assert!(!ipc_socket_path().exists());
     }

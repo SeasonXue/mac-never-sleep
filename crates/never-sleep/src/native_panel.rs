@@ -248,6 +248,8 @@ pub struct NativePanel {
     battery_settings: Retained<NSSwitch>,
     login_label: Retained<NSTextField>,
     login: Retained<NSSwitch>,
+    pairing_label: Retained<NSTextField>,
+    pairing_value: Retained<NSTextField>,
     language: Retained<NSSegmentedControl>,
     help_button: Retained<NSButton>,
     quit_settings: Retained<NSButton>,
@@ -461,6 +463,11 @@ impl NativePanel {
         let (battery_settings_label, battery_settings, battery_settings_row) =
             labeled_switch(&target, TAG_BATTERY, mtm);
         let (login_label, login, login_row) = labeled_switch(&target, TAG_LOGIN, mtm);
+        let pairing_label = row_caption(mtm);
+        let pairing_value = row_caption(mtm);
+        pairing_value.setSelectable(true);
+        pairing_value.setAlignment(NSTextAlignment::Right);
+        pairing_value.setFont(Some(&tabular_font(13.0)));
         let settings_card = grouped_card(
             mtm,
             &[
@@ -471,6 +478,7 @@ impl NativePanel {
                 lock_row,
                 battery_settings_row,
                 login_row,
+                control_row(&pairing_label, nv(&*pairing_value), mtm),
             ],
         );
         let language = NSSegmentedControl::new(mtm);
@@ -639,6 +647,8 @@ impl NativePanel {
             battery_settings,
             login_label,
             login,
+            pairing_label,
+            pairing_value,
             language,
             help_button,
             quit_settings,
@@ -734,6 +744,15 @@ impl NativePanel {
             &self.login,
             &state.launch_at_login_label,
             state.launch_at_login,
+        );
+        set_text(&self.pairing_label, &state.pairing_label);
+        set_text(
+            &self.pairing_value,
+            if state.pairing_code.is_empty() {
+                "—"
+            } else {
+                &state.pairing_code
+            },
         );
         self.language
             .setSelectedSegment(if state.lang == never_sleep_core::Lang::Zh {
