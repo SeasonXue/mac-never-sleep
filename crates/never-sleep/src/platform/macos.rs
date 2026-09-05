@@ -17,7 +17,7 @@ use std::thread;
 use never_sleep_core::{HostSnapshot, PowerPlan, Thermal, Tr};
 
 use crate::clock::{base_snapshot, monotonic_ms};
-use crate::paths::{current_exe, ensure_data_dir, launch_agent_path, session_lock_path};
+use crate::paths::{current_exe, launch_agent_path, session_lock_path};
 use crate::persist::load_config;
 use crate::platform::Platform;
 use crate::util::{launch_agent_is_stale, xml_escape};

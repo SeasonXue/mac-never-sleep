@@ -153,7 +153,7 @@ impl IpcRequest {
         }
     }
 
-    #[cfg(any(test, target_os = "macos"))]
+    #[cfg(test)]
     pub fn handoff_id(&self) -> Option<&str> {
         match self {
             Self::On { handoff_id, .. } => handoff_id.as_deref(),

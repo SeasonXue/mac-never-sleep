@@ -348,15 +348,12 @@ pub fn run() {
         *control_flow = ControlFlow::WaitUntil(next_wake);
 
         while let Ok(incoming) = ipc_rx.try_recv() {
-            let handoff_first = match &incoming {
-                IpcIncoming::Request { req, .. } => req.is_handoff() && !engine.is_active(),
-            };
+            let IpcIncoming::Request { req, .. } = &incoming;
+            let handoff_first = req.is_handoff() && !engine.is_active();
             let toggle_want_stop = crate::session_lock::local_toggle_wants_stop(engine.is_active());
-            if let IpcIncoming::Request { req, .. } = &incoming {
-                if req.is_handoff() {
-                    if let Some(handle) = cloud.as_ref() {
-                        handle.skip_applied(req.applied_command_ids().to_vec());
-                    }
+            if req.is_handoff() {
+                if let Some(handle) = cloud.as_ref() {
+                    handle.skip_applied(req.applied_command_ids().to_vec());
                 }
             }
             if !handoff_first {
@@ -808,6 +805,7 @@ fn apply_static_labels(handles: &MenuHandles, lang: Lang) {
     handles.quit.set_text(t.quit());
 }
 
+#[allow(clippy::too_many_arguments)]
 fn refresh_ui(
     handles: &MenuHandles,
     tray: &mut Option<TrayIcon>,
@@ -936,6 +934,7 @@ fn flush_cloud_on_quit(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_menu_event(
     engine: &mut Engine,
     platform: &mut dyn Platform,
@@ -1016,6 +1015,7 @@ fn handle_menu_event(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_ui_command(
     command: UiCommand,
     engine: &mut Engine,
@@ -1364,14 +1364,18 @@ fn dispatch_local_toggle(
         return;
     }
     match crate::session_lock::local_toggle_after_cloud_drain(want_stop, engine.is_active()) {
-        Some(true) => dispatch(
-            engine,
-            platform,
-            Input::Stop {
-                reason: StopReason::User,
-            },
-        ),
-        Some(false) => dispatch(engine, platform, Input::Toggle),
+        Some(true) => {
+            dispatch(
+                engine,
+                platform,
+                Input::Stop {
+                    reason: StopReason::User,
+                },
+            );
+        }
+        Some(false) => {
+            dispatch(engine, platform, Input::Toggle);
+        }
         None => {}
     }
 }

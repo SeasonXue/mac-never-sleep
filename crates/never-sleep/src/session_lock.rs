@@ -103,7 +103,7 @@ pub struct SessionLockRecord {
     pub starttime: Option<u64>,
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(test)]
 pub fn parse_lock_text(s: &str) -> (u32, bool) {
     let rec = parse_lock_record(s);
     (rec.pid, rec.clamshell)
@@ -181,6 +181,7 @@ pub fn lock_holder_is_live(
     }
 }
 
+#[cfg(any(test, target_os = "linux"))]
 pub fn parse_proc_stat_starttime(stat: &str) -> Option<u64> {
     let rest = stat.rsplit_once(')')?.1;
     rest.split_whitespace().nth(19)?.parse().ok()
@@ -223,27 +224,61 @@ pub fn observed_instance_token(pid: u32) -> Option<u64> {
 
 #[cfg(target_os = "macos")]
 fn macos_proc_starttime(pid: u32) -> Option<u64> {
+    const PROC_PIDTBSDINFO: libc::c_int = 3;
+    const MAXCOMLEN: usize = 16;
+
+    #[allow(dead_code)]
+    #[repr(C)]
+    struct ProcBsdInfo {
+        pbi_flags: u32,
+        pbi_status: u32,
+        pbi_xstatus: u32,
+        pbi_pid: u32,
+        pbi_ppid: u32,
+        pbi_uid: libc::uid_t,
+        pbi_gid: libc::gid_t,
+        pbi_ruid: libc::uid_t,
+        pbi_rgid: libc::gid_t,
+        pbi_svuid: libc::uid_t,
+        pbi_svgid: libc::gid_t,
+        rfu_1: u32,
+        pbi_comm: [libc::c_char; MAXCOMLEN],
+        pbi_name: [libc::c_char; 2 * MAXCOMLEN],
+        pbi_nfiles: u32,
+        pbi_pgid: u32,
+        pbi_pjobc: u32,
+        e_tdev: u32,
+        e_tpgid: u32,
+        pbi_nice: i32,
+        pbi_start_tvsec: u64,
+        pbi_start_tvusec: u64,
+    }
+
+    unsafe extern "C" {
+        fn proc_pidinfo(
+            pid: libc::c_int,
+            flavor: libc::c_int,
+            arg: u64,
+            buffer: *mut libc::c_void,
+            buffer_size: libc::c_int,
+        ) -> libc::c_int;
+    }
+
+    let pid = libc::c_int::try_from(pid).ok()?;
     unsafe {
-        let mut mib = [
-            libc::CTL_KERN,
-            libc::KERN_PROC,
-            libc::KERN_PROC_PID,
-            pid as libc::c_int,
-        ];
-        let mut info: libc::kinfo_proc = std::mem::zeroed();
-        let mut size = std::mem::size_of::<libc::kinfo_proc>();
-        let rc = libc::sysctl(
-            mib.as_mut_ptr(),
-            mib.len() as u32,
-            &mut info as *mut _ as *mut libc::c_void,
-            &mut size,
-            std::ptr::null_mut(),
+        let mut info: ProcBsdInfo = std::mem::zeroed();
+        let size = libc::c_int::try_from(std::mem::size_of::<ProcBsdInfo>()).ok()?;
+        let bytes = proc_pidinfo(
+            pid,
+            PROC_PIDTBSDINFO,
             0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
         );
-        if rc != 0 || size == 0 {
+        if bytes != size {
             return None;
         }
-        Some(info.kp_proc.p_starttime.tv_sec as u64)
+        Some(info.pbi_start_tvsec)
     }
 }
 
@@ -294,7 +329,7 @@ pub fn note_deferred_escape(deferred: bool, pending_stop: &mut bool) {
 }
 
 /// After a successful adopt or a stop_donor reply, apply the remembered escape.
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(test)]
 pub fn take_pending_stop_on_adopt(adopted: bool, pending_stop: &mut bool) -> bool {
     take_pending_stop_after_handoff(adopted, false, pending_stop)
 }
@@ -626,7 +661,7 @@ pub fn take_donor_clamshell_reapply() -> bool {
 }
 
 /// Cross-process signal for the live donor. Does not use the data directory.
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(test)]
 pub fn take_ipc_donor_clamshell_reapply() -> bool {
     DONOR_CLAMSHELL_REAPPLY.swap(false, Ordering::SeqCst)
 }
@@ -849,6 +884,36 @@ mod tests {
         assert!(
             gui.contains("local_toggle_after_cloud_drain"),
             "dispatch the captured Start/Stop, not a fresh Toggle against the post-drain engine"
+        );
+    }
+
+    #[test]
+    fn macos_process_starttime_uses_supported_libproc_api() {
+        let source = include_str!("session_lock.rs");
+        let implementation = source
+            .split("fn macos_proc_starttime")
+            .nth(1)
+            .expect("macOS process starttime implementation")
+            .split("/// Hold phone On/Off")
+            .next()
+            .expect("end of macOS process starttime implementation");
+
+        assert!(
+            implementation.contains("proc_pidinfo") && implementation.contains("PROC_PIDTBSDINFO"),
+            "macOS process starttime must use the supported libproc API"
+        );
+        assert!(
+            !implementation.contains("libc::kinfo_proc"),
+            "the libc crate does not expose macOS kinfo_proc"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_reads_current_process_starttime() {
+        assert!(
+            process_starttime(std::process::id()).is_some(),
+            "libproc must return a start time for the current process"
         );
     }
 
