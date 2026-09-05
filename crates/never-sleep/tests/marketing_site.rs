@@ -267,6 +267,40 @@ fn copy_covers_everyday_use_cases_not_only_chatgpt() {
     );
 }
 
+#[test]
+fn homepage_explains_remote_access_and_phone_control() {
+    let en = read("index.html");
+    let zh = read("zh/index.html");
+
+    for needle in [
+        "Remote access and phone control",
+        r#">Phone board</a>"#,
+        r#"href="board/">phone board</a>"#,
+        "multiple Macs",
+        "start or end Screen-Off Standby",
+        "will not force it off",
+    ] {
+        assert!(
+            en.contains(needle),
+            "English homepage should explain remote use; missing {needle:?}"
+        );
+    }
+
+    for needle in [
+        "远程连接与手机看板",
+        r#">手机看板</a>"#,
+        r#"href="board/">手机看板</a>"#,
+        "多台 Mac",
+        "远程开始或结束关屏待命",
+        "不会强制关屏",
+    ] {
+        assert!(
+            zh.contains(needle),
+            "Chinese homepage should explain remote use; missing {needle:?}"
+        );
+    }
+}
+
 fn passages_around(hay: &str, needle: &str) -> Vec<String> {
     let lower = hay.to_ascii_lowercase();
     let needle_l = needle.to_ascii_lowercase();
