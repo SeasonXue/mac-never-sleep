@@ -1,4 +1,4 @@
-//! Pins CI/release jobs to manual runs and constrains the production web deploy.
+//! Pins GitHub Actions to the Actions tab (Run workflow), not push or PR.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ fn on_mapping(src: &str) -> &str {
 }
 
 #[test]
-fn non_deploy_github_actions_are_manual_dispatch_only() {
+fn github_actions_are_manual_dispatch_only() {
     let dir = workflows_dir();
     let mut paths: Vec<_> = fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read {dir:?}: {e}"))
@@ -53,9 +53,6 @@ fn non_deploy_github_actions_are_manual_dispatch_only() {
     assert!(!paths.is_empty(), "expected YAML workflows under {dir:?}");
 
     for path in paths {
-        if path.file_name().and_then(|name| name.to_str()) == Some("deploy-web.yml") {
-            continue;
-        }
         let src = fs::read_to_string(&path).unwrap();
         let on = on_mapping(&src);
         let name = path.file_name().unwrap().to_string_lossy();
@@ -69,50 +66,6 @@ fn non_deploy_github_actions_are_manual_dispatch_only() {
                 "{name} must not auto-start on {event}: {on}"
             );
         }
-    }
-}
-
-#[test]
-fn web_deploy_is_gated_tested_and_smoke_checked() {
-    let src = fs::read_to_string(workflows_dir().join("deploy-web.yml"))
-        .expect("deploy-web.yml must publish the Worker and static site");
-    let on = on_mapping(&src);
-
-    for required in [
-        "workflow_dispatch:",
-        "push:",
-        "branches: [main]",
-        ".github/workflows/deploy-web.yml",
-        "worker/**",
-        "site/**",
-        "wrangler.jsonc",
-        "package.json",
-        "package-lock.json",
-    ] {
-        assert!(
-            on.contains(required),
-            "deploy trigger must contain {required}: {on}"
-        );
-    }
-
-    for required in [
-        "environment: production",
-        "group: never-sleep-production",
-        "cancel-in-progress: false",
-        "actions/checkout@",
-        "github.event_name == 'push' && github.sha || 'main'",
-        "actions/setup-node@",
-        "npm ci",
-        "npm test",
-        "cloudflare/wrangler-action@v3",
-        "CLOUDFLARE_API_TOKEN",
-        "CLOUDFLARE_ACCOUNT_ID",
-        "wranglerVersion: \"4.128.0\"",
-        "command: deploy",
-        "https://xyz-ai.app/never-sleep/zh/board/",
-        "https://xyz-ai.app/never-sleep/api/list",
-    ] {
-        assert!(src.contains(required), "web deploy must contain {required}");
     }
 }
 
