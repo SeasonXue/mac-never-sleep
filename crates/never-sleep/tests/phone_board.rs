@@ -38,6 +38,19 @@ fn wrangler_worker_is_the_existing_mac_never_sleep_service() {
 }
 
 #[test]
+fn wrangler_creates_boardhub_with_sqlite_backend_for_free_plan() {
+    let wrangler = read("wrangler.jsonc");
+    assert!(
+        wrangler.contains(r#""new_sqlite_classes": ["BoardHub"]"#),
+        "Workers Free only allows SQLite-backed Durable Objects; BoardHub must be created with new_sqlite_classes"
+    );
+    assert!(
+        !wrangler.contains(r#""new_classes""#),
+        "new_classes creates a KV-backed namespace and fails on the Free plan (API code 10097)"
+    );
+}
+
+#[test]
 fn board_pages_are_mobile_first_and_bilingual() {
     let en = read("site/board/index.html");
     let zh = read("site/zh/board/index.html");

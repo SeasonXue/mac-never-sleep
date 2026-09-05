@@ -21,6 +21,7 @@
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_classes": ["BoardHub"] }
+    // Workers Free only supports SQLite-backed DOs (API code 10097).
+    { "tag": "v1", "new_sqlite_classes": ["BoardHub"] }
   ]
 }
