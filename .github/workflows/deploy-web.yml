@@ -1,0 +1,71 @@
+name: Deploy web
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-web.yml"
+      - "worker/**"
+      - "site/**"
+      - "wrangler.jsonc"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: never-sleep-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test Worker
+        run: npm test
+
+      - name: Deploy Worker and static assets
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.128.0"
+          command: deploy
+
+      - name: Smoke test production
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
+            https://xyz-ai.app/never-sleep/zh/board/ >/dev/null
+
+          response="$(curl --fail --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 2 \
+            -H "content-type: application/json" \
+            -d '{"devices":[]}' \
+            https://xyz-ai.app/never-sleep/api/list)"
+
+          node -e '
+            const body = JSON.parse(process.argv[1]);
+            if (body.ok !== true || !Array.isArray(body.devices)) process.exit(1);
+          ' "$response"
